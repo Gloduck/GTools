@@ -732,10 +732,6 @@
 
 <script setup>
 import { computed, defineComponent, h, markRaw, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch } from "vue";
-import { Terminal } from "@xterm/xterm";
-import { FitAddon } from "@xterm/addon-fit";
-import "@xterm/xterm/css/xterm.css";
-import { CdnUtils } from "@/shared/cdn-utils.js";
 import { runAiNodeWorker } from "@/shared/ai-node-worker.js";
 import { runFilterScript } from "@/shared/filter-script-worker.js";
 import {
@@ -750,7 +746,6 @@ import { MarkdownUtils } from "@/shared/markdown-utils.js";
 import { NetworkLimit } from "@/shared/network-limit.js";
 import { enableEditorPwa } from "@/shared/pwa-install.js";
 import { RequestProxy } from "@/shared/request-proxy.js";
-import { prepareRunScript } from "@/shared/node-worker/run-script-preparer.js";
 import { AiCredentialStore } from "@/shared/ai-credential-store.js";
 import { currentLocale, setLocale, t, translateErrorMessage } from "@/i18n/index.js";
 import { codeEditorMessages } from "@/i18n/messages/code-editor.js";
@@ -774,7 +769,7 @@ const DEFAULT_MAX_MEMORY_WRITE_BYTES = 50 * MEBIBYTE;
 const SSH_WEBSOCKET_PATH = "/api/ssh/ws";
 const SFTP_UPLOAD_PATH = "/api/ssh/sftp/upload";
 const SFTP_DOWNLOAD_PATH = "/api/ssh/sftp/download";
-CdnUtils.loadCodicons().catch((error) => console.error("Failed to load codicons:", error));
+const MONACO_BASE_URL = `${import.meta.env.BASE_URL}vendor/monaco/0.55.1/vs`;
 const LEGACY_AI_COMPLETE_SHORTCUT = "Ctrl+Shift+Enter";
 const LEGACY_FOLD_ALL_SHORTCUT = "Ctrl+K Ctrl+0";
 const LEGACY_UNFOLD_ALL_SHORTCUT = "Ctrl+K Ctrl+J";
@@ -903,8 +898,11 @@ const WORKSPACE_SEARCH_FILE_LIMIT = 3000;
 const WORKSPACE_SEARCH_RESULT_LIMIT = 500;
 const MONACO_MODEL_SOFT_LIMIT = 150;
 let monaco = null;
+let monacoLoadPromise = null;
 let prettierStandalonePromise = null;
 const prettierPluginPromises = new Map();
+let xtermBundlePromise = null;
+let prepareRunScriptPromise = null;
 let aiCompletionRequestSerial = 0;
 let aiCompletionInFlight = false;
 let aiCompletionAbortController = null;
@@ -1927,7 +1925,30 @@ function settleDialog(result) {
 }
 
 function loadMonaco() {
-  return CdnUtils.loadMonaco();
+  if (!monacoLoadPromise) {
+    monacoLoadPromise = Promise.all([
+      import("@vscode/codicons/dist/codicon.css"),
+      loadScript(`${MONACO_BASE_URL}/loader.js`),
+    ]).then(() => new Promise((resolve, reject) => {
+      globalThis.require.config({ paths: { vs: MONACO_BASE_URL } });
+      globalThis.require(["vs/editor/editor.main"], () => resolve(globalThis.monaco), reject);
+    }).catch((error) => {
+      monacoLoadPromise = null;
+      throw error;
+    }));
+  }
+  return monacoLoadPromise;
+}
+
+function loadScript(src) {
+  if (globalThis.require?.config) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = src;
+    script.onload = resolve;
+    script.onerror = () => reject(new Error("Failed to load Monaco Editor"));
+    document.head.append(script);
+  });
 }
 
 function showPanel(view) {
@@ -2064,8 +2085,15 @@ async function connectSshConfig(config) {
     activateSshTerminal(normalized.id);
     return existing;
   }
+  let xtermBundle;
+  try {
+    xtermBundle = await loadXtermBundle();
+  } catch (error) {
+    await showAlert(`${tr("ssh.connectFailed")}: ${error.message}`, { tone: "danger" });
+    return null;
+  }
   closeSshSession(existing, { silent: true });
-  const session = createSshSession(normalized);
+  const session = createSshSession(normalized, xtermBundle);
   sshSessions.set(normalized.id, session);
   activeSshTerminalId.value = normalized.id;
   activeDiffPath.value = "";
@@ -2105,7 +2133,7 @@ async function connectSshConfig(config) {
   return session;
 }
 
-function createSshSession(config) {
+function createSshSession(config, xtermBundle) {
   return {
     configId: config.id,
     title: config.name || config.host,
@@ -2118,8 +2146,8 @@ function createSshSession(config) {
     output: "",
     tabOpen: true,
     ws: null,
-    terminal: createXtermTerminal(),
-    fitAddon: createXtermFitAddon(),
+    terminal: createXtermTerminal(xtermBundle.Terminal),
+    fitAddon: createXtermFitAddon(xtermBundle.FitAddon),
     terminalAttached: false,
     terminalDataDisposable: null,
     terminalResizeObserver: null,
@@ -2137,8 +2165,8 @@ function createSshSession(config) {
   };
 }
 
-function createXtermTerminal() {
-  const terminal = markRaw(new Terminal({
+function createXtermTerminal(TerminalClass) {
+  const terminal = markRaw(new TerminalClass({
     cursorBlink: false,
     disableStdin: true,
     convertEol: true,
@@ -2160,8 +2188,32 @@ function setSshTerminalInputEnabled(session, enabled) {
   }
 }
 
-function createXtermFitAddon() {
-  return markRaw(new FitAddon());
+function createXtermFitAddon(FitAddonClass) {
+  return markRaw(new FitAddonClass());
+}
+
+function loadXtermBundle() {
+  if (!xtermBundlePromise) {
+    xtermBundlePromise = Promise.all([
+      import("@xterm/xterm"),
+      import("@xterm/addon-fit"),
+      import("@xterm/xterm/css/xterm.css"),
+    ]).then(([xtermModule, fitAddonModule]) => {
+      const TerminalClass = resolveModuleConstructor(xtermModule, "Terminal");
+      const FitAddonClass = resolveModuleConstructor(fitAddonModule, "FitAddon");
+      if (!TerminalClass || !FitAddonClass) throw new Error("Failed to load xterm");
+      return { Terminal: TerminalClass, FitAddon: FitAddonClass };
+    }).catch((error) => {
+      xtermBundlePromise = null;
+      throw error;
+    });
+  }
+  return xtermBundlePromise;
+}
+
+function resolveModuleConstructor(module, name) {
+  const defaultExport = module?.default;
+  return module?.[name] || defaultExport?.[name] || (typeof defaultExport === "function" ? defaultExport : null);
 }
 
 function getSshTerminalTheme() {
@@ -2173,14 +2225,17 @@ function attachActiveSshTerminal() {
   const host = sshTerminalHost.value;
   if (!session || !host) return;
   if (!session.terminal) {
-    session.terminal = createXtermTerminal();
+    if (!xtermBundlePromise) return;
+    xtermBundlePromise.then((bundle) => {
+      if (session.terminal) return;
+      session.terminal = createXtermTerminal(bundle.Terminal);
+      session.fitAddon = createXtermFitAddon(bundle.FitAddon);
+      touchSshState();
+      nextTick(attachActiveSshTerminal);
+    });
     if (!session.terminal) return;
-    session.fitAddon = createXtermFitAddon();
-    touchSshState();
-    nextTick(attachActiveSshTerminal);
-    return;
   }
-  if (!session.fitAddon) session.fitAddon = createXtermFitAddon();
+  if (!session.fitAddon) return;
   host.textContent = "";
   if (!session.terminalAttached) {
     if (session.fitAddon) session.terminal.loadAddon(session.fitAddon);
@@ -6574,7 +6629,10 @@ function getPrettierConfig(language) {
 
 async function loadPrettierBundle(pluginNames) {
   if (!prettierStandalonePromise) {
-    prettierStandalonePromise = CdnUtils.loadPrettierStandalone();
+    prettierStandalonePromise = import("prettier/standalone").then(resolveModuleDefault).catch((error) => {
+      prettierStandalonePromise = null;
+      throw error;
+    });
   }
   const [prettier, plugins] = await Promise.all([
     prettierStandalonePromise,
@@ -6585,9 +6643,32 @@ async function loadPrettierBundle(pluginNames) {
 
 function loadPrettierPlugin(name) {
   if (!prettierPluginPromises.has(name)) {
-    prettierPluginPromises.set(name, CdnUtils.loadPrettierPlugin(name));
+    const loader = prettierPluginLoaders[name];
+    if (!loader) return Promise.reject(new Error(`Unsupported Prettier plugin: ${name}`));
+    prettierPluginPromises.set(name, loader().then(resolveModuleDefault).catch((error) => {
+      prettierPluginPromises.delete(name);
+      throw error;
+    }));
   }
   return prettierPluginPromises.get(name);
+}
+
+const prettierPluginLoaders = Object.freeze({
+  angular: () => import("prettier/plugins/angular"),
+  babel: () => import("prettier/plugins/babel"),
+  estree: () => import("prettier/plugins/estree"),
+  flow: () => import("prettier/plugins/flow"),
+  glimmer: () => import("prettier/plugins/glimmer"),
+  graphql: () => import("prettier/plugins/graphql"),
+  html: () => import("prettier/plugins/html"),
+  markdown: () => import("prettier/plugins/markdown"),
+  postcss: () => import("prettier/plugins/postcss"),
+  typescript: () => import("prettier/plugins/typescript"),
+  yaml: () => import("prettier/plugins/yaml"),
+});
+
+function resolveModuleDefault(module) {
+  return module?.default ?? module;
 }
 
 function toggleSidePanel() {
@@ -7488,6 +7569,7 @@ async function aiToolRunJavaScript({ reason, code, entry_file: entryFile, format
       defaultTimeoutMs: Math.min(AI_JAVASCRIPT_DEFAULT_TIMEOUT_MS, timeout),
       maxTimeoutMs: timeout,
     });
+    const prepareRunScript = await loadPrepareRunScript();
     const prepareStartedAt = performance.now();
     const prepared = await prepareRunScript({
       ...(hasCode ? { code: script } : { entryFile: normalizedEntryFile }),
@@ -7623,6 +7705,16 @@ async function aiToolRunJavaScript({ reason, code, entry_file: entryFile, format
       prepare_network: prepareNetwork?.getUsage?.() || { requestCount: 0, responseBytes: 0 },
     };
   }
+}
+
+function loadPrepareRunScript() {
+  if (!prepareRunScriptPromise) {
+    prepareRunScriptPromise = import("@/shared/node-worker/run-script-preparer.js").then((module) => module.prepareRunScript).catch((error) => {
+      prepareRunScriptPromise = null;
+      throw error;
+    });
+  }
+  return prepareRunScriptPromise;
 }
 
 function createAiJavaScriptError(code, message, details = {}) {

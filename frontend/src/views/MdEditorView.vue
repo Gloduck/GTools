@@ -303,7 +303,6 @@
 import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue';
 import { CommonUtils } from '@/shared/common-utils.js';
 import { CommonComponents } from '@/shared/common-components.js';
-import { CdnUtils } from '@/shared/cdn-utils.js';
 import { FileUtils, normalizeFilePath } from '@/shared/file-utils.js';
 import {
     createFileSystem,
@@ -315,11 +314,21 @@ import {
 import { enableEditorPwa } from '@/shared/pwa-install.js';
 import { t, currentLocale, translateErrorMessage } from '@/i18n/index.js';
 
-const VDITOR_CDN_BASE = CdnUtils.vditor.base;
+const VDITOR_CDN_BASE = `${import.meta.env.BASE_URL}vendor/vditor/3.11.2`;
 const MAX_MEMORY_WRITE_BYTES = 50 * 1024 * 1024;
+let vditorLoadPromise;
 
 function loadVditor() {
-    return CdnUtils.loadVditor();
+    if (!vditorLoadPromise) {
+        vditorLoadPromise = Promise.all([
+            import('vditor'),
+            import('vditor/dist/index.css')
+        ]).then(([vditorModule]) => vditorModule.default || vditorModule).catch((error) => {
+            vditorLoadPromise = null;
+            throw error;
+        });
+    }
+    return vditorLoadPromise;
 }
 
 // 文件树组件

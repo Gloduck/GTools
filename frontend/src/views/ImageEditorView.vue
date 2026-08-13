@@ -245,10 +245,24 @@
 <script>
 import { ref, watch, nextTick, onUnmounted } from 'vue';
 import { CommonUtils } from '@/shared/common-utils.js';
-import { CdnUtils } from '@/shared/cdn-utils.js';
 import { ImageUtils } from '@/shared/image-utils.js';
 import { CommonComponents } from '@/shared/common-components.js';
 import { t } from '@/i18n/index.js';
+
+let cropperLoadPromise;
+
+function loadCropper() {
+    if (!cropperLoadPromise) {
+        cropperLoadPromise = Promise.all([
+            import('cropperjs'),
+            import('cropperjs/dist/cropper.css')
+        ]).then(([cropperModule]) => cropperModule.default || cropperModule).catch((error) => {
+            cropperLoadPromise = null;
+            throw error;
+        });
+    }
+    return cropperLoadPromise;
+}
 
 export default {
     name: 'ImageEditorView',
@@ -337,7 +351,7 @@ export default {
                     if (!cropperImage.value || !selectedImage.value) return;
 
                     try {
-                        CropperClass = CropperClass || await CdnUtils.loadCropper();
+                        CropperClass = CropperClass || await loadCropper();
                     } catch (error) {
                         console.error('Failed to load Cropper:', error);
                         showToast(t('imageEditor.cropperLoadFailed', { message: error.message }), 'error');

@@ -1,7 +1,7 @@
 export const indexMessages = {
     'zh-CN': {
         pages: {
-            index: { title: '工具导航', description: '常用小工具集合' }
+            index: { title: 'GTools', description: '常用小工具集合' }
         },
         categories: {
             development: '开发',
@@ -23,7 +23,7 @@ export const indexMessages = {
     },
     'en-US': {
         pages: {
-            index: { title: 'Tool Directory', description: 'A collection of useful utilities' }
+            index: { title: 'GTools', description: 'A collection of useful utilities' }
         },
         categories: {
             development: 'Development',

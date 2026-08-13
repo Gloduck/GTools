@@ -19,7 +19,7 @@ await run(npm, ['--prefix', 'test', 'test'], {
     cwd: frontendRoot,
     env: {
         ...process.env,
-        SIMPLE_SERVER_TEST_ARGUMENTS: JSON.stringify(loadTestArguments(forwardedArguments, {cwd: frontendRoot})),
+        GTOOLS_TEST_ARGUMENTS: JSON.stringify(loadTestArguments(forwardedArguments, {cwd: frontendRoot})),
     },
 });
 

@@ -3,7 +3,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 
 const baseURL = 'http://127.0.0.1:4174';
-const outputDir = process.env.PLAYWRIGHT_OUTPUT_DIR || join(tmpdir(), 'simple-server-playwright-results');
+const outputDir = process.env.PLAYWRIGHT_OUTPUT_DIR || join(tmpdir(), 'gtools-playwright-results');
 
 export default defineConfig({
     testDir: './unit',

@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-APP_NAME="SimpleServer"
+APP_NAME="GTools"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP_DIR="${SCRIPT_DIR}"
 START_WAIT_SECONDS=10

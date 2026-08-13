@@ -13,7 +13,7 @@ ROOT_TARGET_DIR="${PROJECT_ROOT}/target"
 CONFIG_FILE="${BACKEND_DIR}/src/main/resources/config.json"
 INCLUDE_DIR="${PROJECT_ROOT}/include"
 
-APP_NAME="SimpleServer"
+APP_NAME="GTools"
 NATIVE_FILE_EXTENSION=""
 
 case "$(uname -s 2>/dev/null || printf '')" in

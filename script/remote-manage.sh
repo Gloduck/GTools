@@ -31,8 +31,8 @@ Options:
 
 Examples:
   ./script/remote-manage.sh push
-  ./script/remote-manage.sh start --remoteAddress 127.0.0.1 --remoteDeployPath /opt/SimpleServer
-  ./script/remote-manage.sh restart --remoteAddress 127.0.0.1 --remoteUser root --remotePassword secret --remoteDeployPath /opt/SimpleServer
+  ./script/remote-manage.sh start --remoteAddress 127.0.0.1 --remoteDeployPath /opt/GTools
+  ./script/remote-manage.sh restart --remoteAddress 127.0.0.1 --remoteUser root --remotePassword secret --remoteDeployPath /opt/GTools
 EOF
 }
 

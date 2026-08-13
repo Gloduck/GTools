@@ -77,7 +77,7 @@ function isTestArgumentEnabled(testArguments, name, {environment = '', defaultVa
 }
 
 function getBrowserTestArgument(name, fallback = '') {
-    const testArguments = parseSerializedTestArguments(process.env.SIMPLE_SERVER_TEST_ARGUMENTS);
+    const testArguments = parseSerializedTestArguments(process.env.GTOOLS_TEST_ARGUMENTS);
     return getTestArgument(testArguments, String(name), {defaultValue: fallback});
 }
 

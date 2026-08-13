@@ -74,7 +74,7 @@ class NodeWorker {
         this.esmModulePromises = new Map();
         this.scriptGlobalRestores = new Map();
         this.moduleUrls = [];
-        this.runtimeKey = `__simpleServerNodeWorker_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+        this.runtimeKey = `__gToolsNodeWorker_${Date.now()}_${Math.random().toString(36).slice(2)}`;
         this.usesDataModuleUrls = Boolean(globalThis.process?.versions?.node);
         this.Buffer = BrowserBuffer;
         this.process = this.createProcess(this.options);

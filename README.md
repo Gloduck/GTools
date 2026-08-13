@@ -1,61 +1,172 @@
-# SimpleServer
+# GTools
 
-一个自用的 API 服务，后端基于 Quarkus 实现，使用 CSV 文件作为轻量数据库，并支持 GraalVM Native Image 构建。
+English | [简体中文](README.zh-CN.md)
 
-当前已包含的功能：
+GTools is a self-hosted collection of browser-based utilities. The backend uses Quarkus, the frontend uses Vue 3, CSV files provide lightweight storage, and both standard JAR and GraalVM Native Image builds are supported.
 
-- JRebel激活工具
-- 磁力聚合搜索
-- GitHub仓库搜索
-- 图片处理工具
-- 转发下载工具
-- 网络剪贴板
-- Markdown编辑器
-- 代码编辑器
+## Features
 
-## 模块说明
+- JRebel activation URL generator
+- Aggregated torrent search across multiple sources
+- GitHub repository search
+- Image resize, compression, and crop tools
+- Forwarded file downloads
+- Online clipboard
+- Markdown editor
+- Browser code editor with AI, SSH, SFTP, file-system, and PWA capabilities
+- Chinese and English interfaces
 
-- `backend/`：后端服务代码
-- `frontend/`：前端页面
-- `include/`：当前目录下的所有文件会在build过后包含在构建输出目录
-- `script/`：项目脚本，包括构建脚本和远程管理脚本
-- `db/`：本地开发阶段使用的 CSV 数据目录
-- `target/`：构建输出目录，生成 jar/native、配置文件、管理脚本和压缩包
+## Technology
 
-## 本地启动
+- Java 17
+- Quarkus 3
+- Vue 3, Vue Router, Vue I18n, and Vite
+- Maven and npm
+- Optional GraalVM Native Image
 
-开发模式：
+## Repository Layout
+
+```text
+backend/   Quarkus backend
+frontend/  Vue frontend and tests
+include/   Files copied into release packages
+script/    Build and remote-management scripts
+db/        Local CSV data
+target/    Release artifacts
+```
+
+## Requirements
+
+Base development environment:
+
+- JDK 17
+- Maven 3.9 or compatible
+- Node.js 20 or newer
+- npm
+
+Native builds additionally require:
+
+- GraalVM with `native-image`
+- GCC, binutils, and zlib development files on Linux
+
+Local directory access in the code editor primarily targets Chromium-based browsers and requires HTTPS or a `localhost` secure context.
+
+## Local Development
+
+Install frontend dependencies:
+
+```bash
+npm ci --prefix frontend
+```
+
+Start the backend in development mode:
 
 ```bash
 mvn -f backend/pom.xml quarkus:dev
 ```
 
-Quarkus dev 默认监听调试端口 `5005`，IDE 可以通过 remote debugger attach 到 `localhost:5005`。
+The HTTP port is configured by `port` in `backend/src/main/resources/config.json` and defaults to `2226`. Quarkus development mode exposes debugger port `5005` by default.
 
-普通 jar：
-
-```bash
-mvn -f backend/pom.xml package -DskipTests
-java -jar backend/target/SimpleServer-1.0-runner.jar
-```
-
-Native：
+Start the frontend development server separately:
 
 ```bash
-mvn -f backend/pom.xml package -Dquarkus.native.enabled=true -Dquarkus.native.native-image-xmx=2g -DskipTests
-backend/target/SimpleServer-1.0-runner
+VITE_BACKEND_PROXY_TARGET=http://127.0.0.1:2226 npm run dev --prefix frontend
 ```
 
-## 配置说明
+When `VITE_BACKEND_PROXY_TARGET` is set, Vite proxies `/api` and WebSocket traffic to the backend.
 
-默认配置文件位于 `backend/src/main/resources/config.json`。
+## Build and Run
 
-运行时配置读取顺序：
+### JAR Release
 
-- 程序所在目录下的 `config.json`
-- `resources` 中的默认配置
+```bash
+bash script/build.sh clean buildJar
+java -jar target/GTools.jar
+```
 
-日志配置位于 `log` 节点，例如：
+### Native Image
+
+```bash
+bash script/build.sh clean buildNative
+target/GTools
+```
+
+### Release Script
+
+```bash
+bash script/build.sh clean buildJar
+bash script/build.sh clean buildNative
+bash script/build.sh clean
+```
+
+The release script is the supported way to build a complete application. It builds the frontend, copies it into the backend resources, packages the backend, and writes these files under the root `target/` directory:
+
+- `GTools.jar` or `GTools`
+- `GTools.tar.gz`
+- `config.json`
+- `manage.sh`
+
+## Service Management
+
+Run these commands from a release directory:
+
+```bash
+bash manage.sh start
+bash manage.sh status
+bash manage.sh restart
+bash manage.sh stop
+```
+
+JAR deployments accept JVM options through `JAVA_OPTS`:
+
+```bash
+JAVA_OPTS="-Xms256m -Xmx512m" bash manage.sh start
+```
+
+## Remote Deployment
+
+Copy `.env.example` to `.env` and configure the target host:
+
+```env
+remoteAddress=127.0.0.1
+remotePort=22
+remoteUser=root
+remotePassword=
+remoteDeployPath=/opt/GTools
+```
+
+Common commands:
+
+```bash
+bash script/remote-manage.sh push
+bash script/remote-manage.sh push --includeConfig
+bash script/remote-manage.sh start
+bash script/remote-manage.sh restart
+bash script/remote-manage.sh stop
+bash script/remote-manage.sh status
+```
+
+`push` does not upload `config.json` unless `--includeConfig` is supplied. Password authentication requires `sshpass`; otherwise SSH keys or the local SSH configuration are used.
+
+## Configuration
+
+The default configuration is stored in `backend/src/main/resources/config.json`. Runtime configuration is loaded in this order:
+
+1. `config.json` next to the executable or JAR
+2. The default application resource
+
+Main configuration sections:
+
+- `port`: HTTP port
+- `maxBodySize`: request body limit
+- `log`: log level, output file, and maximum file size
+- `jrebel`: JRebel license response settings
+- `torrent`: source URLs, proxies, timeouts, and Cloudflare bypass service
+- `proxyrequest`: request proxy and private-network policy
+- `github`: popular repository list
+- `ssh`: security key, connection limit, and heartbeat timeout
+
+Logging example:
 
 ```json
 {
@@ -67,147 +178,64 @@ backend/target/SimpleServer-1.0-runner
 }
 ```
 
-- `log.level`：日志级别
-- `log.file`：日志文件路径；当前由 Quarkus file logging 输出，不支持日期模板
-- `log.maxFileSize`：单个日志文件最大大小，例如 `10M`、`100M`
+## Tests
 
-## 构建脚本
-
-构建脚本：`script/build.sh`
-
-用法：
+Run the full frontend test suite:
 
 ```bash
-bash script/build.sh buildJar
-bash script/build.sh buildNative
-bash script/build.sh clean
-bash script/build.sh clean buildJar
+npm test --prefix frontend
 ```
 
-说明：
-
-- `buildJar`：构建前端并打包后端 Quarkus runner jar 版本
-- `buildNative`：构建前端并打包后端 native 版本，需要本机可用 `native-image`
-- `clean`：清理前端构建目录、后端构建目录和根目录 `target/`
-
-构建完成后，构建产物位于：`target/` 
-
-## 管理脚本
-
-脚本模板位于 `include/manage.sh`，构建时会复制到 `target/manage.sh`。
-
-用法：
+Install Chromium before running browser tests for the first time:
 
 ```bash
-bash manage.sh start
-bash manage.sh stop
-bash manage.sh restart
-bash manage.sh status
+npm --prefix frontend/test run install:browser
 ```
 
-说明：
-
-- `start`：后台启动服务
-- `stop`：结束服务
-- `restart`：重启服务
-- `status`：查看服务状态
-
-jar 模式支持通过 `JAVA_OPTS` 传入 JVM 参数，例如：
+Run only Node unit tests:
 
 ```bash
-JAVA_OPTS="-Xms256m -Xmx512m" bash manage.sh start
+node --test frontend/test/unit/*.test.js
 ```
 
-## 远程管理脚本
+GitHub file-system integration tests can be enabled through command-line arguments or these environment variables:
 
-远程管理脚本：`script/remote-manage.sh`
+- `GTOOLS_GITHUB_INTEGRATION`
+- `GTOOLS_GITHUB_TOKEN`
+- `GTOOLS_GITHUB_REPO`
+- `GTOOLS_GITHUB_BRANCH`
+- `GTOOLS_GITHUB_ROOT`
 
-用法：
+## Code Editor
 
-```bash
-bash script/remote-manage.sh push
-bash script/remote-manage.sh start
-bash script/remote-manage.sh restart
-bash script/remote-manage.sh stop
-bash script/remote-manage.sh status
-```
+The code editor is available at `/codeEditor` and includes:
 
-也支持通过参数覆盖远程配置：
+- Local workspaces through the File System Access API
+- File tree, tabs, search, replace, diff, formatting, and previews
+- OpenAI-compatible AI completion and agent sessions
+- Isolated JavaScript execution, HTTP proxying, and image generation
+- SSH terminals, SFTP transfers, and AI remote-command tools
+- Settings URL import/export and PWA installation
 
-```bash
-bash script/remote-manage.sh push \
-  --remoteAddress 127.0.0.1 \
-  --remotePort 22 \
-  --remoteUser root \
-  --remoteDeployPath /opt/SimpleServer
-```
+Files created or changed by AI remain in editor memory until the user reviews and saves them. Exported settings URLs may contain API keys, passwords, or private keys and must not be shared publicly.
 
-如需同时推送配置文件：
+## Cloudflare-Protected Sources
 
-```bash
-bash script/remote-manage.sh push --includeConfig
-```
+Some torrent sources require a Cloudflare bypass service. One compatible project is:
 
-默认从项目根目录 `.env` 读取以下配置：
+`https://github.com/sarperavci/CloudflareBypassForScraping`
 
-```env
-remoteAddress=127.0.0.1
-remotePort=22
-remoteUser=root
-remotePassword=xxx
-remoteDeployPath=/opt/SimpleServer
-```
+When changing the bypass endpoint or its proxy, update `torrent.bypassCfApi` and `torrent.bypassCfApiProxy`. Bypass requests are usually slower, so increase the source `requestTimeout` when necessary.
 
-说明：
+## Security
 
-- 推送前建议先确认本地配置文件与远程配置文件是否一致，避免覆盖或遗漏必要配置
-- `push`：将本地 `target/` 下的发布文件直接推送到远程部署目录，不上传压缩包，默认不上传 `config.json`，也不会清空远程目录中的其他文件
-- `push --includeConfig`：推送时额外包含 `target/config.json`
-- `start|restart|stop|status`：通过远程调用部署目录中的 `manage.sh` 执行
-- 支持 SSH 密钥登录
-- 如果配置了 `remotePassword`，则通过 `sshpass` 走密码登录
+- Use HTTPS and a reverse proxy for public deployments
+- Apply restrictive permissions to `config.json`, logs, and deployment directories
+- Configure a non-empty `ssh.securityKey`
+- Enable private-network proxy access only when required
+- Never expose AI API keys, SSH passwords, private keys, or exported settings URLs
+- Online clipboard data is stored as plain text and should not contain sensitive information
 
-必要配置缺失时脚本会直接报错。
+## License
 
-## 服务说明
-
-### 代码编辑器
-
-访问路径：`/codeEditor`
-
-代码编辑器基于 Monaco Editor 和浏览器 File System Access API 实现，可以直接打开并读写本地目录，适合进行轻量级代码浏览、修改和 AI 辅助开发。文件访问能力主要面向 Chromium 系浏览器，并要求页面运行在 HTTPS 或 `localhost` 环境。
-
-主要功能：
-
-- 本地工作区：递归文件树、多文件标签页、新建文件或目录、保存、删除及语言切换
-- 搜索与变更：跨文件文本搜索和替换、未保存变更列表、批量保存或回滚、Monaco Diff 对比
-- 编辑体验：语法高亮、命令面板、代码折叠、Minimap、自动换行、主题、字号和可自定义快捷键
-- 预览与格式化：支持 Markdown、MDX、HTML 侧边预览和图片查看，并为常用前端语言动态加载 Prettier 格式化能力
-- AI 行内补全：通过快捷键手动触发当前代码位置的补全建议
-- AI 编程助手：兼容 OpenAI Responses API，可配置模型和推理等级，支持 SSE 流式请求、多会话独立运行、停止任务、上下文压缩和 Token 用量展示
-- AI 工作区工具：支持文件列举、读取、搜索、创建、修改、待删除、Diff、图片读取、图片生成或编辑、隔离 JavaScript 执行及后端 HTTP 代理；JavaScript 工具可声明工作区输入、固定输出或动态输出目录，并在 Worker 内执行受大小限制的直连或代理请求
-- 工作区指令：自动读取根目录 `AGENTS.md`，作为 AI 执行任务时的附加约束
-- SSH 与 SFTP：通过后端连接远程主机，支持多终端标签、文件上传下载、传输进度和任务取消
-- AI 远程工具：可将指定 SSH 配置暴露给 AI，并通过命令白名单、高风险确认和执行原因展示控制命令调用
-- PWA：支持安装为独立应用，并缓存应用页面和已访问的同源静态资源
-- 设置导入导出：可将编辑器、AI、后端和 SSH 设置压缩到 URL Hash 中，用于迁移配置
-
-使用说明：
-
-- AI 创建或修改的文件默认只保存在编辑器内存中，需要用户检查变更后手动保存到磁盘
-- 图片生成模型可单独配置；图片工具未传输入图片时调用 OpenAI Images generations 接口，传入图片时调用 edits 接口，结果会在聊天框和编辑器中预览
-- 多个 AI 会话的消息、运行状态、停止控制器和上下文用量相互隔离，但仍共享同一个工作区；同时修改同一文件时可能产生冲突
-- AI 会话只保存在当前页面内存中，刷新页面后不会恢复
-- AI 接口由浏览器直接请求，服务端需要允许 CORS；长任务使用 SSE 流式响应，避免无响应数据时触发网关超时
-- SSH、SFTP 和 HTTP 请求代理依赖后端服务，单独运行前端时不可用
-- 设置保存在浏览器 `localStorage`。导出的设置 URL 可能包含 AI API Key、SSH 密码或私钥等敏感信息，请勿公开分享
-- 当前不包含完整 IDE 的 LSP、调试器、扩展系统和 Git 暂存区；“查找引用”基于工作区文本匹配
-
-### 磁力聚合搜索
-
-部分磁力站点启用了 Cloudflare 防护，需要额外的绕过服务才能访问。
-
-可使用项目：`https://github.com/sarperavci/CloudflareBypassForScraping`
-- 如果修改了绕过服务端口，需要同步调整配置里的 `torrent.bypassCfApi`
-- 如果绕过服务需要单独代理，需要配置 `torrent.bypassCfApiProxy`
-- Cloudflare 绕过通常较慢，建议适当调大对应站点的 `requestTimeout`
+GTools is licensed under the [GNU General Public License v3.0](LICENSE).

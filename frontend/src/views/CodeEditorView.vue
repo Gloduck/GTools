@@ -1451,7 +1451,7 @@ function layoutVisibleEditors() {
 let previewRenderSerial = 0;
 let previewResourceObjectUrls = new Map();
 let previewPageObjectUrl = "";
-const previewBroadcastChannelName = `simple-server-preview-${crypto.randomUUID()}`;
+const previewBroadcastChannelName = `gtools-preview-${crypto.randomUUID()}`;
 const standalonePreviewClients = new Set();
 let previewBroadcastChannel = null;
 let lastPreviewUpdate = null;
@@ -1534,7 +1534,7 @@ function createPreviewPageUrl(initialUpdate) {
       });
       window.addEventListener("message", (event) => {
         const message = event.data;
-        if (event.source !== frame.contentWindow || message?.type !== "simple-server-preview:navigate") return;
+        if (event.source !== frame.contentWindow || message?.type !== "gtools-preview:navigate") return;
         channel.postMessage({ ...message, type: "preview:navigate", clientId });
       });
       channel.postMessage({ type: "preview:subscribe", clientId });
@@ -1581,7 +1581,7 @@ function handlePreviewBroadcastMessage(event) {
 
 function handlePreviewWindowMessage(event) {
   const message = event.data;
-  if (event.source !== previewFrame.value?.contentWindow || message?.type !== "simple-server-preview:navigate") return;
+  if (event.source !== previewFrame.value?.contentWindow || message?.type !== "gtools-preview:navigate") return;
   void navigatePreviewDocument(message.path, message.suffix);
 }
 
@@ -1670,8 +1670,8 @@ async function rewritePreviewAnchor(anchor, file, objectUrls) {
   try {
     const target = await readPreviewFile(resolved.path);
     if (getPreviewType(target)) {
-      anchor.dataset.simpleServerPreviewPath = resolved.path;
-      anchor.dataset.simpleServerPreviewSuffix = resolved.suffix;
+      anchor.dataset.gtoolsPreviewPath = resolved.path;
+      anchor.dataset.gtoolsPreviewSuffix = resolved.suffix;
       anchor.removeAttribute("target");
       return;
     }
@@ -1684,19 +1684,19 @@ async function rewritePreviewAnchor(anchor, file, objectUrls) {
 function installPreviewNavigationBridge(documentNode, suffix) {
   const script = documentNode.createElement("script");
   const initialHash = getPreviewHash(suffix);
-  script.dataset.simpleServerPreviewBridge = "";
+  script.dataset.gtoolsPreviewBridge = "";
   script.textContent = `(() => {
     const initialHash = ${serializePreviewScriptValue(initialHash)};
     document.addEventListener("click", (event) => {
       if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
       const target = event.target instanceof Element ? event.target : event.target?.parentElement;
-      const anchor = target?.closest("a[data-simple-server-preview-path]");
+      const anchor = target?.closest("a[data-gtools-preview-path]");
       if (!anchor || anchor.hasAttribute("download")) return;
       event.preventDefault();
       window.parent.postMessage({
-        type: "simple-server-preview:navigate",
-        path: anchor.dataset.simpleServerPreviewPath || "",
-        suffix: anchor.dataset.simpleServerPreviewSuffix || ""
+        type: "gtools-preview:navigate",
+        path: anchor.dataset.gtoolsPreviewPath || "",
+        suffix: anchor.dataset.gtoolsPreviewSuffix || ""
       }, "*");
     }, true);
     const scrollToInitialHash = () => {

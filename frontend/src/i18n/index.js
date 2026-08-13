@@ -11,7 +11,7 @@ import { mdEditorMessages } from './messages/md-editor.js';
 import { codeEditorMessages } from './messages/code-editor.js';
 
 const DEFAULT_LOCALE = 'zh-CN';
-const STORAGE_KEY = 'simple-server-locale';
+const STORAGE_KEY = 'gtools-locale';
 const CODE_EDITOR_STORAGE_KEY = 'browser-code-editor-settings';
 const SUPPORTED_LOCALES = ['zh-CN', 'en-US'];
 

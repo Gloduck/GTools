@@ -18,12 +18,12 @@ const router = createRouter({
 
 function updateRouteMetadata() {
   for (const route of router.getRoutes()) {
-    route.meta.title = route.meta.titleKey ? t(route.meta.titleKey) : 'Gloduck';
+    route.meta.title = route.meta.titleKey ? t(route.meta.titleKey) : 'GTools';
     route.meta.desc = route.meta.descKey ? t(route.meta.descKey) : '';
   }
 
   const currentRoute = router.currentRoute.value;
-  document.title = currentRoute.meta.title || 'Gloduck';
+  document.title = currentRoute.meta.title || 'GTools';
   setMetaContent('description', currentRoute.meta.desc || '');
 }
 

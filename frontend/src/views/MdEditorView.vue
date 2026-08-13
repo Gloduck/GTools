@@ -1012,7 +1012,7 @@ export default {
                                 try {
                                     await activeSession.stageBlob(path, file, {mimeType: file.type});
                                     await activeSession.commit(path, {
-                                        message: `Upload ${file.name} via SimpleServer MdEditor`
+                                        message: `Upload ${file.name} via GTools MdEditor`
                                     });
                                     committed = true;
 
@@ -1110,7 +1110,7 @@ export default {
                     const processedContent = await revertMarkdownFilePath(path, content, currentFilePathMapping.value);
                     await activeSession.stageText(path, processedContent, {mimeType: 'text/markdown'});
                     await activeSession.commit(path, {
-                        message: `Update ${path} via SimpleServer MdEditor`
+                        message: `Update ${path} via GTools MdEditor`
                     });
 
                     if (activeSession === session && activeWorkspaceVersion === workspaceVersion && path === currentFilePath.value) {
@@ -1149,7 +1149,7 @@ export default {
                     if (!path.endsWith('.md')) path += '.md';
                     await activeSession.stageText(path, '', {mimeType: 'text/markdown', createOnly: true});
                     await activeSession.commit(path, {
-                        message: `Create ${path} via SimpleServer MdEditor`
+                        message: `Create ${path} via GTools MdEditor`
                     });
 
                     if (activeSession !== session) return;
@@ -1173,7 +1173,7 @@ export default {
                 try {
                     await activeSession.stageDelete(path);
                     await activeSession.commit(path, {
-                        message: `Delete ${path} via SimpleServer MdEditor`
+                        message: `Delete ${path} via GTools MdEditor`
                     });
 
                     if (activeSession !== session) return;

@@ -63,7 +63,7 @@ const CommonComponents = {
                                     :aria-pressed="currentLocale === 'en-US'"
                                     @click="setLocale(currentLocale === 'zh-CN' ? 'en-US' : 'zh-CN')">
                                 <span class="absolute left-0.5 top-0.5 h-7 w-[38px] rounded-full bg-white shadow-sm transition-transform duration-300 ease-out"
-                                      :class="currentLocale === 'en-US' ? 'translate-x-10' : 'translate-x-0'"></span>
+                                      :class="currentLocale === 'en-US' ? 'translate-x-[38px]' : 'translate-x-0'"></span>
                                 <span class="relative z-10 flex-1 transition-colors"
                                       :class="currentLocale === 'zh-CN' ? 'text-primary' : 'text-gray-400'">中</span>
                                 <span class="relative z-10 flex-1 transition-colors"

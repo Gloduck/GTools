@@ -1,3 +1,7 @@
+import { computed } from 'vue';
+import { useRoute } from 'vue-router';
+import { currentLocale, setLocale, t } from '@/i18n/index.js';
+
 const CommonComponents = {
     Header: {
         props: {
@@ -18,21 +22,54 @@ const CommonComponents = {
                 default: ''
             }
         },
+        setup(props) {
+            const route = useRoute();
+            const displayTitle = computed(() => {
+                return route.meta.titleKey ? t(route.meta.titleKey) : props.title;
+            });
+            const displayDescription = computed(() => {
+                currentLocale.value;
+                return props.description;
+            });
+
+            return {
+                currentLocale,
+                displayTitle,
+                displayDescription,
+                setLocale,
+                t
+            };
+        },
         template: `
             <header class="bg-white shadow-md py-3">
                 <div class="container mx-auto px-4">
-                    <div class="flex items-center justify-between">
+                    <div class="flex items-center justify-between gap-3">
                         <div class="flex items-center cursor-pointer" 
                              :class="{ 'hover:text-primary transition-colors': link }"
                              @click="handleHeaderClick">
-                            <i v-if="icon" :class="[icon, 'text-2xl mr-2 text-primary']"></i>
-                            <h1 class="text-[clamp(1.2rem,2vw,1.8rem)] font-bold text-dark">
-                                <span class="text-primary">{{ title }}</span>
-                            </h1>
+                             <i v-if="icon" :class="[icon, 'text-2xl mr-2 text-primary']"></i>
+                             <h1 class="text-[clamp(1.2rem,2vw,1.8rem)] font-bold text-dark">
+                                 <span class="text-primary">{{ displayTitle }}</span>
+                             </h1>
                         </div>
-                        <p v-if="description" class="text-gray-600 text-sm">
-                            {{ description }}
-                        </p>
+                        <div class="flex min-w-0 items-center gap-3">
+                            <p v-if="displayDescription" class="hidden text-gray-600 text-sm sm:block">
+                                {{ displayDescription }}
+                            </p>
+                            <button type="button"
+                                    class="relative flex h-8 w-20 items-center rounded-full border border-gray-200 bg-gray-100 p-0.5 text-[11px] font-semibold outline-none transition-colors hover:border-primary focus-visible:ring-2 focus-visible:ring-primary/30"
+                                    :title="t('common.language')"
+                                    :aria-label="t('common.language')"
+                                    :aria-pressed="currentLocale === 'en-US'"
+                                    @click="setLocale(currentLocale === 'zh-CN' ? 'en-US' : 'zh-CN')">
+                                <span class="absolute left-0.5 top-0.5 h-7 w-[38px] rounded-full bg-white shadow-sm transition-transform duration-300 ease-out"
+                                      :class="currentLocale === 'en-US' ? 'translate-x-10' : 'translate-x-0'"></span>
+                                <span class="relative z-10 flex-1 transition-colors"
+                                      :class="currentLocale === 'zh-CN' ? 'text-primary' : 'text-gray-400'">中</span>
+                                <span class="relative z-10 flex-1 transition-colors"
+                                      :class="currentLocale === 'en-US' ? 'text-primary' : 'text-gray-400'">EN</span>
+                            </button>
+                        </div>
                     </div>
                 </div>
             </header>
@@ -157,14 +194,21 @@ const CommonComponents = {
     },
 
     LoadingSpinner: {
+        setup() {
+            return { t };
+        },
         template: `
             <div class="flex justify-center items-center py-16">
                 <div class="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary"></div>
+                <span class="sr-only">{{ t('common.loading') }}</span>
             </div>
         `
     },
 
     Pagination: {
+        setup() {
+            return { t };
+        },
         template: `
             <div class="mt-8 flex justify-center items-center gap-4">
                 <button @click="$emit('prev-page')"
@@ -172,14 +216,14 @@ const CommonComponents = {
                         :class="['px-4 py-2 rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 transition-all flex items-center gap-1',
                                  currentPage === 1 ? 'opacity-50 cursor-not-allowed' : '']">
                     <i class="fas fa-chevron-left"></i>
-                    <span>上一页</span>
+                    <span>{{ t('common.previousPage') }}</span>
                 </button>
-                <span class="text-gray-600">第 {{ currentPage }} 页</span>
+                <span class="text-gray-600">{{ t('common.currentPage', { page: currentPage }) }}</span>
                 <button @click="$emit('next-page')"
                         :disabled="!hasNext"
                         :class="['px-4 py-2 rounded-lg border border-gray-300 bg-white text-gray-700 hover:bg-gray-50 transition-all flex items-center gap-1',
                                  !hasNext ? 'opacity-50 cursor-not-allowed' : '']">
-                    <span>下一页</span>
+                    <span>{{ t('common.nextPage') }}</span>
                     <i class="fas fa-chevron-right"></i>
                 </button>
             </div>
@@ -197,6 +241,9 @@ const CommonComponents = {
     },
 
     Modal: {
+        setup() {
+            return { t };
+        },
         template: `
         <div v-if="visible" class="fixed inset-0 z-50 flex items-center justify-center">
             <div class="absolute inset-0 bg-black/50 backdrop-blur" @click="handleOverlayClick"></div>
@@ -204,7 +251,7 @@ const CommonComponents = {
                           maxWidthClass, maxHeightClass]">
                 <div class="p-6 border-b border-gray-200 flex justify-between items-center sticky top-0 bg-white z-10">
                     <h3 class="text-xl font-bold text-gray-800 truncate">{{ title }}</h3>
-                    <button @click="handleClose" class="text-gray-500 hover:text-gray-700 transition-colors">
+                    <button @click="handleClose" class="text-gray-500 hover:text-gray-700 transition-colors" :aria-label="t('common.close')">
                         <i class="fas fa-times text-xl"></i>
                     </button>
                 </div>

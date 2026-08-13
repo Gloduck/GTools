@@ -25,16 +25,16 @@ public class Result<T> {
      * 未找到资源
      */
     @SuppressWarnings("rawtypes")
-    private static final Result NOT_FOUNT_RESULT = result(StatusCode.NOT_FOUND, null);
+    private static final Result NOT_FOUNT_RESULT = result(StatusCode.DATA_NOT_FOUND, null);
 
     /**
      * 失败结果
      */
     @SuppressWarnings("rawtypes")
-    private static final Result FAILED_RESULT = result(StatusCode.FAIL, null);
+    private static final Result FAILED_RESULT = result(StatusCode.OPERATION_FAILED, null);
 
     @SuppressWarnings("rawtypes")
-    private static final Result ERROR_RESULT = result(StatusCode.ERROR, null);
+    private static final Result ERROR_RESULT = result(StatusCode.INTERNAL_SERVER_ERROR, null);
 
     private final Integer code;
     private final String msg;
@@ -91,7 +91,7 @@ public class Result<T> {
      * @return {@link Result}<{@link T}>
      */
     public static <T> Result<T> fail(String msg) {
-        return new Result<>(StatusCode.FAIL.value, msg, null);
+        return new Result<>(StatusCode.OPERATION_FAILED.value, msg, null);
     }
 
     /**
@@ -111,7 +111,7 @@ public class Result<T> {
      * @return {@link Result}<{@link T}>
      */
     public static <T> Result<T> error(String msg) {
-        return new Result<>(StatusCode.ERROR.value, msg, null);
+        return new Result<>(StatusCode.INTERNAL_SERVER_ERROR.value, msg, null);
     }
 
     /**
@@ -182,17 +182,17 @@ public class Result<T> {
         /**
          * 未找到资源
          */
-        NOT_FOUND(404, "not found"),
+        DATA_NOT_FOUND(404, "DATA_NOT_FOUND"),
 
         /**
          * 失败
          */
-        FAIL(417, "fail"),
+        OPERATION_FAILED(417, "OPERATION_FAILED"),
 
         /**
          * 错误
          */
-        ERROR(500, "error");
+        INTERNAL_SERVER_ERROR(500, "INTERNAL_SERVER_ERROR");
 
         /**
          * 默认值

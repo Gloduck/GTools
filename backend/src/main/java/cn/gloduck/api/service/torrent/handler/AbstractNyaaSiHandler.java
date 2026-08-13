@@ -3,6 +3,7 @@ package cn.gloduck.api.service.torrent.handler;
 import cn.gloduck.api.entity.config.TorrentConfig;
 import cn.gloduck.api.entity.model.torrent.TorrentFileInfo;
 import cn.gloduck.api.entity.model.torrent.TorrentInfo;
+import cn.gloduck.api.exceptions.ApiError;
 import cn.gloduck.api.exceptions.ApiException;
 import cn.gloduck.api.utils.DateUtils;
 import cn.gloduck.api.utils.NetUtils;
@@ -35,7 +36,7 @@ public abstract class AbstractNyaaSiHandler extends AbstractTorrentHandler {
         Document doc = Jsoup.parse(response);
         String hash = Optional.ofNullable(doc.selectFirst("kbd")).map(Element::text).orElse(null);
         if (hash == null) {
-            throw new ApiException("Hash not found");
+            throw new ApiException(ApiError.TORRENT_HASH_NOT_FOUND);
         }
         String name = Optional.ofNullable(doc.selectFirst("div.panel-heading h3.panel-title")).map(Element::text).orElse(null);
         String fileSizeStr = null;

@@ -2,6 +2,7 @@ package cn.gloduck.api.controller;
 
 import cn.gloduck.api.entity.model.ssh.SshConnectRequest;
 import cn.gloduck.api.entity.model.ssh.SftpTransferResult;
+import cn.gloduck.api.exceptions.ApiError;
 import cn.gloduck.api.exceptions.ApiException;
 import cn.gloduck.api.service.ssh.SshService;
 import cn.gloduck.api.utils.JsonUtils;
@@ -85,7 +86,13 @@ public class SftpController {
                                              String privateKey,
                                              String passphrase) {
         if (!StringUtils.isNullOrEmpty(encodedConnect)) {
-            return JsonUtils.readValue(decodeConnectHeader(encodedConnect), SshConnectRequest.class);
+            try {
+                return JsonUtils.readValue(decodeConnectHeader(encodedConnect), SshConnectRequest.class);
+            } catch (ApiException e) {
+                throw e;
+            } catch (RuntimeException e) {
+                throw new ApiException(ApiError.SFTP_REQUEST_INVALID, e);
+            }
         }
         SshConnectRequest request = new SshConnectRequest();
         request.host = host;
@@ -106,7 +113,7 @@ public class SftpController {
             try {
                 return new String(Base64.getDecoder().decode(trimmed), StandardCharsets.UTF_8);
             } catch (IllegalArgumentException e) {
-                throw new ApiException("X-Ssh-Connect must be Base64URL encoded JSON", e);
+                throw new ApiException(ApiError.SFTP_REQUEST_INVALID, e);
             }
         }
     }

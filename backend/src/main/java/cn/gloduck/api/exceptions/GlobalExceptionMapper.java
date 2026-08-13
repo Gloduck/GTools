@@ -14,6 +14,6 @@ public class GlobalExceptionMapper implements ExceptionMapper<Throwable> {
     @Override
     public Response toResponse(Throwable exception) {
         LOG.error("Unhandled request error", exception);
-        return Response.ok(Result.error(exception.getMessage()), MediaType.APPLICATION_JSON).build();
+        return Response.ok(Result.error(ApiError.INTERNAL_SERVER_ERROR.name()), MediaType.APPLICATION_JSON).build();
     }
 }

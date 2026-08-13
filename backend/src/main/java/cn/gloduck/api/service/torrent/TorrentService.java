@@ -3,6 +3,7 @@ package cn.gloduck.api.service.torrent;
 import cn.gloduck.api.entity.config.TorrentConfig;
 import cn.gloduck.api.entity.model.torrent.TorrentHandlerInfo;
 import cn.gloduck.api.entity.model.torrent.TorrentInfo;
+import cn.gloduck.api.exceptions.ApiError;
 import cn.gloduck.api.exceptions.ApiException;
 import cn.gloduck.api.service.torrent.handler.*;
 import cn.gloduck.common.entity.base.ScrollPageResult;
@@ -103,21 +104,21 @@ public class TorrentService {
         TorrentHandler torrentHandler = torrentHandlers.stream()
                 .filter(t -> t.code().equals(code))
                 .findFirst()
-                .orElseThrow(() -> new ApiException("Unsupported source: " + code));
+                .orElseThrow(() -> new ApiException(ApiError.TORRENT_SOURCE_UNSUPPORTED));
         return torrentHandler.queryDetail(id);
     }
 
     public ScrollPageResult<TorrentInfo> search(Integer pageIndex, Integer pageSize, String keyword, String code, String sortField, String sortOrder) {
         // 参数校验
         if (pageSize == null || pageIndex == null || keyword == null || code == null) {
-            throw new ApiException("Invalid parameter");
+            throw new ApiException(ApiError.INVALID_PARAMETER);
         }
 
         // 获取对应的处理器
         TorrentHandler torrentHandler = torrentHandlers.stream()
                 .filter(t -> t.code().equals(code))
                 .findFirst()
-                .orElseThrow(() -> new ApiException("Unsupported source: " + code));
+                .orElseThrow(() -> new ApiException(ApiError.TORRENT_SOURCE_UNSUPPORTED));
 
         int handlerDefaultPageSize = torrentHandler.pageSize();
         List<TorrentInfo> combinedResults = new ArrayList<>();

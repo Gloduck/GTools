@@ -11,21 +11,21 @@
                             <div class="bg-white rounded-xl shadow-lg p-6">
                                 <div class="flex justify-between items-center mb-4">
                                     <h2 class="text-lg font-bold text-gray-800">
-                                        <i class="fas fa-images mr-2 text-primary"></i>图片预览
+                                        <i class="fas fa-images mr-2 text-primary"></i>{{ $t('imageEditor.preview') }}
                                     </h2>
                                     <div class="flex gap-2">
                                         <button @click="clearAll" class="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 transition-colors">
-                                            <i class="fas fa-trash-alt mr-1"></i>清空
+                                            <i class="fas fa-trash-alt mr-1"></i>{{ $t('common.clear') }}
                                         </button>
                                     </div>
                                 </div>
 
                                 <div v-if="images.length === 0" class="border-2 border-dashed border-gray-300 rounded-xl p-12 text-center">
                                     <i class="fas fa-cloud-upload-alt text-5xl text-gray-300 mb-4"></i>
-                                    <p class="text-gray-500 mb-4">拖拽图片到这里或点击选择</p>
+                                    <p class="text-gray-500 mb-4">{{ $t('imageEditor.dropHint') }}</p>
                                     <input type="file" ref="fileInput" @change="handleFileSelect" accept="image/*" multiple class="hidden" id="fileInput">
                                     <label for="fileInput" class="px-6 py-3 bg-primary text-white rounded-lg cursor-pointer hover:bg-secondary transition-colors inline-block">
-                                        <i class="fas fa-folder-open mr-2"></i>选择图片
+                                        <i class="fas fa-folder-open mr-2"></i>{{ $t('imageEditor.selectImages') }}
                                     </label>
                                 </div>
 
@@ -55,7 +55,7 @@
 
                                     <div class="border-t pt-4 mt-4">
                                         <label for="fileInput2" class="inline-flex items-center px-4 py-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 cursor-pointer transition-colors">
-                                            <i class="fas fa-plus mr-2"></i>添加更多图片
+                                            <i class="fas fa-plus mr-2"></i>{{ $t('imageEditor.addMoreImages') }}
                                         </label>
                                         <input type="file" ref="fileInput2" @change="handleFileSelect" accept="image/*" multiple class="hidden" id="fileInput2">
                                     </div>
@@ -66,49 +66,49 @@
                         <div class="space-y-6">
                             <div class="bg-white rounded-xl shadow-lg p-6">
                                 <h2 class="text-lg font-bold text-gray-800 mb-4">
-                                    <i class="fas fa-sliders-h mr-2 text-primary"></i>处理选项
+                                    <i class="fas fa-sliders-h mr-2 text-primary"></i>{{ $t('imageEditor.options') }}
                                 </h2>
 
                                 <div class="space-y-4">
                                     <div>
-                                        <label class="block text-sm font-medium text-gray-700 mb-2">操作类型</label>
+                                        <label class="block text-sm font-medium text-gray-700 mb-2">{{ $t('imageEditor.operationType') }}</label>
                                         <div class="grid grid-cols-2 gap-2">
                                             <button @click="operation = 'resize'" :class="operation === 'resize' ? 'bg-primary text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'"
                                                 class="px-3 py-2 rounded-lg transition-colors text-sm">
-                                                <i class="fas fa-expand mr-1"></i>缩放
+                                                <i class="fas fa-expand mr-1"></i>{{ $t('imageEditor.resize') }}
                                             </button>
                                             <button @click="operation = 'compress'" :class="operation === 'compress' ? 'bg-primary text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'"
                                                 class="px-3 py-2 rounded-lg transition-colors text-sm">
-                                                <i class="fas fa-compress mr-1"></i>压缩
+                                                <i class="fas fa-compress mr-1"></i>{{ $t('imageEditor.compress') }}
                                             </button>
                                             <button @click="operation = 'crop'" :class="operation === 'crop' ? 'bg-primary text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'"
                                                 class="px-3 py-2 rounded-lg transition-colors text-sm">
-                                                <i class="fas fa-crop mr-1"></i>裁剪
+                                                <i class="fas fa-crop mr-1"></i>{{ $t('imageEditor.crop') }}
                                             </button>
                                         </div>
                                     </div>
 
                                     <div v-if="operation === 'resize'">
-                                        <label class="block text-sm font-medium text-gray-700 mb-2">缩放方式</label>
+                                        <label class="block text-sm font-medium text-gray-700 mb-2">{{ $t('imageEditor.resizeMode') }}</label>
                                         <div class="space-y-2">
                                             <label class="flex items-center">
                                                 <input type="radio" v-model="resizeMode" value="scale" class="mr-2">
-                                                <span class="text-sm">按比例缩放</span>
+                                                <span class="text-sm">{{ $t('imageEditor.proportionalResize') }}</span>
                                             </label>
                                             <label class="flex items-center">
                                                 <input type="radio" v-model="resizeMode" value="width" class="mr-2">
-                                                <span class="text-sm">固定宽度</span>
+                                                <span class="text-sm">{{ $t('imageEditor.fixedWidth') }}</span>
                                             </label>
                                             <label class="flex items-center">
                                                 <input type="radio" v-model="resizeMode" value="height" class="mr-2">
-                                                <span class="text-sm">固定高度</span>
+                                                <span class="text-sm">{{ $t('imageEditor.fixedHeight') }}</span>
                                             </label>
                                         </div>
                                     </div>
 
                                     <div v-if="operation === 'resize' && resizeMode === 'scale'">
                                         <label class="block text-sm font-medium text-gray-700 mb-2">
-                                            缩放比例: {{ resizeScale }}%
+                                            {{ $t('imageEditor.resizeScale', { scale: resizeScale }) }}
                                         </label>
                                         <input type="range" v-model.number="resizeScale" min="10" max="200" class="w-full">
                                         <div class="flex justify-between text-xs text-gray-500 mt-1">
@@ -118,18 +118,18 @@
                                     </div>
 
                                     <div v-if="operation === 'resize' && resizeMode === 'width'">
-                                        <label class="block text-sm font-medium text-gray-700 mb-2">宽度 (px)</label>
+                                        <label class="block text-sm font-medium text-gray-700 mb-2">{{ $t('imageEditor.widthPx') }}</label>
                                         <input type="number" v-model.number="resizeWidth" class="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-primary focus:border-primary outline-none">
                                     </div>
 
                                     <div v-if="operation === 'resize' && resizeMode === 'height'">
-                                        <label class="block text-sm font-medium text-gray-700 mb-2">高度 (px)</label>
+                                        <label class="block text-sm font-medium text-gray-700 mb-2">{{ $t('imageEditor.heightPx') }}</label>
                                         <input type="number" v-model.number="resizeHeight" class="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-primary focus:border-primary outline-none">
                                     </div>
 
                                     <div v-if="operation === 'compress'">
                                         <label class="block text-sm font-medium text-gray-700 mb-2">
-                                            压缩质量: {{ compressQuality * 100 }}%
+                                            {{ $t('imageEditor.compressionQuality', { quality: compressQuality * 100 }) }}
                                         </label>
                                         <input type="range" v-model.number="compressQuality" min="0.1" max="1" step="0.1" class="w-full">
                                         <div class="flex justify-between text-xs text-gray-500 mt-1">
@@ -139,21 +139,21 @@
                                     </div>
 
                                     <div v-if="operation === 'compress'">
-                                        <label class="block text-sm font-medium text-gray-700 mb-2">最大宽度 (px)</label>
-                                        <input type="number" v-model="maxWidth" placeholder="不限制" class="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-primary focus:border-primary outline-none">
+                                        <label class="block text-sm font-medium text-gray-700 mb-2">{{ $t('imageEditor.maxWidthPx') }}</label>
+                                        <input type="number" v-model="maxWidth" :placeholder="$t('imageEditor.unlimited')" class="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-primary focus:border-primary outline-none">
                                     </div>
 
                                     <div v-if="operation === 'compress'">
-                                        <label class="block text-sm font-medium text-gray-700 mb-2">最大高度 (px)</label>
-                                        <input type="number" v-model="maxHeight" placeholder="不限制" class="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-primary focus:border-primary outline-none">
+                                        <label class="block text-sm font-medium text-gray-700 mb-2">{{ $t('imageEditor.maxHeightPx') }}</label>
+                                        <input type="number" v-model="maxHeight" :placeholder="$t('imageEditor.unlimited')" class="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-primary focus:border-primary outline-none">
                                     </div>
 
                                     <div v-if="operation === 'crop'">
-                                        <label class="block text-sm font-medium text-gray-700 mb-2">裁剪比例</label>
+                                        <label class="block text-sm font-medium text-gray-700 mb-2">{{ $t('imageEditor.cropAspectRatio') }}</label>
                                         <div class="grid grid-cols-3 gap-2">
                                             <button @click="setAspectRatio(NaN)" :class="Number.isNaN(aspectRatio) ? 'bg-primary text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'"
                                                 class="px-2 py-2 rounded-lg transition-colors text-xs">
-                                                <i class="fas fa-expand mr-1"></i>自由
+                                                <i class="fas fa-expand mr-1"></i>{{ $t('imageEditor.freeAspectRatio') }}
                                             </button>
                                             <button @click="setAspectRatio(1)" :class="aspectRatio === 1 ? 'bg-primary text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'"
                                                 class="px-2 py-2 rounded-lg transition-colors text-xs">
@@ -182,11 +182,11 @@
 
                             <div class="bg-white rounded-xl shadow-lg p-6">
                                 <h2 class="text-lg font-bold text-gray-800 mb-4">
-                                    <i class="fas fa-play-circle mr-2 text-primary"></i>处理操作
+                                    <i class="fas fa-play-circle mr-2 text-primary"></i>{{ $t('imageEditor.actions') }}
                                 </h2>
                                 <div class="space-y-3">
                                     <div class="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                                        <span class="text-sm text-gray-600">输出格式</span>
+                                        <span class="text-sm text-gray-600">{{ $t('imageEditor.outputFormat') }}</span>
                                         <select v-model="outputFormat" class="px-2 py-1 border rounded text-sm">
                                             <option value="image/jpeg">JPEG</option>
                                             <option value="image/png">PNG</option>
@@ -194,7 +194,7 @@
                                         </select>
                                     </div>
                                     <div class="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                                        <span class="text-sm text-gray-600">下载时保持原名</span>
+                                        <span class="text-sm text-gray-600">{{ $t('imageEditor.keepOriginalName') }}</span>
                                         <button @click="keepOriginalName = !keepOriginalName" 
                                             :class="keepOriginalName ? 'bg-green-500' : 'bg-gray-300'"
                                             class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors">
@@ -208,29 +208,29 @@
                                     class="w-full mt-4 px-6 py-3 bg-primary text-white rounded-lg hover:bg-secondary disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
                                     <i v-if="processing" class="fas fa-spinner fa-spin mr-2"></i>
                                     <i v-else class="fas fa-check mr-2"></i>
-                                    {{ processing ? '处理中...' : '应用当前操作' }}
+                                    {{ processing ? $t('imageEditor.processing') : $t('imageEditor.applyCurrent') }}
                                 </button>
 
                                 <button v-if="operation === 'resize' || operation === 'compress'" 
                                     @click="processAllImages" :disabled="images.length === 0 || processing"
                                     class="w-full mt-2 px-6 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
-                                    <i class="fas fa-copy mr-2"></i>应用到所有图片
+                                    <i class="fas fa-copy mr-2"></i>{{ $t('imageEditor.applyAll') }}
                                 </button>
 
                                 <div class="flex gap-2 mt-3">
                                     <button @click="restoreImage" :disabled="!selectedImage"
                                         class="flex-1 px-4 py-2 bg-amber-500 text-white rounded-lg hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
-                                        <i class="fas fa-undo mr-1"></i>还原图片
+                                        <i class="fas fa-undo mr-1"></i>{{ $t('imageEditor.restoreImage') }}
                                     </button>
                                     <button @click="downloadCurrentImage" :disabled="!selectedImage"
                                         class="flex-1 px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
-                                        <i class="fas fa-download mr-1"></i>下载当前
+                                        <i class="fas fa-download mr-1"></i>{{ $t('imageEditor.downloadCurrent') }}
                                     </button>
                                 </div>
 
                                 <button @click="downloadAllImages" :disabled="images.length === 0"
                                     class="w-full mt-3 px-6 py-3 bg-green-500 text-white rounded-lg hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
-                                    <i class="fas fa-download mr-2"></i>下载全部 ({{ images.length }})
+                                    <i class="fas fa-download mr-2"></i>{{ $t('imageEditor.downloadAll', { count: images.length }) }}
                                 </button>
                             </div>
                         </div>
@@ -248,6 +248,7 @@ import { CommonUtils } from '@/shared/common-utils.js';
 import { CdnUtils } from '@/shared/cdn-utils.js';
 import { ImageUtils } from '@/shared/image-utils.js';
 import { CommonComponents } from '@/shared/common-components.js';
+import { t } from '@/i18n/index.js';
 
 export default {
     name: 'ImageEditorView',
@@ -290,7 +291,7 @@ export default {
                     const files = Array.from(event.target.files);
                     for (const file of files) {
                         if (!file.type.startsWith('image/')) {
-                            showToast('请选择图片文件', 'error');
+                            showToast(t('imageEditor.invalidImageFile'), 'error');
                             continue;
                         }
 
@@ -339,7 +340,7 @@ export default {
                         CropperClass = CropperClass || await CdnUtils.loadCropper();
                     } catch (error) {
                         console.error('Failed to load Cropper:', error);
-                        showToast(`图片裁剪工具加载失败: ${error.message}`, 'error');
+                        showToast(t('imageEditor.cropperLoadFailed', { message: error.message }), 'error');
                         return;
                     }
 
@@ -382,12 +383,12 @@ export default {
                         cropper.destroy();
                         cropper = null;
                     }
-                    showToast('已清空所有图片');
+                    showToast(t('imageEditor.clearedAll'));
                 };
 
                 const processCurrentImage = async () => {
                     if (!selectedImage.value) {
-                        showToast('请先选择图片', 'error');
+                        showToast(t('imageEditor.selectImageFirst'), 'error');
                         return;
                     }
 
@@ -413,11 +414,11 @@ export default {
                             if (operation.value === 'crop') {
                                 await initCropper();
                             }
-                            showToast('处理完成');
+                            showToast(t('imageEditor.processComplete'));
                         }
                     } catch (error) {
                         console.error('处理失败:', error);
-                        showToast('处理失败: ' + error.message, 'error');
+                        showToast(t('imageEditor.processFailed', { message: error.message }), 'error');
                     } finally {
                         processing.value = false;
                     }
@@ -425,7 +426,7 @@ export default {
 
                 const processAllImages = async () => {
                     if (images.value.length === 0) {
-                        showToast('请先选择图片', 'error');
+                        showToast(t('imageEditor.selectImageFirst'), 'error');
                         return;
                     }
 
@@ -449,10 +450,10 @@ export default {
 
                         selectedImage.value = images.value[currentIndex.value];
                         await nextTick();
-                        showToast(`已处理 ${images.value.length} 张图片`);
+                        showToast(t('imageEditor.processedCount', { count: images.value.length }));
                     } catch (error) {
                         console.error('处理失败:', error);
-                        showToast('处理失败: ' + error.message, 'error');
+                        showToast(t('imageEditor.processFailed', { message: error.message }), 'error');
                     } finally {
                         processing.value = false;
                     }
@@ -586,7 +587,7 @@ export default {
                 const downloadCurrentImage = () => {
                     if (selectedImage.value) {
                         ImageUtils.downloadImage(selectedImage.value.preview, selectedImage.value.name);
-                        showToast('开始下载');
+                        showToast(t('imageEditor.downloadStarted'));
                     }
                 };
 
@@ -596,7 +597,7 @@ export default {
                             ImageUtils.downloadImage(img.preview, img.name);
                         }, index * 300);
                     });
-                    showToast(`开始下载 ${images.value.length} 张图片`);
+                    showToast(t('imageEditor.downloadCountStarted', { count: images.value.length }));
                 };
 
                 const restoreImage = async () => {
@@ -622,7 +623,7 @@ export default {
                     if (operation.value === 'crop') {
                         await initCropper();
                     }
-                    showToast('已还原到原始图片');
+                    showToast(t('imageEditor.restored'));
                 };
 
                 watch(aspectRatio, (newVal) => {

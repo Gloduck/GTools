@@ -4,6 +4,7 @@ import cn.gloduck.api.entity.config.SshConfig;
 import cn.gloduck.api.entity.model.ssh.SshConnectRequest;
 import cn.gloduck.api.entity.model.ssh.SshConnectionInfo;
 import cn.gloduck.api.entity.model.ssh.SftpTransferResult;
+import cn.gloduck.api.exceptions.ApiError;
 import cn.gloduck.api.exceptions.ApiException;
 import cn.gloduck.api.utils.StringUtils;
 import com.jcraft.jsch.ChannelSftp;
@@ -53,7 +54,7 @@ public class SshService {
             return;
         }
         if (!configuredSecurityKey.equals(securityKey)) {
-            throw new ApiException("Invalid ssh security key");
+            throw new ApiException(ApiError.SSH_SECURITY_KEY_INVALID);
         }
     }
 
@@ -78,7 +79,7 @@ public class SshService {
         }
     }
 
-    public SshConnectionInfo connect(SshConnectRequest request, BiConsumer<String, String> outputConsumer, Consumer<String> closeCallback) {
+    public SshConnectionInfo connect(SshConnectRequest request, BiConsumer<String, String> outputConsumer, Consumer<ApiError> closeCallback) {
         validate(request);
         ensureConnectionCapacity();
 
@@ -133,7 +134,7 @@ public class SshService {
             if (sshSession != null) {
                 sshSession.disconnect();
             }
-            throw new ApiException("SSH connect failed: " + rootMessage(e), e);
+            throw new ApiException(ApiError.SSH_CONNECT_FAILED, e);
         }
     }
 
@@ -141,7 +142,7 @@ public class SshService {
         validate(request);
         validateRemotePath(remotePath);
         if (input == null) {
-            throw new ApiException("upload body is required");
+            throw new ApiException(ApiError.SFTP_REQUEST_INVALID);
         }
 
         com.jcraft.jsch.Session session = null;
@@ -165,7 +166,7 @@ public class SshService {
         } catch (ApiException e) {
             throw e;
         } catch (Exception e) {
-            throw new ApiException("SFTP upload failed: " + rootMessage(e), e);
+            throw new ApiException(ApiError.SFTP_UPLOAD_FAILED, e);
         } finally {
             boolean deletedTemp = renamed || deleteQuietly(sftp, tempPath);
             closeSftp(sftp, session);
@@ -187,7 +188,7 @@ public class SshService {
             String resolvedRemotePath = resolveRemotePath(sftp, remotePath);
             SftpATTRS attrs = sftp.lstat(resolvedRemotePath);
             if (attrs.isDir()) {
-                throw new ApiException("remotePath is a directory");
+                throw new ApiException(ApiError.SFTP_REMOTE_PATH_INVALID);
             }
             return new SftpDownload(session, sftp, resolvedRemotePath, attrs.getSize());
         } catch (ApiException e) {
@@ -195,7 +196,7 @@ public class SshService {
             throw e;
         } catch (Exception e) {
             closeSftp(sftp, session);
-            throw new ApiException("SFTP download failed: " + rootMessage(e), e);
+            throw new ApiException(ApiError.SFTP_DOWNLOAD_FAILED, e);
         }
     }
 
@@ -239,7 +240,7 @@ public class SshService {
         cleanupConnections();
         int maxConnections = maxConnections();
         if (maxConnections > 0 && connections.size() >= maxConnections) {
-            throw new ApiException("SSH connection limit exceeded");
+            throw new ApiException(ApiError.SSH_CONNECTION_LIMIT_EXCEEDED);
         }
     }
 
@@ -250,23 +251,23 @@ public class SshService {
             if (connection == null || !connection.isConnected()) {
                 if (connections.remove(entry.getKey(), connection) && connection != null) {
                     connection.close();
-                    connection.notifyClosed("SSH connection disconnected");
+                    connection.notifyClosed(ApiError.SSH_CONNECTION_DISCONNECTED);
                 }
             } else if (timeoutMillis > 0 && connection.isHeartbeatTimedOut(timeoutMillis) && connections.remove(entry.getKey(), connection)) {
                 connection.close();
-                connection.notifyClosed("SSH heartbeat timeout");
+                connection.notifyClosed(ApiError.SSH_HEARTBEAT_TIMEOUT);
             }
         }
     }
 
     private SshConnection connection(String connectionId) {
         if (StringUtils.isNullOrEmpty(connectionId)) {
-            throw new ApiException("connectionId is required");
+            throw new ApiException(ApiError.SSH_CONNECTION_UNAVAILABLE);
         }
         SshConnection connection = connections.get(connectionId);
         if (connection == null || !connection.isConnected()) {
             connections.remove(connectionId);
-            throw new ApiException("SSH connection is not available");
+            throw new ApiException(ApiError.SSH_CONNECTION_UNAVAILABLE);
         }
         return connection;
     }
@@ -299,10 +300,10 @@ public class SshService {
 
     private void validateRemotePath(String remotePath) {
         if (StringUtils.isNullOrEmpty(remotePath) || remotePath.isBlank()) {
-            throw new ApiException("remotePath is required");
+            throw new ApiException(ApiError.SFTP_REMOTE_PATH_INVALID);
         }
         if (remotePath.endsWith("/")) {
-            throw new ApiException("remotePath must be a file path");
+            throw new ApiException(ApiError.SFTP_REMOTE_PATH_INVALID);
         }
     }
 
@@ -332,7 +333,7 @@ public class SshService {
             try {
                 SftpATTRS attrs = sftp.lstat(current);
                 if (!attrs.isDir()) {
-                    throw new ApiException("Remote path is not a directory: " + current);
+                    throw new ApiException(ApiError.SFTP_REMOTE_PATH_INVALID);
                 }
             } catch (SftpException e) {
                 if (e.id != ChannelSftp.SSH_FX_NO_SUCH_FILE) {
@@ -403,23 +404,23 @@ public class SshService {
 
     private void validate(SshConnectRequest request) {
         if (request == null) {
-            throw new ApiException("connect request is required");
+            throw new ApiException(ApiError.SSH_CONNECT_REQUEST_INVALID);
         }
         if (StringUtils.isNullOrEmpty(request.host)) {
-            throw new ApiException("host is required");
+            throw new ApiException(ApiError.SSH_CONNECT_REQUEST_INVALID);
         }
         if (StringUtils.isNullOrEmpty(request.username)) {
-            throw new ApiException("username is required");
+            throw new ApiException(ApiError.SSH_CONNECT_REQUEST_INVALID);
         }
         if (request.port != null && (request.port <= 0 || request.port > 65535)) {
-            throw new ApiException("port is invalid");
+            throw new ApiException(ApiError.SSH_CONNECT_REQUEST_INVALID);
         }
         if (isPrivateKeyAuth(request.authType)) {
             if (StringUtils.isNullOrEmpty(request.privateKey)) {
-                throw new ApiException("privateKey is required");
+                throw new ApiException(ApiError.SSH_CONNECT_REQUEST_INVALID);
             }
         } else if (StringUtils.isNullOrEmpty(request.password)) {
-            throw new ApiException("password is required");
+            throw new ApiException(ApiError.SSH_CONNECT_REQUEST_INVALID);
         }
     }
 
@@ -497,15 +498,6 @@ public class SshService {
 
     private boolean isPrivateKeyAuth(String authType) {
         return "privateKey".equalsIgnoreCase(authType) || "key".equalsIgnoreCase(authType) || "sshKey".equalsIgnoreCase(authType);
-    }
-
-    private String rootMessage(Exception e) {
-        Throwable cur = e;
-        while (cur.getCause() != null && cur.getCause() != cur) {
-            cur = cur.getCause();
-        }
-        String message = cur.getMessage();
-        return StringUtils.isNullOrEmpty(message) ? cur.getClass().getSimpleName() : message;
     }
 
     public class SftpDownload implements AutoCloseable {

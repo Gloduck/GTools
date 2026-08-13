@@ -2,6 +2,7 @@ package cn.gloduck.api.service.torrent.handler;
 
 import cn.gloduck.api.entity.config.TorrentConfig;
 import cn.gloduck.api.entity.model.torrent.TorrentInfo;
+import cn.gloduck.api.exceptions.ApiError;
 import cn.gloduck.api.exceptions.ApiException;
 import cn.gloduck.api.utils.*;
 import cn.gloduck.common.entity.base.ScrollPageResult;
@@ -66,7 +67,7 @@ public class TokyoToshokanHandler extends AbstractTorrentHandler {
         }
 
         if (hash == null) {
-            throw new ApiException("Hash not found");
+            throw new ApiException(ApiError.TORRENT_HASH_NOT_FOUND);
         }
         TorrentInfo torrentInfo = new TorrentInfo();
         torrentInfo.setId(id);
@@ -98,7 +99,7 @@ public class TokyoToshokanHandler extends AbstractTorrentHandler {
         Document document = Jsoup.parse(response);
         Elements trs = document.select("table.listing tbody tr.category_0");
         if (trs.size() % 2 != 0) {
-            throw new ApiException("Api Response Error data");
+            throw new ApiException(ApiError.TORRENT_RESPONSE_INVALID);
         }
         ArrayList<TorrentInfo> torrentInfos = new ArrayList<>(pageSize());
         for (int i = 0; i < trs.size(); i += 2) {

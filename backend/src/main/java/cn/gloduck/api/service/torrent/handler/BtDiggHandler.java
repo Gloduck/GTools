@@ -3,6 +3,7 @@ package cn.gloduck.api.service.torrent.handler;
 import cn.gloduck.api.entity.config.TorrentConfig;
 import cn.gloduck.api.entity.model.torrent.TorrentFileInfo;
 import cn.gloduck.api.entity.model.torrent.TorrentInfo;
+import cn.gloduck.api.exceptions.ApiError;
 import cn.gloduck.api.exceptions.ApiException;
 import cn.gloduck.api.utils.NetUtils;
 import cn.gloduck.api.utils.Patterns;
@@ -89,7 +90,7 @@ public class BtDiggHandler extends AbstractTorrentHandler {
             return body;
         } catch (Exception e) {
             LOGGER.warning(String.format("Request [%s] Error: %s, response: %s", requestUrl, e.getMessage(), body));
-            throw new ApiException("Request Api Error: " + e.getMessage());
+            throw new ApiException(ApiError.TORRENT_REQUEST_FAILED, e);
         }
     }
 
@@ -103,7 +104,7 @@ public class BtDiggHandler extends AbstractTorrentHandler {
         Elements tables = document.getElementsByTag("table");
         Element torrentInfoTable = tables.stream().filter(t -> t.html().contains("fa fa-magnet")).findAny().orElse(null);
         if (torrentInfoTable == null) {
-            throw new ApiException("Torrent info not found");
+            throw new ApiException(ApiError.TORRENT_INFO_NOT_FOUND);
         }
         Elements infos = torrentInfoTable.select("table tr");
         TorrentInfo torrentInfo = new TorrentInfo();
@@ -115,7 +116,7 @@ public class BtDiggHandler extends AbstractTorrentHandler {
                 if (Objects.equals(tds.get(0).text().trim(), "Download:")) {
                     String href = Optional.ofNullable(tds.get(1).selectFirst("a")).map(t -> t.attribute("href")).map(Attribute::getValue).orElse(null);
                     if (href == null) {
-                        throw new ApiException("Torrent hash not found");
+                        throw new ApiException(ApiError.TORRENT_HASH_NOT_FOUND);
                     }
                     torrentInfo.setHash(Patterns.extractFirstCapturedGroupContent(href, Patterns.MAGNET_HASH_PATTERN));
                 } else if (Objects.equals(tds.get(0).text().trim(), "Name:")) {
@@ -212,7 +213,7 @@ public class BtDiggHandler extends AbstractTorrentHandler {
             case "fileCount" -> "4";
             case "uploadTime" -> "2";
             case "size" -> "3";
-            default -> throw new IllegalArgumentException("Invalid sort field: " + sortFiled);
+            default -> throw new ApiException(ApiError.INVALID_PARAMETER);
         };
     }
 

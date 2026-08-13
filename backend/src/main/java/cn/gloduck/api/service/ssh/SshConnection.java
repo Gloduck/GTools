@@ -1,6 +1,7 @@
 package cn.gloduck.api.service.ssh;
 
 import cn.gloduck.api.entity.model.ssh.SshConnectionInfo;
+import cn.gloduck.api.exceptions.ApiError;
 import com.jcraft.jsch.ChannelShell;
 
 import java.io.IOException;
@@ -17,7 +18,7 @@ class SshConnection {
     private final long createdAt;
     private final com.jcraft.jsch.Session sshSession;
     private final ChannelShell channel;
-    private final Consumer<String> closeCallback;
+    private final Consumer<ApiError> closeCallback;
 
     private volatile long lastActiveAt;
     private volatile long lastHeartbeatAt;
@@ -30,7 +31,7 @@ class SshConnection {
                   String username,
                   com.jcraft.jsch.Session sshSession,
                   ChannelShell channel,
-                  Consumer<String> closeCallback) {
+                  Consumer<ApiError> closeCallback) {
         this.id = id;
         this.name = name;
         this.host = host;
@@ -91,9 +92,9 @@ class SshConnection {
         return timeoutMillis > 0 && System.currentTimeMillis() - lastHeartbeatAt > timeoutMillis;
     }
 
-    void notifyClosed(String message) {
+    void notifyClosed(ApiError error) {
         if (closeCallback != null) {
-            closeCallback.accept(message);
+            closeCallback.accept(error);
         }
     }
 

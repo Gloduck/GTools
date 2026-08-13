@@ -15,7 +15,7 @@
                     <form @submit.prevent="searchTorrents" class="flex flex-col md:flex-row gap-4">
                         <div class="flex-grow relative">
                             <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"></i>
-                            <input type="text" v-model="keyword" placeholder="输入搜索关键词..."
+                            <input type="text" v-model="keyword" :placeholder="$t('torrent.searchPlaceholder')"
                                 class="w-full pl-10 pr-4 py-3 rounded-lg border border-gray-300 focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all"
                                 required>
                         </div>
@@ -23,7 +23,7 @@
                         <div class="w-full md:w-auto">
                             <select v-model="selectedHandler"
                                 class="w-full md:w-48 bg-white border border-gray-300 text-gray-700 py-3 px-4 pr-8 rounded-lg appearance-none focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all bg-no-repeat bg-right">
-                                <option value="" disabled>选择搜索源</option>
+                                <option value="" disabled>{{ $t('torrent.selectSearchSource') }}</option>
                                 <option v-for="handler in handlers" :key="handler.code" :value="handler.code"
                                     :disabled="!handler.available">
                                     {{ handler.code }} {{ handler.tags && handler.tags.length > 0 ?
@@ -37,7 +37,7 @@
                             class="w-full md:w-auto">
                             <select v-model="currentSort"
                                 class="w-full md:w-48 bg-white border border-gray-300 text-gray-700 py-3 px-4 pr-8 rounded-lg appearance-none focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all bg-no-repeat bg-right">
-                                <option value="">默认排序</option>
+                                <option value="">{{ $t('torrent.defaultSort') }}</option>
                                 <option
                                     v-for="option in availableSortOptions"
                                     :key="option.value"
@@ -51,12 +51,12 @@
                             :class="['w-full md:w-auto text-white font-medium py-3 px-6 rounded-lg transition-all duration-300 transform hover:scale-105 flex items-center justify-center gap-2',
                                          isLoading ? 'bg-gray-400 cursor-not-allowed' : 'bg-primary hover:bg-secondary']">
                             <i class="fas fa-search"></i>
-                            <span>搜索</span>
+                            <span>{{ $t('common.search') }}</span>
                         </button>
                     </form>
 
                     <div class="mt-4 flex flex-wrap gap-2">
-                        <span class="text-sm text-gray-500">可用搜索源:</span>
+                        <span class="text-sm text-gray-500">{{ $t('torrent.availableSearchSources') }}</span>
                         <div class="flex flex-wrap gap-2">
                             <span v-for="handler in handlers" :key="handler.code"
                                 :class="['px-2 py-1 rounded-full text-xs', 
@@ -73,14 +73,13 @@
                 <section v-if="showResults" class="mb-8">
                     <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-3">
                         <h2 class="text-xl font-bold text-gray-800">
-                            搜索结果
+                            {{ $t('torrent.searchResults') }}
                             <span v-if="results.length > 0" class="text-primary font-normal text-base">
-                                (当前页{{ results.length }} 个结果)
+                                {{ $t('torrent.currentPageResultCount', { count: formatNumber(results.length) }) }}
                             </span>
                         </h2>
                         <div class="text-sm text-gray-500 w-full sm:w-auto flex justify-between items-center gap-4">
-                            <span v-if="currentHandlerInfo">当前搜索源: {{ currentHandlerInfo.code }} ({{
-                                currentHandlerInfo.url }})</span>
+                            <span v-if="currentHandlerInfo">{{ $t('torrent.currentSearchSource', { code: currentHandlerInfo.code, url: currentHandlerInfo.url }) }}</span>
                             <span v-if="sortInfo" class="italic">{{ sortInfo }}</span>
                         </div>
                     </div>
@@ -93,7 +92,7 @@
                         <!-- 无结果提示 -->
                         <div v-if="results.length === 0" class="py-16 text-center">
                             <i class="fas fa-search-minus text-5xl text-gray-300 mb-4"></i>
-                            <p class="text-gray-500 text-lg">未找到匹配的结果</p>
+                            <p class="text-gray-500 text-lg">{{ $t('torrent.noMatchingResults') }}</p>
                         </div>
 
                         <!-- 结果项 -->
@@ -124,7 +123,7 @@
                                     </div>
                                     <button
                                         class="text-primary hover:text-secondary transition-colors px-3 py-1 rounded flex items-center gap-1 mt-2 md:mt-0">
-                                        <span>详情</span>
+                                        <span>{{ $t('common.details') }}</span>
                                         <i class="fas fa-chevron-right text-xs"></i>
                                     </button>
                                 </div>
@@ -150,31 +149,31 @@
                 <div v-else class="space-y-6">
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div class="bg-neutral p-4 rounded-lg">
-                            <h4 class="text-sm text-gray-500 mb-1">哈希值</h4>
-                            <p id="detailHash" class="font-mono text-sm break-all">{{ detailData?.hash || '未知' }}</p>
+                            <h4 class="text-sm text-gray-500 mb-1">{{ $t('torrent.hash') }}</h4>
+                            <p id="detailHash" class="font-mono text-sm break-all">{{ detailData?.hash || $t('common.unknown') }}</p>
                         </div>
                         <div class="bg-neutral p-4 rounded-lg">
-                            <h4 class="text-sm text-gray-500 mb-1">大小</h4>
+                            <h4 class="text-sm text-gray-500 mb-1">{{ $t('torrent.size') }}</h4>
                             <p>{{ formatFileSize(detailData?.size || 0) }}</p>
                         </div>
                         <div class="bg-neutral p-4 rounded-lg">
-                            <h4 class="text-sm text-gray-500 mb-1">上传时间</h4>
+                            <h4 class="text-sm text-gray-500 mb-1">{{ $t('torrent.uploadTime') }}</h4>
                             <p>{{ formatTime(detailData?.uploadTime) }}</p>
                         </div>
                         <div class="bg-neutral p-4 rounded-lg">
-                            <h4 class="text-sm text-gray-500 mb-1">文件数量</h4>
-                            <p>{{ detailData?.fileCount !== null ? detailData?.fileCount : '未知' }}</p>
+                            <h4 class="text-sm text-gray-500 mb-1">{{ $t('torrent.fileCount') }}</h4>
+                            <p>{{ detailData?.fileCount !== null && detailData?.fileCount !== undefined ? formatNumber(detailData.fileCount) : $t('common.unknown') }}</p>
                         </div>
                     </div>
 
                     <div>
                         <h4 class="font-semibold text-gray-800 mb-3 flex items-center gap-2">
                             <i class="fas fa-file-alt text-primary"></i>
-                            包含文件
+                             {{ $t('torrent.includedFiles') }}
                         </h4>
                         <div v-if="!detailData?.files || detailData.files.length === 0"
                             class="text-center py-4 text-gray-500">
-                            <i class="fas fa-file-excel-o mr-2"></i>无法获取文件列表
+                             <i class="fas fa-file-excel-o mr-2"></i>{{ $t('torrent.fileListUnavailable') }}
                         </div>
                         <ul v-else class="space-y-2 max-h-60 overflow-y-auto pr-2">
                             <li v-for="file in detailData.files" :key="file.name"
@@ -190,7 +189,7 @@
                         <button @click="copyMagnetLink" v-if="detailData?.hash"
                             class="bg-primary hover:bg-secondary text-white font-medium py-2 px-4 rounded-lg transition-all duration-300 flex items-center gap-2">
                             <i class="fas fa-magnet"></i>
-                            <span>复制磁力链接</span>
+                             <span>{{ $t('torrent.copyMagnetLink') }}</span>
                         </button>
                     </div>
                 </div>
@@ -202,6 +201,7 @@
 import { ref, computed, onMounted, watch } from 'vue';
 import { CommonUtils } from '@/shared/common-utils.js';
 import { CommonComponents } from '@/shared/common-components.js';
+import { t, currentLocale, translateErrorMessage } from '@/i18n/index.js';
 
 export default {
     name: 'TorrentView',
@@ -216,17 +216,17 @@ export default {
 
             setup() {
                 // 排序字段显示名称映射
-                const sortFieldLabels = {
-                    'name': '名称',
-                    'uploadTime': '上传时间',
-                    'size': '文件大小',
-                    'relevance': '相关度',
-                    "fileCount": "文件数量"
+                const sortFieldKeys = {
+                    'name': 'torrent.sortFields.name',
+                    'uploadTime': 'torrent.sortFields.uploadTime',
+                    'size': 'torrent.sortFields.size',
+                    'relevance': 'torrent.sortFields.relevance',
+                    'fileCount': 'torrent.sortFields.fileCount'
                 };
 
-                const sortOrderLabels = {
-                    'asc': '升序',
-                    'desc': '降序'
+                const sortOrderKeys = {
+                    'asc': 'torrent.sortOrders.asc',
+                    'desc': 'torrent.sortOrders.desc'
                 };
 
                 // 搜索相关
@@ -254,19 +254,40 @@ export default {
                 const currentHandlerInfo = ref(null);
 
                 // 公共工具函数
-                const formatTime = CommonUtils.formatTime;
                 const formatFileSize = CommonUtils.formatFileSize;
-                const copyToClipboard = (text) => CommonUtils.copyToClipboard(text, showToast);
                 const checkJsonResponseStatus = CommonUtils.checkJsonResponseStatus;
-                const handleApiError = CommonUtils.handleApiError;
+                const locale = () => currentLocale.value || currentLocale;
+                const formatNumber = (value) => Number(value || 0).toLocaleString(locale());
+                const formatTime = (timeString) => {
+                    if (!timeString) return t('common.unknown');
+                    return new Date(timeString).toLocaleString(locale(), {
+                        year: 'numeric',
+                        month: '2-digit',
+                        day: '2-digit',
+                        hour: '2-digit',
+                        minute: '2-digit'
+                    });
+                };
+                const copyToClipboard = (text) => {
+                    navigator.clipboard.writeText(text)
+                        .then(() => showToast(t('torrent.magnetLinkCopied'), 'success'))
+                        .catch((error) => {
+                            console.error('Copy failed:', error);
+                            showToast(t('common.copyFailed'), 'error');
+                        });
+                };
+                const handleApiError = (error) => {
+                    console.error('API request failed:', error);
+                    showToast(translateErrorMessage(error?.message || t('torrent.requestFailed')), 'error');
+                };
 
                 // 排序信息
                 const sortInfo = computed(() => {
                     if (!currentSort.value) return '';
                     const [field, order] = currentSort.value.split('-');
-                    const fieldLabel = sortFieldLabels[field] || field;
-                    const orderLabel = sortOrderLabels[order] || order;
-                    return `排序: ${fieldLabel}-${orderLabel}`;
+                    const fieldLabel = sortFieldKeys[field] ? t(sortFieldKeys[field]) : field;
+                    const orderLabel = sortOrderKeys[order] ? t(sortOrderKeys[order]) : order;
+                    return t('torrent.sortInfo', { field: fieldLabel, order: orderLabel });
                 });
 
                 // 生成可用的排序选项
@@ -296,9 +317,9 @@ export default {
                             ];
                         }
 
-                        const nameLabel = sortFieldLabels[fieldName] || fieldName;
+                        const nameLabel = sortFieldKeys[fieldName] ? t(sortFieldKeys[fieldName]) : fieldName;
                         for (const order of orders) {
-                            const orderLabel = sortOrderLabels[order] || order;
+                            const orderLabel = sortOrderKeys[order] ? t(sortOrderKeys[order]) : order;
                             options.push({
                                 value: `${fieldName}-${order}`,
                                 label: `${nameLabel}-${orderLabel}`
@@ -310,12 +331,12 @@ export default {
 
                 // 获取排序字段标签
                 const getSortFieldLabel = (field) => {
-                    return sortFieldLabels[field] || field;
+                    return sortFieldKeys[field] ? t(sortFieldKeys[field]) : field;
                 };
 
                 // 获取排序顺序标签
                 const getSortOrderLabel = (order) => {
-                    return sortOrderLabels[order] || order;
+                    return sortOrderKeys[order] ? t(sortOrderKeys[order]) : order;
                 };
 
                 // 显示提示
@@ -339,7 +360,7 @@ export default {
                                 selectedHandler.value = handlers.value[0].available ? handlers.value[0].code : '';
                             }
                         } else {
-                            throw new Error('获取搜索源失败');
+                            throw new Error(data?.msg || t('torrent.loadSourcesFailed'));
                         }
                     } catch (error) {
                         handleApiError(error, showToast);
@@ -358,12 +379,12 @@ export default {
                 // 搜索磁力资源
                 const searchTorrents = async () => {
                     if (!keyword.value.trim()) {
-                        showToast('请输入搜索关键词', 'warning');
+                        showToast(t('common.searchKeywordRequired'), 'warning');
                         return;
                     }
 
                     if (!selectedHandler.value) {
-                        showToast('请选择搜索源', 'warning');
+                        showToast(t('torrent.searchSourceRequired'), 'warning');
                         return;
                     }
 
@@ -393,7 +414,7 @@ export default {
                             results.value = data.data.items || [];
                             hasNextPage.value = data.data.hasNext || false;
                         } else {
-                            throw new Error('搜索失败');
+                            throw new Error(data?.msg || t('torrent.searchFailed'));
                         }
                     } catch (error) {
                         handleApiError(error, showToast);
@@ -437,7 +458,7 @@ export default {
                         if (data.code === 200 && data.data) {
                             detailData.value = data.data;
                         } else {
-                            throw new Error('获取详情失败');
+                            throw new Error(data?.msg || t('torrent.loadDetailsFailed'));
                         }
                     } catch (error) {
                         handleApiError(error, showToast);
@@ -450,7 +471,7 @@ export default {
                 // 复制磁力链接
                 const copyMagnetLink = () => {
                     if (!detailData.value?.hash) {
-                        showToast('没有可用的磁力链接', 'warning');
+                        showToast(t('torrent.noMagnetLink'), 'warning');
                         return;
                     }
 
@@ -518,7 +539,8 @@ export default {
 
                     // 工具函数
                     formatTime,
-                    formatFileSize
+                    formatFileSize,
+                    formatNumber
                 };
             }
 };

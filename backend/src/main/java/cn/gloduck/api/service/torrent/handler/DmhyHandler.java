@@ -3,6 +3,7 @@ package cn.gloduck.api.service.torrent.handler;
 import cn.gloduck.api.entity.config.TorrentConfig;
 import cn.gloduck.api.entity.model.torrent.TorrentFileInfo;
 import cn.gloduck.api.entity.model.torrent.TorrentInfo;
+import cn.gloduck.api.exceptions.ApiError;
 import cn.gloduck.api.exceptions.ApiException;
 import cn.gloduck.api.utils.DateUtils;
 import cn.gloduck.api.utils.Patterns;
@@ -107,7 +108,7 @@ public class DmhyHandler extends AbstractTorrentHandler {
 
         ArrayList<TorrentInfo> torrentInfos = new ArrayList<>(pageSize());
         if (torrentTable == null) {
-            throw new ApiException("Api response error data");
+            throw new ApiException(ApiError.TORRENT_RESPONSE_INVALID);
         }
         Elements trs = torrentTable.getElementsByTag("tr");
         for (Element tr : trs) {

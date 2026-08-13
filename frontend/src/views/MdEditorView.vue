@@ -3,16 +3,16 @@
     <common-toast ref="toastRef"></common-toast>
 
     <!-- 配置模态框 -->
-    <common-modal :visible="showConfigModal" :title="`${sourceName}配置`" @update:visible="showConfigModal = $event">
+    <common-modal :visible="showConfigModal" :title="$t('markdown.configTitle', { source: sourceName })" @update:visible="showConfigModal = $event">
         <!-- mdSource 选择 -->
         <div class="mb-4">
             <label class="block text-sm font-medium text-gray-700 mb-2">
-                <i class="fas fa-database mr-2"></i>数据源
+                <i class="fas fa-database mr-2"></i>{{ $t('markdown.dataSource') }}
             </label>
             <select v-model="mdSource"
                     class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-                <option value="github">GitHub</option>
-                <option value="local">本地文件</option>
+                <option value="github">{{ $t('markdown.sources.github') }}</option>
+                <option value="local">{{ $t('markdown.sources.local') }}</option>
             </select>
         </div>
 
@@ -20,36 +20,36 @@
         <div v-if="mdSource === 'github'" class="space-y-4">
             <div>
                 <label class="block text-sm font-medium text-gray-700 mb-2">
-                    <i class="fab fa-github mr-2"></i>GitHub Token
+                    <i class="fab fa-github mr-2"></i>{{ $t('markdown.githubToken') }}
                 </label>
                 <input type="password" v-model="githubConfig.token"
                        placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
                        class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-                <p class="text-xs text-gray-500 mt-1">请在 <a href="https://github.com/settings/tokens" target="_blank"
-                                                              class="text-blue-500 hover:underline">GitHub Settings</a>
-                    创建 Token，需拥有 repo 权限</p>
+                <p class="text-xs text-gray-500 mt-1">{{ $t('markdown.tokenHelpBefore') }} <a href="https://github.com/settings/tokens" target="_blank"
+                                                               class="text-blue-500 hover:underline">{{ $t('markdown.githubSettings') }}</a>
+                    {{ $t('markdown.tokenHelpAfter') }}</p>
             </div>
             <div>
                 <label class="block text-sm font-medium text-gray-700 mb-2">
-                    <i class="fas fa-book mr-2"></i>仓库地址
+                    <i class="fas fa-book mr-2"></i>{{ $t('markdown.repository') }}
                 </label>
                 <input type="text" v-model="githubConfig.repo"
                        placeholder="owner/repo"
                        class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-                <p class="text-xs text-gray-500 mt-1">格式: username/repository 或 organization/repository</p>
+                <p class="text-xs text-gray-500 mt-1">{{ $t('markdown.repositoryFormat') }}</p>
             </div>
             <div>
                 <label class="block text-sm font-medium text-gray-700 mb-2">
-                    <i class="fas fa-book mr-2"></i>仓库分支
+                    <i class="fas fa-book mr-2"></i>{{ $t('markdown.branch') }}
                 </label>
                 <input type="text" v-model="githubConfig.branch"
                        placeholder="main"
                        class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-                <p class="text-xs text-gray-500 mt-1">仓库分支，如 main 或 master</p>
+                <p class="text-xs text-gray-500 mt-1">{{ $t('markdown.branchHelp') }}</p>
             </div>
             <div>
                 <label class="block text-sm font-medium text-gray-700 mb-2">
-                    <i class="fas fa-folder mr-2"></i>根目录（可选）
+                    <i class="fas fa-folder mr-2"></i>{{ $t('markdown.rootDirectoryOptional') }}
                 </label>
                 <input type="text" v-model="githubConfig.rootPath"
                        placeholder="docs"
@@ -57,21 +57,21 @@
             </div>
             <div>
                 <label class="block text-sm font-medium text-gray-700 mb-2">
-                    <i class="fas fa-globe mr-2"></i>代理地址（可选）
+                    <i class="fas fa-globe mr-2"></i>{{ $t('markdown.proxyOptional') }}
                 </label>
                 <input type="text" v-model="githubConfig.proxy"
                        placeholder="https://gh-proxy.com"
                        class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-                <p class="text-xs text-gray-500 mt-1">用于加速访问 GitHub，如 https://gh-proxy.com，留空则直连</p>
+                <p class="text-xs text-gray-500 mt-1">{{ $t('markdown.proxyHelp') }}</p>
             </div>
             <div>
                 <label class="block text-sm font-medium text-gray-700 mb-2">
-                    <i class="fas fa-upload mr-2"></i>上传路径（可选）
+                    <i class="fas fa-upload mr-2"></i>{{ $t('markdown.uploadPathOptional') }}
                 </label>
                 <input type="text" v-model="githubConfig.uploadPath"
                        placeholder="file"
                        class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-                <p class="text-xs text-gray-500 mt-1">上传图片的存储路径，如 images 或 file，留空默认为 file</p>
+                <p class="text-xs text-gray-500 mt-1">{{ $t('markdown.githubUploadPathHelp') }}</p>
             </div>
         </div>
 
@@ -79,63 +79,63 @@
         <div v-else class="space-y-4">
             <div>
                 <label class="block text-sm font-medium text-gray-700 mb-2">
-                    <i class="fas fa-folder-open mr-2"></i>工作目录
+                    <i class="fas fa-folder-open mr-2"></i>{{ $t('markdown.workingDirectory') }}
                 </label>
                 <div class="flex gap-2">
-                    <input type="text" :value="localConfig.name || '点击右侧按钮选择文件夹'"
+                    <input type="text" :value="localConfig.name || $t('markdown.selectFolderPrompt')"
                            readonly
-                           placeholder="点击右侧按钮选择文件夹"
+                           :placeholder="$t('markdown.selectFolderPrompt')"
                            class="flex-grow px-4 py-2 border border-gray-300 rounded-lg bg-gray-50">
                     <button type="button" @click="selectDirectory"
                             class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">
                         <i class="fas fa-folder-open"></i>
                     </button>
                 </div>
-                <p class="text-xs text-gray-500 mt-1">点击按钮选择本地文件夹（支持 .md 文件）</p>
+                <p class="text-xs text-gray-500 mt-1">{{ $t('markdown.selectFolderHelp') }}</p>
             </div>
             <div>
                 <label class="block text-sm font-medium text-gray-700 mb-2">
-                    <i class="fas fa-upload mr-2"></i>上传路径（可选）
+                    <i class="fas fa-upload mr-2"></i>{{ $t('markdown.uploadPathOptional') }}
                 </label>
                 <input type="text" v-model="localConfig.uploadPath"
                        placeholder="images"
                        class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-                <p class="text-xs text-gray-500 mt-1">上传图片的存储路径，如 images 或 uploads，留空则直接上传到根目录</p>
+                <p class="text-xs text-gray-500 mt-1">{{ $t('markdown.localUploadPathHelp') }}</p>
             </div>
         </div>
 
         <div class="flex justify-end gap-3 mt-6">
             <button type="button" @click="showConfigModal = false"
                     class="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">
-                取消
+                {{ $t('common.cancel') }}
             </button>
             <button type="button" @click="saveConfigAndConnect"
                     :disabled="!canConnect"
                     :class="['px-4 py-2 rounded-lg transition-colors flex items-center gap-2',
                                  !canConnect ? 'bg-gray-300 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700 text-white']">
                 <i class="fas fa-link"></i>
-                连接
+                {{ $t('markdown.connect') }}
             </button>
         </div>
     </common-modal>
 
     <!-- 新建文件模态框 -->
-    <common-modal :visible="showNewFileModal" title="新建文件" @update:visible="showNewFileModal = $event">
-        <label class="block text-sm font-medium text-gray-700 mb-2">文件路径</label>
+    <common-modal :visible="showNewFileModal" :title="$t('markdown.newFile')" @update:visible="showNewFileModal = $event">
+        <label class="block text-sm font-medium text-gray-700 mb-2">{{ $t('markdown.filePath') }}</label>
         <input type="text" v-model="newFilePath"
-               placeholder="filename.md 或 path/filename.md"
+               :placeholder="$t('markdown.filePathPlaceholder')"
                @keyup.enter="createNewFile"
                class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
         <div class="flex justify-end gap-3 mt-4">
             <button type="button" @click="showNewFileModal = false"
                     class="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">
-                取消
+                {{ $t('common.cancel') }}
             </button>
             <button type="button" @click="createNewFile"
                     :disabled="!newFilePath"
                     :class="['px-4 py-2 rounded-lg transition-colors',
                                  !newFilePath ? 'bg-gray-300 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 text-white']">
-                创建
+                {{ $t('common.create') }}
             </button>
         </div>
     </common-modal>
@@ -167,12 +167,12 @@
                         <div class="flex gap-1">
                             <button type="button" @click="clearConfig"
                                     class="p-1.5 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded transition-colors"
-                                    title="清除配置" aria-label="清除配置">
+                                     :title="$t('markdown.clearConfig')" :aria-label="$t('markdown.clearConfig')">
                                 <i class="fas fa-trash-alt" aria-hidden="true"></i>
                             </button>
                             <button type="button" @click="showConfigModal = true"
                                     class="p-1.5 text-gray-500 hover:text-gray-700 hover:bg-gray-200 rounded transition-colors"
-                                    title="设置" aria-label="设置">
+                                     :title="$t('markdown.settings')" :aria-label="$t('markdown.settings')">
                                 <i class="fas fa-cog" aria-hidden="true"></i>
                             </button>
                         </div>
@@ -180,34 +180,34 @@
                     <div v-else class="text-center">
                         <button type="button" @click="showConfigModal = true"
                                 class="px-3 py-1.5 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 transition-colors">
-                            配置 {{ sourceName }}
+                             {{ $t('markdown.configureSource', { source: sourceName }) }}
                         </button>
                     </div>
                 </div>
 
                 <!-- 工具栏 -->
                 <div class="p-3 border-b border-gray-200 flex items-center justify-between flex-shrink-0">
-                    <span class="text-sm font-medium text-gray-700">文件</span>
+                     <span class="text-sm font-medium text-gray-700">{{ $t('markdown.files') }}</span>
                     <div class="flex gap-1">
                         <button type="button" @click="showNewFileModal = true; newFilePath = ''"
                                 class="p-1.5 text-gray-600 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"
-                                title="新建文件" aria-label="新建文件">
+                                 :title="$t('markdown.newFile')" :aria-label="$t('markdown.newFile')">
                             <i class="fas fa-plus" aria-hidden="true"></i>
                         </button>
                         <button type="button" @click="refreshFileTree"
                                 :class="['p-1.5 rounded transition-colors', isLoading ? 'text-blue-600 bg-blue-50' : 'text-gray-600 hover:text-blue-600 hover:bg-blue-50']"
-                                title="刷新" aria-label="刷新">
+                                 :title="$t('common.refresh')" :aria-label="$t('common.refresh')">
                             <i class="fas fa-sync-alt" :class="{ 'fa-spin': isLoading }" aria-hidden="true"></i>
                         </button>
                         <button type="button" @click="showAllFile = !showAllFile"
                                 :class="['p-1.5 rounded transition-colors', showAllFile ? 'text-blue-600 bg-blue-50' : 'text-gray-600 hover:text-blue-600 hover:bg-blue-50']"
-                                :title="showAllFile ? '仅显示 Markdown 文件' : '显示所有文件'"
-                                :aria-label="showAllFile ? '仅显示 Markdown 文件' : '显示所有文件'">
+                                 :title="showAllFile ? $t('markdown.showMarkdownOnly') : $t('markdown.showAllFiles')"
+                                 :aria-label="showAllFile ? $t('markdown.showMarkdownOnly') : $t('markdown.showAllFiles')">
                             <i class="fas" :class="showAllFile ? 'fa-file-alt' : 'fa-file'" aria-hidden="true"></i>
                         </button>
                         <button type="button" @click="exportConfigUrl"
                                 class="p-1.5 text-gray-600 hover:text-green-600 hover:bg-green-50 rounded transition-colors"
-                                title="导出配置链接" aria-label="导出配置链接">
+                                 :title="$t('markdown.exportConfigLink')" :aria-label="$t('markdown.exportConfigLink')">
                             <i class="fas fa-link" aria-hidden="true"></i>
                         </button>
                     </div>
@@ -217,11 +217,11 @@
                 <div class="flex-grow overflow-y-auto p-2">
                     <div v-if="!canConnect" class="text-center py-8 text-gray-500">
                         <i class="fas fa-cloud-upload-alt text-4xl mb-3 text-gray-300"></i>
-                        <p class="text-sm">请先配置 {{ sourceName }}</p>
+                         <p class="text-sm">{{ $t('markdown.configureFirst', { source: sourceName }) }}</p>
                     </div>
                     <div v-else-if="showFileTree.length === 0 && !isLoading" class="text-center py-8 text-gray-500">
                         <i class="fas fa-folder-open text-4xl mb-3 text-gray-300"></i>
-                        <p class="text-sm">暂无文件</p>
+                         <p class="text-sm">{{ $t('markdown.noFiles') }}</p>
                     </div>
                     <common-loading-spinner v-else-if="isLoading"></common-loading-spinner>
                     <ul v-else class="space-y-1">
@@ -240,8 +240,8 @@
             <!-- 收缩按钮 -->
             <button type="button" @click="sidebarCollapsed = !sidebarCollapsed"
                     class="flex-shrink-0 px-2 py-4 bg-gray-100 hover:bg-gray-200 border-y border-r border-gray-200 transition-colors"
-                    :title="sidebarCollapsed ? '展开侧边栏' : '收缩侧边栏'"
-                    :aria-label="sidebarCollapsed ? '展开侧边栏' : '收缩侧边栏'">
+                     :title="sidebarCollapsed ? $t('markdown.expandSidebar') : $t('markdown.collapseSidebar')"
+                     :aria-label="sidebarCollapsed ? $t('markdown.expandSidebar') : $t('markdown.collapseSidebar')">
                 <i :class="['fas transition-transform text-gray-500', sidebarCollapsed ? 'fa-angle-right' : 'fa-angle-left']"
                    aria-hidden="true"></i>
             </button>
@@ -257,10 +257,10 @@
                                readonly
                                class="text-sm text-gray-600 bg-gray-100 px-3 py-1.5 rounded border border-gray-300 max-w-md">
                         <span v-if="isDirty" class="text-xs text-amber-600">
-                                <i class="fas fa-asterisk mr-1"></i>未保存
+                                 <i class="fas fa-asterisk mr-1"></i>{{ $t('markdown.unsaved') }}
                             </span>
-                        <span v-if="!isDirty && lastSaved" class="text-xs text-gray-500">
-                                已保存: {{ lastSaved }}
+                        <span v-if="!isDirty && lastSavedAt" class="text-xs text-gray-500">
+                                 {{ $t('markdown.savedAt', { time: formattedLastSaved }) }}
                             </span>
                     </div>
                     <div class="flex items-center gap-2">
@@ -269,12 +269,12 @@
                                 :class="['px-3 py-1.5 rounded-lg text-sm transition-colors flex items-center gap-2',
                                              !isDirty || isSaving ? 'bg-gray-300 cursor-not-allowed' : 'bg-green-600 hover:bg-green-700 text-white']">
                             <i :class="['fas', isSaving ? 'fa-spinner fa-spin' : 'fa-save']"></i>
-                            <span>保存</span>
+                             <span>{{ $t('common.save') }}</span>
                         </button>
                         <button type="button" @click="deleteFile(currentFilePath)"
                                 class="px-3 py-1.5 rounded-lg text-sm transition-colors flex items-center gap-2 bg-red-500 hover:bg-red-600 text-white">
                             <i class="fas fa-trash"></i>
-                            <span>删除</span>
+                             <span>{{ $t('common.delete') }}</span>
                         </button>
                     </div>
                 </div>
@@ -289,7 +289,7 @@
                          class="absolute inset-0 flex items-center justify-center text-gray-400">
                         <div class="text-center">
                             <i class="fas fa-file-alt text-4xl mb-3"></i>
-                            <p>选择一个 Markdown 文件开始编辑</p>
+                             <p>{{ $t('markdown.selectMarkdownToEdit') }}</p>
                         </div>
                     </div>
                 </div>
@@ -300,7 +300,7 @@
 </template>
 
 <script>
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue';
 import { CommonUtils } from '@/shared/common-utils.js';
 import { CommonComponents } from '@/shared/common-components.js';
 import { CdnUtils } from '@/shared/cdn-utils.js';
@@ -313,6 +313,7 @@ import {
     FileSession,
 } from '@/shared/file-system/index.js';
 import { enableEditorPwa } from '@/shared/pwa-install.js';
+import { t, currentLocale, translateErrorMessage } from '@/i18n/index.js';
 
 const VDITOR_CDN_BASE = CdnUtils.vditor.base;
 const MAX_MEMORY_WRITE_BYTES = 50 * 1024 * 1024;
@@ -337,7 +338,7 @@ const FileTreeItem = {
                     <button v-if="!isFolder" type="button"
                             @click.stop="handleDelete"
                             class="opacity-0 group-hover:opacity-100 p-1 text-gray-400 hover:text-red-500 transition-opacity"
-                            title="删除文件">
+                            :title="$t('markdown.deleteFile')">
                         <i class="fas fa-trash text-xs"></i>
                     </button>
                 </div>
@@ -409,8 +410,16 @@ export default {
         },
 
         setup() {
-            const formatTime = CommonUtils.formatRelativeTime;
             const computePath = CommonUtils.computePath;
+            const locale = () => currentLocale.value || currentLocale;
+            const formatDateTime = (timestamp) => new Date(timestamp).toLocaleString(locale(), {
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+            const translatedError = (error) => translateErrorMessage(error?.message || t('common.unknown'));
 
             const isExternalResourceUrl = (url) => {
                 const value = String(url || '').trim();
@@ -498,7 +507,7 @@ export default {
             const currentFilePath = ref('');
             const currentFilePathMapping = ref({});
             const isDirty = ref(false);
-            const lastSaved = ref('');
+            const lastSavedAt = ref(null);
             const isSaving = ref(false);
             const showNewFileModal = ref(false);
             const newFilePath = ref('');
@@ -531,12 +540,14 @@ export default {
             const displaySourceInfo = computed(() => {
                 return mdSource.value === 'github'
                     ? githubConfig.value.repo
-                    : localConfig.value.name || '本地文件夹';
+                    : localConfig.value.name || t('markdown.sources.localFolder');
             });
 
             const sourceName = computed(() => {
-                return mdSource.value === 'github' ? 'GitHub' : '本地文件夹';
+                return mdSource.value === 'github' ? t('markdown.sources.github') : t('markdown.sources.localFolder');
             });
+
+            const formattedLastSaved = computed(() => lastSavedAt.value ? formatDateTime(lastSavedAt.value) : '');
 
             const canConnect = computed(() => {
                 if (mdSource.value === 'github') {
@@ -649,7 +660,7 @@ export default {
             };
 
             const clearConfig = () => {
-                if (!confirm(`确定要清除 ${sourceName.value} 配置吗？`)) {
+                if (!confirm(t('markdown.confirmClearConfig', { source: sourceName.value }))) {
                     return;
                 }
                 if (!confirmDiscardChanges()) return;
@@ -665,7 +676,7 @@ export default {
                     localConfig.value.directoryHandle = null;
                     localConfig.value.name = '';
                 }
-                showToast('配置已清除', 'info');
+                showToast(t('markdown.configCleared'), 'info');
                 showConfigModal.value = true;
             };
 
@@ -682,7 +693,7 @@ export default {
                 } catch (e) {
                     if (e.name !== 'AbortError') {
                         console.error('Failed to select directory:', e);
-                        showToast('选择文件夹失败（当前浏览器不支持）', 'error');
+                        showToast(t('markdown.selectFolderFailed'), 'error');
                     }
                 }
             };
@@ -696,9 +707,9 @@ export default {
                 }
                 const fullUrl = `${baseUrl}?${params.toString()}`;
                 navigator.clipboard.writeText(fullUrl).then(() => {
-                    showToast('配置链接已复制到剪贴板', 'success');
+                    showToast(t('markdown.configLinkCopied'), 'success');
                 }).catch(err => {
-                    showToast('复制失败', 'error');
+                    showToast(t('common.copyFailed'), 'error');
                     console.error('Failed to copy:', err);
                 });
             };
@@ -717,12 +728,12 @@ export default {
                 currentFilePath.value = '';
                 currentFilePathMapping.value = {};
                 isDirty.value = false;
-                lastSaved.value = '';
+                lastSavedAt.value = null;
                 setVditorContent('');
             };
 
             const confirmDiscardChanges = () => {
-                return !isDirty.value || confirm('当前文件有未保存的更改，确定要放弃吗？');
+                return !isDirty.value || confirm(t('markdown.confirmDiscardChanges'));
             };
 
             const disposeWorkspace = () => {
@@ -785,11 +796,11 @@ export default {
                     resourceResolver = nextResolver;
                     activeFileUploadPath = config.uploadPath;
                     fileTree.value = nextFileTree;
-                    showToast('连接成功!', 'success');
+                    showToast(t('markdown.connectSuccess'), 'success');
                     return true;
                 } catch (error) {
                     nextResolver?.dispose();
-                    showToast(`连接失败: ${error.message}`, 'error');
+                    showToast(t('markdown.connectFailed', { message: translatedError(error) }), 'error');
                     console.error('Connection error:', error);
                     return false;
                 } finally {
@@ -811,7 +822,7 @@ export default {
                     }
                 } catch (error) {
                     if (activeSession === session && activeWorkspaceVersion === workspaceVersion) {
-                        showToast(`获取文件列表失败: ${error.message}`, 'error');
+                        showToast(t('markdown.loadFileListFailed', { message: translatedError(error) }), 'error');
                     }
                 } finally {
                     if (activeSession === session && activeWorkspaceVersion === workspaceVersion) {
@@ -868,7 +879,7 @@ export default {
                 } catch (error) {
                     if (readVersion === fileReadVersion && activeWorkspaceVersion === workspaceVersion) {
                         console.error('Load Markdown failed:', error);
-                        showToast(`加载文件失败: ${error.message}`, 'error');
+                        showToast(t('markdown.loadFileFailed', { message: translatedError(error) }), 'error');
                     }
                 }
             };
@@ -953,13 +964,23 @@ export default {
 
             let vditor = null;
 
+            watch(currentLocale, () => {
+                if (!vditor) return;
+                pendingVditorContent = vditor.getValue?.() ?? pendingVditorContent;
+                vditor.destroy?.();
+                vditor = null;
+                vditorReady = false;
+                void initVditor();
+            });
+
             const initVditor = async () => {
                 const Vditor = await loadVditor();
                 vditor = new Vditor('vditor', {
                     mode: 'wysiwyg',
                     cdn: VDITOR_CDN_BASE,
+                    lang: locale().startsWith('zh') ? 'zh_CN' : 'en_US',
                     height: '100%',
-                    placeholder: '选择文件开始编辑，或新建一个文件...',
+                    placeholder: t('markdown.editorPlaceholder'),
                     toolbarConfig: {pin: true},
                     customWysiwygToolbar: () => {},
                     editorName: 'vditor',
@@ -975,7 +996,7 @@ export default {
                         max: MAX_MEMORY_WRITE_BYTES,
                         handler: async (files) => {
                             if (!session || !resourceResolver || !currentFilePath.value) {
-                                showToast(`请先连接 ${sourceName.value}`, 'error');
+                                showToast(t('markdown.connectFirst', { source: sourceName.value }), 'error');
                                 return [];
                             }
 
@@ -1031,7 +1052,7 @@ export default {
                                 } catch (error) {
                                     if (!committed) activeSession.revert(path);
                                     console.error('Upload failed:', error);
-                                    showToast(`上传 ${file.name} 失败: ${error.message}`, 'error');
+                                    showToast(t('markdown.uploadFailed', { name: file.name, message: translatedError(error) }), 'error');
                                     return null;
                                 }
                             }));
@@ -1095,21 +1116,21 @@ export default {
                     if (activeSession === session && activeWorkspaceVersion === workspaceVersion && path === currentFilePath.value) {
                         const hasNewChanges = editorInputVersion !== saveInputVersion;
                         isDirty.value = hasNewChanges;
-                        lastSaved.value = formatTime(new Date());
-                        showToast(hasNewChanges ? '已保存提交时的内容，当前仍有未保存修改' : '保存成功!', hasNewChanges ? 'info' : 'success');
+                        lastSavedAt.value = Date.now();
+                        showToast(hasNewChanges ? t('markdown.savedWithNewChanges') : t('markdown.saveSuccess'), hasNewChanges ? 'info' : 'success');
                     }
                 } catch (error) {
                     if (activeSession !== session || activeWorkspaceVersion !== workspaceVersion) return;
                     if (error?.code === FileConflictError.code) {
                         try {
                             await activeSession.refreshChangeBase(path);
-                            showToast('保存失败：文件已被修改，当前内容已保留，请再次保存', 'error');
+                            showToast(t('markdown.saveConflictRetry'), 'error');
                         } catch (refreshError) {
                             console.error('Refresh conflicted file failed:', refreshError);
-                            showToast('保存失败：文件已被修改，请刷新后重试', 'error');
+                            showToast(t('markdown.saveConflictRefresh'), 'error');
                         }
                     } else {
-                        showToast(`保存失败: ${error.message}`, 'error');
+                        showToast(t('markdown.saveFailed', { message: translatedError(error) }), 'error');
                     }
                 } finally {
                     isSaving.value = false;
@@ -1124,7 +1145,7 @@ export default {
 
                 try {
                     path = normalizeFilePath(newFilePath.value.trim());
-                    if (!path) throw new Error('文件路径不能为空');
+                    if (!path) throw new Error(t('markdown.filePathRequired'));
                     if (!path.endsWith('.md')) path += '.md';
                     await activeSession.stageText(path, '', {mimeType: 'text/markdown', createOnly: true});
                     await activeSession.commit(path, {
@@ -1136,16 +1157,16 @@ export default {
                     newFilePath.value = '';
                     await refreshFileTree();
                     await selectFile(path);
-                    showToast('文件创建成功!', 'success');
+                    showToast(t('markdown.createSuccess'), 'success');
                 } catch (error) {
                     if (path) activeSession.revert(path);
-                    if (activeSession === session) showToast(`创建失败: ${error.message}`, 'error');
+                    if (activeSession === session) showToast(t('markdown.createFailed', { message: translatedError(error) }), 'error');
                 }
             };
 
             const deleteFile = async (path) => {
                 if (!path) return;
-                if (!confirm(`确定要删除文件 ${path} 吗？`)) return;
+                if (!confirm(t('markdown.confirmDeleteFile', { path }))) return;
                 const activeSession = session;
                 if (!activeSession) return;
 
@@ -1160,14 +1181,14 @@ export default {
                         resetCurrentFileInfo({revertChange: false});
                     }
                     await refreshFileTree();
-                    showToast('文件删除成功!', 'success');
+                    showToast(t('markdown.deleteSuccess'), 'success');
                 } catch (error) {
                     if (activeSession !== session) return;
                     if (error?.code === FileConflictError.code) {
                         activeSession.revert(path);
-                        showToast('删除失败：文件已被修改，请刷新后重试', 'error');
+                        showToast(t('markdown.deleteConflictRefresh'), 'error');
                     } else {
-                        showToast(`删除失败: ${error.message}`, 'error');
+                        showToast(t('markdown.deleteFailed', { message: translatedError(error) }), 'error');
                     }
                 }
             };
@@ -1204,7 +1225,7 @@ export default {
                     await tryConnectToMdSource();
                 } catch (error) {
                     console.error('Failed to initialize Vditor:', error);
-                    showToast(`Markdown 编辑器加载失败: ${error.message}`, 'error');
+                    showToast(t('markdown.editorLoadFailed', { message: translatedError(error) }), 'error');
                 }
             });
 
@@ -1236,7 +1257,8 @@ export default {
                 currentFilePath,
                 selectFile,
                 isDirty,
-                lastSaved,
+                lastSavedAt,
+                formattedLastSaved,
                 saveMarkdownFile,
                 isSaving,
                 showNewFileModal,

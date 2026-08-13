@@ -1,5 +1,7 @@
 package cn.gloduck.api.entity.model.ssh;
 
+import cn.gloduck.api.exceptions.ApiError;
+
 public class SshWebSocketEvent {
     public String type;
 
@@ -27,10 +29,10 @@ public class SshWebSocketEvent {
         return event;
     }
 
-    public static SshWebSocketEvent error(String message) {
+    public static SshWebSocketEvent error(ApiError error) {
         SshWebSocketEvent event = new SshWebSocketEvent();
         event.type = "error";
-        event.message = message;
+        event.message = error.name();
         return event;
     }
 
@@ -48,9 +50,9 @@ public class SshWebSocketEvent {
         return event;
     }
 
-    public static SshWebSocketEvent closed(String connectionId, String message) {
+    public static SshWebSocketEvent closed(String connectionId, ApiError error) {
         SshWebSocketEvent event = closed(connectionId);
-        event.message = message;
+        event.message = error.name();
         return event;
     }
 }

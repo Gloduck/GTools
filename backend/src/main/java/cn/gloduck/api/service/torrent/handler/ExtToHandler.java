@@ -3,6 +3,7 @@ package cn.gloduck.api.service.torrent.handler;
 import cn.gloduck.api.entity.config.TorrentConfig;
 import cn.gloduck.api.entity.model.torrent.TorrentFileInfo;
 import cn.gloduck.api.entity.model.torrent.TorrentInfo;
+import cn.gloduck.api.exceptions.ApiError;
 import cn.gloduck.api.exceptions.ApiException;
 import cn.gloduck.api.utils.NetUtils;
 import cn.gloduck.api.utils.Patterns;
@@ -131,7 +132,7 @@ public class ExtToHandler extends AbstractTorrentHandler {
                 .POST(HttpRequest.BodyPublishers.ofString(String.format("torrent_id=%s&action=get_magnet&timestamp=%s&hmac=%s&sessid=%s", torrentId, timestamp, hmac, csrfToken))).build();
         JsonNode jsonNode = sendJsonRequest(fetchHashRequest);
         if (!jsonNode.path("success").asBoolean(false)) {
-            throw new ApiException("Failed to get torrent hash");
+            throw new ApiException(ApiError.TORRENT_HASH_NOT_FOUND);
         }
 
         TorrentInfo torrentInfo = new TorrentInfo();

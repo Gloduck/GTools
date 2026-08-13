@@ -1,4 +1,7 @@
 import {formatFileSize} from './file-utils.js';
+import {currentLocale, t, translateErrorMessage} from '@/i18n/index.js';
+
+const locale = () => currentLocale.value;
 
 const CommonUtils = {
     computePath: (basePath, basePathIsFile, expression) => {
@@ -37,9 +40,9 @@ const CommonUtils = {
     },
 
     formatTime: (timeString) => {
-        if (!timeString) return '未知';
+        if (!timeString) return t('common.unknown');
         const date = new Date(timeString);
-        return date.toLocaleString('zh-CN', {
+        return date.toLocaleString(locale(), {
             year: 'numeric',
             month: '2-digit',
             day: '2-digit',
@@ -49,28 +52,24 @@ const CommonUtils = {
     },
 
     formatRelativeTime: (timeString) => {
-        if (!timeString) return '未知';
+        if (!timeString) return t('common.unknown');
         const date = new Date(timeString);
-        const now = new Date();
-        const diffMs = now - date;
-        const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-
-        if (diffDays === 0) {
-            return '今天';
-        } else if (diffDays === 1) {
-            return '昨天';
-        } else if (diffDays < 7) {
-            return `${diffDays}天前`;
-        } else if (diffDays < 30) {
-            const weeks = Math.floor(diffDays / 7);
-            return `${weeks}周前`;
-        } else if (diffDays < 365) {
-            const months = Math.floor(diffDays / 30);
-            return `${months}个月前`;
-        } else {
-            const years = Math.floor(diffDays / 365);
-            return `${years}年前`;
+        const diffSeconds = (date.getTime() - Date.now()) / 1000;
+        const ranges = [
+            ['year', 60 * 60 * 24 * 365],
+            ['month', 60 * 60 * 24 * 30],
+            ['week', 60 * 60 * 24 * 7],
+            ['day', 60 * 60 * 24],
+            ['hour', 60 * 60],
+            ['minute', 60]
+        ];
+        const formatter = new Intl.RelativeTimeFormat(locale(), {numeric: 'auto'});
+        for (const [unit, seconds] of ranges) {
+            if (Math.abs(diffSeconds) >= seconds) {
+                return formatter.format(Math.round(diffSeconds / seconds), unit);
+            }
         }
+        return formatter.format(Math.round(diffSeconds), 'second');
     },
 
     formatFileSize,
@@ -85,12 +84,12 @@ const CommonUtils = {
 
     handleGithubApiError: (error, resultHandler) => {
         console.error('API请求错误:', error);
-        let message = '请求失败';
+        let message = t('common.error.requestFailed');
 
-        if (error.message.includes('API rate limit exceeded')) {
-            message = 'API速率限制，请稍后再试';
-        } else if (error.message) {
-            message = error.message;
+        if (error?.message?.includes('API rate limit exceeded')) {
+            message = t('common.error.githubRateLimit');
+        } else if (error?.message) {
+            message = translateErrorMessage(error.message);
         }
 
         if (resultHandler) {
@@ -102,11 +101,7 @@ const CommonUtils = {
 
     handleApiError: (error, resultHandler) => {
         console.error('API请求错误:', error);
-        let message = '请求失败';
-
-        if (error.message) {
-            message = error.message;
-        }
+        const message = translateErrorMessage(error?.message);
 
         if (resultHandler) {
             resultHandler(message, 'error');
@@ -118,19 +113,22 @@ const CommonUtils = {
     checkJsonResponseStatus: async (response) => {
         if (!response.ok) {
             const errorText = await response.text();
-            let errorMessage = `HTTP错误，状态码: ${response.status}`;
+            let errorMessage = t('common.error.httpError', {status: response.status});
 
             try {
                 const errorData = JSON.parse(errorText);
-                if (errorData.message) {
-                    errorMessage = errorData.message;
-                }
+                errorMessage = translateErrorMessage(errorData.msg || errorData.message || errorMessage);
             } catch (e) {
+                if (errorText.trim()) errorMessage = translateErrorMessage(errorText);
             }
 
             throw new Error(errorMessage);
         }
-        return response.json();
+        const data = await response.json();
+        if (data && typeof data === 'object' && data.msg) {
+            data.msg = translateErrorMessage(data.msg);
+        }
+        return data;
     },
 
     debounce: (func, wait) => {
@@ -149,13 +147,13 @@ const CommonUtils = {
         navigator.clipboard.writeText(text)
             .then(() => {
                 if (resultHandler) {
-                    resultHandler('已复制到剪贴板', 'success');
+                    resultHandler(t('common.copiedToClipboard'), 'success');
                 }
             })
             .catch(err => {
                 console.error('复制失败:', err);
                 if (resultHandler) {
-                    resultHandler('复制失败，请手动复制', 'error');
+                    resultHandler(t('common.copyFailedManual'), 'error');
                 }
             });
     }

@@ -1,255 +1,166 @@
 <template>
-<!-- Toast提示 -->
-        <common-toast ref="toastRef"></common-toast>
+    <common-toast ref="toastRef"></common-toast>
 
-        <!-- 页面容器 -->
-        <div class="min-h-screen flex flex-col">
-            <!-- 头部 -->
-            <common-header :title="$route.meta.title" :icon="$route.meta.icon" link="/"></common-header>
+    <div class="min-h-screen flex flex-col">
+        <common-header :title="$route.meta.title" :icon="$route.meta.icon" link="/"></common-header>
 
-            <!-- 主内容区 -->
-            <main class="flex-grow container mx-auto px-4 py-8">
-                <div class="max-w-4xl mx-auto">
-                    <!-- 激活卡片 -->
-                    <div class="bg-gradient-to-r from-blue-50 to-blue-100 border border-blue-200 shadow-lg rounded-2xl p-6 md:p-8 mb-8">
-                        <h2 class="text-2xl font-bold text-gray-800 mb-6 flex items-center gap-3">
-                            <i class="fas fa-link text-primary"></i>
-                            激活链接生成
-                        </h2>
+        <main class="flex-grow container mx-auto px-4 py-8">
+            <div class="max-w-4xl mx-auto">
+                <div class="bg-gradient-to-r from-blue-50 to-blue-100 border border-blue-200 shadow-lg rounded-2xl p-6 md:p-8 mb-8">
+                    <h2 class="text-2xl font-bold text-gray-800 mb-6 flex items-center gap-3">
+                        <i class="fas fa-link text-primary"></i>
+                        {{ t('jrebel.generatorTitle') }}
+                    </h2>
 
-                        <div class="space-y-4">
-                            <div>
-                                <label class="block text-sm font-medium text-gray-700 mb-2">您的激活链接</label>
-                                <div class="flex flex-col md:flex-row gap-4">
-                                    <div class="flex-1 relative">
-                                        <input type="text" :value="activationUrl" readonly
-                                            class="w-full px-4 py-3 pr-12 rounded-lg border-2 border-primary bg-white text-gray-700 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-primary/30">
-                                    </div>
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">{{ t('jrebel.activationLink') }}</label>
+                            <div class="flex flex-col md:flex-row gap-4">
+                                <div class="flex-1 relative">
+                                    <input type="text" :value="activationUrl" readonly
+                                        class="w-full px-4 py-3 pr-12 rounded-lg border-2 border-primary bg-white text-gray-700 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-primary/30">
+                                </div>
 
-                                    <div class="flex gap-3">
-                                        <button @click="copyToClipboard(activationUrl)"
-                                            class="bg-primary hover:bg-primary/90 text-white font-medium px-6 py-3 rounded-lg transition-all flex items-center gap-2 flex-1 md:flex-none min-w-[120px] justify-center">
-                                            <i class="fas fa-copy"></i>
-                                            <span>复制链接</span>
-                                        </button>
-                                        <button @click="generateNewUrl"
-                                            class="bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium px-4 py-3 rounded-lg transition-all flex items-center gap-2"
-                                            title="生成新链接">
-                                            <i class="fas fa-sync-alt"></i>
-                                        </button>
-                                    </div>
+                                <div class="flex gap-3">
+                                    <button @click="copyToClipboard(activationUrl)"
+                                        class="bg-primary hover:bg-primary/90 text-white font-medium px-6 py-3 rounded-lg transition-all flex items-center gap-2 flex-1 md:flex-none min-w-[120px] justify-center">
+                                        <i class="fas fa-copy"></i>
+                                        <span>{{ t('jrebel.copyLink') }}</span>
+                                    </button>
+                                    <button @click="generateNewUrl"
+                                        class="bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium px-4 py-3 rounded-lg transition-all flex items-center gap-2"
+                                        :title="t('jrebel.generateNewLink')" :aria-label="t('jrebel.generateNewLink')">
+                                        <i class="fas fa-sync-alt"></i>
+                                    </button>
                                 </div>
                             </div>
+                        </div>
 
-                            <p class="text-sm text-gray-500">
-                                点击复制按钮将激活链接复制到剪贴板，然后在JRebel中粘贴使用
-                            </p>
-                        </div>
-                    </div>
-
-                    <!-- 使用说明 -->
-                    <div class="bg-white rounded-xl border border-gray-200 p-6 shadow-lg">
-                        <h3 class="text-xl font-bold text-gray-800 mb-6 flex items-center gap-2">
-                            <i class="fas fa-info-circle text-primary"></i>
-                            使用说明
-                        </h3>
-                        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                            <div class="space-y-4">
-                                <h4 class="font-semibold text-gray-700 mb-3 flex items-center gap-2">
-                                    <i class="fas fa-exclamation-triangle text-amber-500"></i>
-                                    注意事项
-                                </h4>
-                                <ul class="space-y-3">
-                                    <li class="flex items-start gap-2">
-                                        <i class="fas fa-circle text-gray-400 text-xs mt-2"></i>
-                                        <span>本工具仅用于开发测试目的</span>
-                                    </li>
-                                    <li class="flex items-start gap-2">
-                                        <i class="fas fa-circle text-gray-400 text-xs mt-2"></i>
-                                        <span>请勿用于商业用途或生产环境</span>
-                                    </li>
-                                    <li class="flex items-start gap-2">
-                                        <i class="fas fa-circle text-gray-400 text-xs mt-2"></i>
-                                        <span>遇到问题请点击查看详细帮助</span>
-                                    </li>
-                                </ul>
-                            </div>
-                        </div>
-                        <div class="mt-8 pt-6 border-t border-gray-200">
-                            <div class="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                                <button @click="showHelpModal = true"
-                                    class="bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium px-4 py-2 rounded-lg transition-all flex items-center gap-2 self-start">
-                                    <i class="fas fa-question-circle"></i>
-                                    查看详细帮助
-                                </button>
-                            </div>
-                        </div>
+                        <p class="text-sm text-gray-500">{{ t('jrebel.copyHint') }}</p>
                     </div>
                 </div>
-            </main>
 
-            <!-- 页脚 -->
-            <common-footer copyright="© 2025 Gloduck"></common-footer>
-        </div>
-
-        <!-- 帮助弹窗 -->
-        <common-modal v-model:visible="showHelpModal" title="JRebel激活帮助">
-
-            <div class="space-y-6">
-                <div>
-                    <h4 class="font-semibold text-gray-800 mb-3 flex items-center gap-2">
-                        <i class="fas fa-cogs text-primary"></i>
-                        激活步骤详解
-                    </h4>
-                    <ol class="space-y-4">
-                        <li class="flex items-start gap-3">
-                            <span
-                                class="flex-shrink-0 w-6 h-6 bg-primary text-white rounded-full flex items-center justify-center text-sm">1</span>
-                            <div>
-                                <p class="font-medium text-gray-700">复制激活链接</p>
-                                <p class="text-gray-600 text-sm mt-1">点击"复制链接"按钮，将生成的URL复制到剪贴板</p>
-                            </div>
-                        </li>
-                        <li class="flex items-start gap-3">
-                            <span
-                                class="flex-shrink-0 w-6 h-6 bg-primary text-white rounded-full flex items-center justify-center text-sm">2</span>
-                            <div>
-                                <p class="font-medium text-gray-700">打开JRebel配置</p>
-                                <p class="text-gray-600 text-sm mt-1">在IDE中打开JRebel配置面板，选择激活方式</p>
-                            </div>
-                        </li>
-                        <li class="flex items-start gap-3">
-                            <span
-                                class="flex-shrink-0 w-6 h-6 bg-primary text-white rounded-full flex items-center justify-center text-sm">3</span>
-                            <div>
-                                <p class="font-medium text-gray-700">选择激活模式</p>
-                                <p class="text-gray-600 text-sm mt-1">选择"Team URL"激活方式，粘贴复制的链接</p>
-                            </div>
-                        </li>
-                        <li class="flex items-start gap-3">
-                            <span
-                                class="flex-shrink-0 w-6 h-6 bg-primary text-white rounded-full flex items-center justify-center text-sm">4</span>
-                            <div>
-                                <p class="font-medium text-gray-700">完成激活</p>
-                                <p class="text-gray-600 text-sm mt-1">填写任意邮箱地址，点击激活按钮完成激活</p>
-                            </div>
-                        </li>
-                    </ol>
-                </div>
-                <div>
-                    <h4 class="font-semibold text-gray-800 mb-3 flex items-center gap-2">
-                        <i class="fas fa-exclamation-circle text-amber-500"></i>
-                        常见问题解决
-                    </h4>
-                    <div class="space-y-3">
-                        <div class="p-3 bg-amber-50 rounded-lg">
-                            <p class="font-medium text-amber-800 mb-1">错误: "Cannot read the array length because
-                                'sigBytes' is null"</p>
-                            <p class="text-amber-700 text-sm">解决方案：在JRebel激活界面先点击"离线"模式，然后再次点击"在线"模式即可解决</p>
-                        </div>
-                        <div class="p-3 bg-blue-50 rounded-lg">
-                            <p class="font-medium text-blue-800 mb-1">激活链接无效</p>
-                            <p class="text-blue-700 text-sm">解决方案：点击刷新按钮生成新的链接，然后重新复制尝试</p>
+                <div class="bg-white rounded-xl border border-gray-200 p-6 shadow-lg">
+                    <h3 class="text-xl font-bold text-gray-800 mb-6 flex items-center gap-2">
+                        <i class="fas fa-info-circle text-primary"></i>
+                        {{ t('jrebel.instructions') }}
+                    </h3>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <div class="space-y-4">
+                            <h4 class="font-semibold text-gray-700 mb-3 flex items-center gap-2">
+                                <i class="fas fa-exclamation-triangle text-amber-500"></i>
+                                {{ t('jrebel.notes') }}
+                            </h4>
+                            <ul class="space-y-3">
+                                <li v-for="noteKey in noteKeys" :key="noteKey" class="flex items-start gap-2">
+                                    <i class="fas fa-circle text-gray-400 text-xs mt-2"></i>
+                                    <span>{{ t(noteKey) }}</span>
+                                </li>
+                            </ul>
                         </div>
                     </div>
-                </div>
-                <div>
-                    <h4 class="font-semibold text-gray-800 mb-3 flex items-center gap-2">
-                        <i class="fas fa-shield-alt text-green-500"></i>
-                        免责声明
-                    </h4>
-                    <p class="text-gray-600 text-sm">
-                        本工具仅供开发测试使用，请勿用于商业用途。使用本工具产生的任何后果由使用者自行承担，
-                        工具作者不承担任何法律责任。请支持正版软件，尊重知识产权。
-                    </p>
+                    <div class="mt-8 pt-6 border-t border-gray-200">
+                        <button @click="showHelpModal = true"
+                            class="bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium px-4 py-2 rounded-lg transition-all flex items-center gap-2 self-start">
+                            <i class="fas fa-question-circle"></i>
+                            {{ t('jrebel.viewHelp') }}
+                        </button>
+                    </div>
                 </div>
             </div>
-        </common-modal>
+        </main>
+
+        <common-footer copyright="© 2025 Gloduck"></common-footer>
+    </div>
+
+    <common-modal v-model:visible="showHelpModal" :title="t('jrebel.helpTitle')">
+        <div class="space-y-6">
+            <div>
+                <h4 class="font-semibold text-gray-800 mb-3 flex items-center gap-2">
+                    <i class="fas fa-cogs text-primary"></i>
+                    {{ t('jrebel.activationSteps') }}
+                </h4>
+                <ol class="space-y-4">
+                    <li v-for="(step, index) in steps" :key="step.titleKey" class="flex items-start gap-3">
+                        <span class="flex-shrink-0 w-6 h-6 bg-primary text-white rounded-full flex items-center justify-center text-sm">{{ index + 1 }}</span>
+                        <div>
+                            <p class="font-medium text-gray-700">{{ t(step.titleKey) }}</p>
+                            <p class="text-gray-600 text-sm mt-1">{{ t(step.descriptionKey) }}</p>
+                        </div>
+                    </li>
+                </ol>
+            </div>
+            <div>
+                <h4 class="font-semibold text-gray-800 mb-3 flex items-center gap-2">
+                    <i class="fas fa-exclamation-circle text-amber-500"></i>
+                    {{ t('jrebel.troubleshooting') }}
+                </h4>
+                <div class="space-y-3">
+                    <div class="p-3 bg-amber-50 rounded-lg">
+                        <p class="font-medium text-amber-800 mb-1">{{ t('jrebel.signatureError') }}</p>
+                        <p class="text-amber-700 text-sm">{{ t('jrebel.signatureSolution') }}</p>
+                    </div>
+                    <div class="p-3 bg-blue-50 rounded-lg">
+                        <p class="font-medium text-blue-800 mb-1">{{ t('jrebel.invalidLink') }}</p>
+                        <p class="text-blue-700 text-sm">{{ t('jrebel.invalidLinkSolution') }}</p>
+                    </div>
+                </div>
+            </div>
+            <div>
+                <h4 class="font-semibold text-gray-800 mb-3 flex items-center gap-2">
+                    <i class="fas fa-shield-alt text-green-500"></i>
+                    {{ t('jrebel.disclaimerTitle') }}
+                </h4>
+                <p class="text-gray-600 text-sm">{{ t('jrebel.disclaimer') }}</p>
+            </div>
+        </div>
+    </common-modal>
 </template>
 
-<script>
-import { ref, onMounted } from 'vue';
+<script setup>
+import { onMounted, ref } from 'vue';
+import { useI18n } from 'vue-i18n';
 import { CommonUtils } from '@/shared/common-utils.js';
 import { CommonComponents } from '@/shared/common-components.js';
 
-export default {
-    name: 'JrebelView',
-            components: {
-                'common-header': CommonComponents.Header,
-                'common-footer': CommonComponents.Footer,
-                'common-toast': CommonComponents.Toast,
-                'common-modal': CommonComponents.Modal
-            },
+const CommonHeader = CommonComponents.Header;
+const CommonFooter = CommonComponents.Footer;
+const CommonToast = CommonComponents.Toast;
+const CommonModal = CommonComponents.Modal;
+const { t } = useI18n();
 
-            setup() {
-                const toastRef = ref(null);
-                const activationUrl = ref('');
-                const showHelpModal = ref(false);
+const toastRef = ref(null);
+const activationUrl = ref('');
+const showHelpModal = ref(false);
+const noteKeys = ['jrebel.noteDevelopment', 'jrebel.noteCommercial', 'jrebel.noteHelp'];
+const steps = [
+    { titleKey: 'jrebel.steps.copyTitle', descriptionKey: 'jrebel.steps.copyDescription' },
+    { titleKey: 'jrebel.steps.configureTitle', descriptionKey: 'jrebel.steps.configureDescription' },
+    { titleKey: 'jrebel.steps.modeTitle', descriptionKey: 'jrebel.steps.modeDescription' },
+    { titleKey: 'jrebel.steps.finishTitle', descriptionKey: 'jrebel.steps.finishDescription' }
+];
 
-                // 显示提示
-                const showToast = (message, type) => {
-                    if (toastRef.value) {
-                        toastRef.value.show(message, type);
-                    } else {
-                        alert(message);
-                    }
-                };
-
-                // 生成UUID
-                const generateUUID = () => {
-                    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
-                        const r = Math.random() * 16 | 0;
-                        const v = c === 'x' ? r : (r & 0x3 | 0x8);
-                        return v.toString(16);
-                    });
-                };
-
-                // 获取当前根路径
-                const getBaseUrl = () => {
-                    return window.location.origin;
-                };
-
-                // 生成激活链接
-                const generateActivationUrl = () => {
-                    const baseUrl = getBaseUrl();
-                    const uuid = generateUUID();
-                    return `${baseUrl}/api/jrebel/${uuid}`;
-                };
-
-                // 更新激活链接
-                const updateActivationUrl = () => {
-                    activationUrl.value = generateActivationUrl();
-                };
-
-                // 复制到剪贴板
-                const copyToClipboard = (text) => {
-                    CommonUtils.copyToClipboard(text, showToast);
-                };
-
-                // 生成新链接
-                const generateNewUrl = () => {
-                    updateActivationUrl();
-                    showToast('已生成新的激活链接', 'success');
-                };
-
-                // 页面加载时初始化
-                onMounted(() => {
-                    updateActivationUrl();
-                });
-
-                return {
-                    toastRef,
-                    activationUrl,
-                    showHelpModal,
-                    copyToClipboard,
-                    generateNewUrl
-                };
-            }
+const showToast = (message, type) => {
+    if (toastRef.value) toastRef.value.show(message, type);
+    else alert(message);
 };
-</script>
 
-<style>
-.gradient-bg {
-            background: linear-gradient(135deg, #249ffd 0%, #0d6efd 100%);
-        }
-</style>
+const generateUUID = () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (character) => {
+    const random = Math.random() * 16 | 0;
+    const value = character === 'x' ? random : (random & 0x3 | 0x8);
+    return value.toString(16);
+});
+
+const updateActivationUrl = () => {
+    activationUrl.value = `${window.location.origin}/api/jrebel/${generateUUID()}`;
+};
+
+const copyToClipboard = (text) => CommonUtils.copyToClipboard(text, showToast);
+
+const generateNewUrl = () => {
+    updateActivationUrl();
+    showToast(t('jrebel.newLinkGenerated'), 'success');
+};
+
+onMounted(updateActivationUrl);
+</script>

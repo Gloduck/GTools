@@ -1,10 +1,14 @@
 package cn.gloduck.api.service.requestProxy;
 
 import cn.gloduck.api.entity.config.ProxyRequestConfig;
+import cn.gloduck.api.exceptions.ApiError;
+import cn.gloduck.api.exceptions.ApiException;
 import cn.gloduck.api.utils.NetUtils;
 import cn.gloduck.api.utils.StringUtils;
+import cn.gloduck.common.entity.base.Result;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.ws.rs.core.HttpHeaders;
+import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.MultivaluedHashMap;
 import jakarta.ws.rs.core.MultivaluedMap;
 import jakarta.ws.rs.core.Response;
@@ -87,12 +91,12 @@ public class RequestProxyService {
 
     public Response proxy(String method, String path, InputStream body, HttpHeaders headers, UriInfo uriInfo) {
         MultivaluedMap<String, String> query = uriInfo.getQueryParameters();
+        boolean enableCors = isCorsEnabled(headers, query);
         String proxyHost = getProxyHost(headers, query);
         if (StringUtils.isNullOrEmpty(proxyHost)) {
-            return Response.status(Response.Status.BAD_REQUEST).entity("Missing parameter or header: X-Proxy-Host").build();
+            return localError(Response.Status.BAD_REQUEST, ApiError.PROXY_HOST_REQUIRED, enableCors);
         }
 
-        boolean enableCors = isCorsEnabled(headers, query);
         HttpResponse<InputStream> response;
         try {
             ProxyRequestOptions options = new ProxyRequestOptions(
@@ -103,14 +107,16 @@ public class RequestProxyService {
             URI targetUri = buildTargetUri(proxyHost, scheme, path, filterRequestParameters(query));
             response = sendRequest(method, body, headers, targetUri, options);
         } catch (URISyntaxException e) {
-            return Response.status(Response.Status.BAD_REQUEST).entity("Invalid proxy target URI").build();
+            return localError(Response.Status.BAD_REQUEST, ApiError.PROXY_TARGET_INVALID, enableCors);
+        } catch (ApiException e) {
+            return localError(Response.Status.BAD_REQUEST, e.getError(), enableCors);
         } catch (IllegalArgumentException e) {
-            return Response.status(Response.Status.BAD_REQUEST).entity(e.getMessage()).build();
+            return localError(Response.Status.BAD_REQUEST, ApiError.PROXY_TARGET_INVALID, enableCors);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new RuntimeException("Proxy request interrupted", e);
+            return localError(Response.Status.INTERNAL_SERVER_ERROR, ApiError.PROXY_REQUEST_FAILED, enableCors);
         } catch (IOException e) {
-            throw new RuntimeException("Proxy request failed", e);
+            return localError(Response.Status.BAD_GATEWAY, ApiError.PROXY_REQUEST_FAILED, enableCors);
         }
 
         Response.ResponseBuilder responseBuilder = Response.status(response.statusCode());
@@ -120,6 +126,16 @@ public class RequestProxyService {
         }
         StreamingOutput output = out -> copyAndClose(response.body(), out);
         return responseBuilder.entity(output).build();
+    }
+
+    private Response localError(Response.Status status, ApiError error, boolean enableCors) {
+        Response.ResponseBuilder builder = Response.status(status)
+                .type(MediaType.APPLICATION_JSON)
+                .entity(Result.fail(error.name()));
+        if (enableCors) {
+            withCors(builder);
+        }
+        return builder.build();
     }
 
     private HttpResponse<InputStream> sendRequest(String method, InputStream body, HttpHeaders headers, URI targetUri,
@@ -152,7 +168,7 @@ public class RequestProxyService {
                 redirectUri = targetUri.resolve(location);
             } catch (IllegalArgumentException e) {
                 closeResponseBody(response);
-                throw new IllegalArgumentException("Invalid proxy redirect URI", e);
+                throw new ApiException(ApiError.PROXY_TARGET_INVALID, e);
             }
             if (!canRedirect(targetUri, redirectUri)) {
                 return response;
@@ -164,7 +180,7 @@ public class RequestProxyService {
             String nextMethod = resolveRedirectMethod(response.statusCode(), currentMethod);
             if (hasBody && currentMethod.equals(nextMethod)) {
                 closeResponseBody(response);
-                throw new IllegalArgumentException("Cannot safely replay request body after redirect");
+                throw new ApiException(ApiError.PROXY_REDIRECT_BODY_UNSUPPORTED);
             }
 
             closeResponseBody(response);

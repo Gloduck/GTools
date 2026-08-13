@@ -15,12 +15,12 @@
                     <section class="bg-white rounded-xl shadow-lg p-6 mb-6">
                         <div class="text-center">
                             <h2 class="text-2xl font-bold text-gray-800 mb-2">
-                                剪贴板:
+                                {{ $t('clipboard.title') }}
                                 <span class="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-lg font-medium">
                                     {{ clipboardId }}
                                 </span>
                             </h2>
-                            <p class="text-gray-600">最后更新: {{ lastUpdated || '从未更新' }}</p>
+                            <p class="text-gray-600">{{ $t('clipboard.lastUpdated', { time: formattedLastUpdated }) }}</p>
                         </div>
                     </section>
 
@@ -34,7 +34,7 @@
                                         <input type="checkbox" id="auto-copy" v-model="settings.autoCopy"
                                             class="w-5 h-5 text-blue-600 rounded focus:ring-blue-500">
                                         <label for="auto-copy" class="text-gray-700 cursor-pointer select-none">
-                                            服务器更新时自动复制到剪贴板
+                                            {{ $t('clipboard.autoCopy') }}
                                         </label>
                                     </div>
 
@@ -43,7 +43,7 @@
                                             @change="onAutoRefreshChange"
                                             class="w-5 h-5 text-blue-600 rounded focus:ring-blue-500">
                                         <label for="auto-refresh" class="text-gray-700 cursor-pointer select-none">
-                                            自动刷新
+                                            {{ $t('clipboard.autoRefresh') }}
                                         </label>
                                     </div>
 
@@ -51,7 +51,7 @@
                                         <input type="checkbox" id="auto-save" v-model="settings.autoSave"
                                             class="w-5 h-5 text-blue-600 rounded focus:ring-blue-500">
                                         <label for="auto-save" class="text-gray-700 cursor-pointer select-none">
-                                            自动保存
+                                            {{ $t('clipboard.autoSave') }}
                                         </label>
                                     </div>
                                 </div>
@@ -61,20 +61,20 @@
                                         :class="['px-4 py-2 rounded-lg font-medium transition-all duration-300 flex items-center gap-2',
                                                      !editorExist ? 'bg-gray-300 cursor-not-allowed' : 'bg-red-500 hover:bg-red-600 text-white']">
                                         <i class="fas fa-trash-alt"></i>
-                                        删除剪贴板
+                                         {{ $t('common.delete') }}
                                     </button>
 
                                     <button @click="saveContent" :class="['px-4 py-2 rounded-lg font-medium transition-all duration-300 flex items-center gap-2',
                                                     'bg-green-500 hover:bg-green-600 text-white']">
                                         <i class="fas fa-save"></i>
-                                        保存内容
+                                         {{ $t('common.save') }}
                                     </button>
 
                                     <button @click="copyToClipboard" :disabled="!editorExist"
                                         :class="['px-4 py-2 rounded-lg font-medium transition-all duration-300 flex items-center gap-2',
                                                      !editorExist ? 'bg-gray-300 cursor-not-allowed' : 'bg-purple-500 hover:bg-purple-600 text-white']">
                                         <i class="fas fa-copy"></i>
-                                        复制内容
+                                         {{ $t('common.copy') }}
                                     </button>
                                 </div>
                             </div>
@@ -85,8 +85,8 @@
                     <!-- 编辑器区域 -->
                     <section class="bg-white rounded-xl shadow-lg p-6 mb-6">
                         <div class="mb-4 flex justify-between items-center">
-                            <h3 class="text-lg font-semibold text-gray-800">内容编辑器</h3>
-                            <span class="text-sm text-gray-500">状态: {{ editorStatusInfo }}</span>
+                            <h3 class="text-lg font-semibold text-gray-800">{{ $t('clipboard.editorTitle') }}</h3>
+                            <span class="text-sm text-gray-500">{{ $t('clipboard.editorStatus', { status: editorStatusInfo }) }}</span>
                         </div>
 
                         <div id="editor-container" class="rounded-lg overflow-hidden border border-gray-200">
@@ -99,10 +99,10 @@
                     <!-- 状态栏 -->
                     <div class="flex justify-between items-center px-4 py-3 bg-white rounded-lg shadow">
                         <div class="text-sm text-gray-600">
-                            <span class="font-medium">提示:</span> 使用 Ctrl+S 保存内容 | 内容会被明文保存到服务器，请不要保存敏感信息
+                            <span class="font-medium">{{ $t('clipboard.hintLabel') }}</span> {{ $t('clipboard.editorHint') }}
                         </div>
                         <div class="text-sm text-gray-500">
-                            最后更新: {{ lastUpdated || '从未更新' }}
+                            {{ $t('clipboard.lastUpdated', { time: formattedLastUpdated }) }}
                         </div>
                     </div>
                 </div>
@@ -114,12 +114,12 @@
                         <!-- 搜索框 -->
                         <div class="max-w-2xl mx-auto mb-10">
                             <div class="relative shadow-lg rounded-xl overflow-hidden">
-                                <input type="text" v-model="newClipboardId" placeholder="输入剪贴板ID，例如: my-clipboard"
+                                <input ref="clipboardIdInput" type="text" v-model="newClipboardId" :placeholder="$t('clipboard.idPlaceholder')"
                                     @keyup.enter="goToClipboard"
                                     class="w-full px-6 py-4 text-lg border-0 focus:ring-2 focus:ring-blue-500 focus:outline-none">
                                 <button @click="goToClipboard"
                                     class="absolute right-2 top-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg transition-colors">
-                                    前往
+                                    {{ $t('clipboard.go') }}
                                 </button>
                             </div>
                         </div>
@@ -129,14 +129,14 @@
                             <button @click="createRandomClipboard"
                                 class="px-6 py-3 bg-green-600 hover:bg-green-700 text-white rounded-lg font-medium transition-colors">
                                 <i class="fas fa-plus-circle mr-2"></i>
-                                创建随机剪贴板
+                                 {{ $t('clipboard.createRandom') }}
                             </button>
                         </div>
                     </section>
 
                     <!-- 使用说明 -->
                     <section class="bg-white rounded-xl shadow-lg p-8 mb-8">
-                        <h2 class="text-2xl font-bold text-gray-800 mb-6 text-center">使用说明</h2>
+                        <h2 class="text-2xl font-bold text-gray-800 mb-6 text-center">{{ $t('clipboard.instructions') }}</h2>
 
                         <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
                             <div class="text-center p-4">
@@ -144,8 +144,8 @@
                                     class="w-16 h-16 bg-blue-100 rounded-full flex items-center justify-center mx-auto mb-4">
                                     <i class="fas fa-key text-blue-600 text-2xl"></i>
                                 </div>
-                                <h3 class="font-semibold text-gray-800 mb-2">1. 创建或访问剪贴板</h3>
-                                <p class="text-gray-600">输入一个唯一的剪贴板ID（只能包含字母、数字和连字符）</p>
+                                <h3 class="font-semibold text-gray-800 mb-2">{{ $t('clipboard.instructionAccessTitle') }}</h3>
+                                <p class="text-gray-600">{{ $t('clipboard.instructionAccessDescription') }}</p>
                             </div>
 
                             <div class="text-center p-4">
@@ -153,8 +153,8 @@
                                     class="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
                                     <i class="fas fa-magic text-green-600 text-2xl"></i>
                                 </div>
-                                <h3 class="font-semibold text-gray-800 mb-2">2. 自动创建</h3>
-                                <p class="text-gray-600">如果剪贴板不存在，将会在第一次输入内容后自动创建</p>
+                                <h3 class="font-semibold text-gray-800 mb-2">{{ $t('clipboard.instructionCreateTitle') }}</h3>
+                                <p class="text-gray-600">{{ $t('clipboard.instructionCreateDescription') }}</p>
                             </div>
 
                             <div class="text-center p-4">
@@ -162,15 +162,15 @@
                                     class="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
                                     <i class="fas fa-exclamation-triangle text-red-600 text-2xl"></i>
                                 </div>
-                                <h3 class="font-semibold text-gray-800 mb-2">3. 安全提醒</h3>
-                                <p class="text-gray-600">内容会被明文存储在服务器上，请勿输入敏感信息</p>
+                                <h3 class="font-semibold text-gray-800 mb-2">{{ $t('clipboard.instructionSecurityTitle') }}</h3>
+                                <p class="text-gray-600">{{ $t('clipboard.instructionSecurityDescription') }}</p>
                             </div>
                         </div>
                     </section>
 
                     <!-- 热门剪贴板示例 -->
                     <section class="bg-white rounded-xl shadow-lg p-8">
-                        <h2 class="text-2xl font-bold text-gray-800 mb-6 text-center">热门剪贴板示例</h2>
+                        <h2 class="text-2xl font-bold text-gray-800 mb-6 text-center">{{ $t('clipboard.examplesTitle') }}</h2>
 
                         <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                             <a v-for="example in examples" :key="example.id" :href="'/clipboard/' + example.id" @click.prevent="router.push('/clipboard/' + example.id)"
@@ -193,10 +193,11 @@
 </template>
 
 <script>
-import { ref, onMounted, onBeforeUnmount, watch } from 'vue';
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { CommonUtils } from '@/shared/common-utils.js';
 import { CommonComponents } from '@/shared/common-components.js';
+import { t, currentLocale, translateErrorMessage } from '@/i18n/index.js';
 
 export default {
     name: 'ClipboardView',
@@ -212,12 +213,14 @@ export default {
                 const clipboardId = ref(route.params.id || null);
                 const newClipboardId = ref('');
                 const toastRef = ref(null);
+                const clipboardIdInput = ref(null);
 
                 // 编辑器相关
                 const editorContent = ref('');
-                const editorStatusInfo = ref('就绪');
+                const editorStatus = ref('ready');
+                const editorStatusDetail = ref('');
                 const editorExist = ref(false);
-                const lastUpdated = ref('');
+                const lastUpdatedTimestamp = ref(null);
 
                 // 默认设置
                 const defaultSettings = {
@@ -236,14 +239,31 @@ export default {
                 let autoSaveTimeout = null;
 
                 // 首页示例
-                const examples = ref([
-                    { id: 'quick-notes', name: '快速笔记', description: '用于临时记录笔记的剪贴板' },
-                    { id: 'code-snippets', name: '代码片段', description: '共享有用的代码片段' },
-                    { id: 'meeting-minutes', name: '会议纪要', description: '团队会议记录和讨论' }
+                const examples = computed(() => [
+                    { id: 'quick-notes', name: t('clipboard.examples.quickNotes.name'), description: t('clipboard.examples.quickNotes.description') },
+                    { id: 'code-snippets', name: t('clipboard.examples.codeSnippets.name'), description: t('clipboard.examples.codeSnippets.description') },
+                    { id: 'meeting-minutes', name: t('clipboard.examples.meetingMinutes.name'), description: t('clipboard.examples.meetingMinutes.description') }
                 ]);
 
                 // 工具函数
-                const formatTime = CommonUtils.formatTime;
+                const editorStatusInfo = computed(() => {
+                    if (editorStatus.value === 'networkError') {
+                        return `${t('common.error.networkError')}: ${editorStatusDetail.value}`;
+                    }
+                    return t(`clipboard.status.${editorStatus.value}`);
+                });
+                const formatTime = (timestamp) => {
+                    if (!timestamp) return t('clipboard.neverUpdated');
+                    const locale = currentLocale.value || currentLocale;
+                    return new Intl.DateTimeFormat(locale, {
+                        year: 'numeric',
+                        month: '2-digit',
+                        day: '2-digit',
+                        hour: '2-digit',
+                        minute: '2-digit'
+                    }).format(new Date(timestamp));
+                };
+                const formattedLastUpdated = computed(() => formatTime(lastUpdatedTimestamp.value));
 
                 const showToast = (message, type = 'info') => {
                     if (toastRef.value) {
@@ -276,7 +296,7 @@ export default {
                         console.log('Settings saved:', settings.value);
                     } catch (e) {
                         console.error('Failed to save settings:', e);
-                        showToast('保存设置失败', 'error');
+                        showToast(t('clipboard.settingsSaveFailed'), 'error');
                     }
                 };
 
@@ -291,14 +311,14 @@ export default {
                     // 如果最近3秒内有用户编辑，跳过此次更新
                     const now = Date.now();
                     if (now - lastUserEditTime < 3000) {
-                        editorStatusInfo.value = "跳过更新（编辑中）";
+                        editorStatus.value = 'editing';
                         return;
                     }
 
 
                     try {
                         isUpdatingFromServer = true;
-                        editorStatusInfo.value = "正在获取内容...";
+                        editorStatus.value = 'fetching';
                         const beforeValue = editorContent.value;
 
                         const response = await fetch(`/api/clipboard/query?id=${clipboardId.value}`);
@@ -306,8 +326,8 @@ export default {
 
                         if (data.code === 200) {
                             if (data.data === null) {
-                                editorStatusInfo.value = "新建";
-                                lastUpdated.value = "从未更新";
+                                editorStatus.value = 'new';
+                                lastUpdatedTimestamp.value = null;
                                 editorExist.value = false;
                                 return;
                             }
@@ -317,24 +337,25 @@ export default {
                             const newValue = data.data.content || '';
                             if (beforeValue !== newValue) {
                                 editorContent.value = newValue;
-                                editorStatusInfo.value = "内容已更新";
+                                editorStatus.value = 'updated';
                             } else {
-                                editorStatusInfo.value = "内容已是最新";
+                                editorStatus.value = 'current';
                             }
 
-                            lastUpdated.value = formatTime(data.data.updateDate);
+                            lastUpdatedTimestamp.value = data.data.updateDate;
 
                             // 如果自动复制开启且内容有变化
                             if (settings.value.autoCopy && beforeValue !== newValue) {
                                 copyToClipboard();
                             }
                         } else {
-                            showToast(`错误: ${data.msg}`, 'error');
-                            editorStatusInfo.value = "获取失败";
+                            showToast(t('clipboard.fetchFailed', { message: translateErrorMessage(data.msg) }), 'error');
+                            editorStatus.value = 'fetchFailed';
                         }
                     } catch (error) {
-                        showToast(`网络错误: ${error.message}`, 'error');
-                        editorStatusInfo.value = "网络错误";
+                        showToast(`${t('common.error.networkError')}: ${error.message}`, 'error');
+                        editorStatusDetail.value = error.message;
+                        editorStatus.value = 'networkError';
                     } finally {
                         isUpdatingFromServer = false;
                     }
@@ -350,7 +371,7 @@ export default {
                     const contentType = 'text';
 
                     try {
-                        editorStatusInfo.value = "正在保存...";
+                        editorStatus.value = 'saving';
                         const response = await fetch('/api/clipboard/save', {
                             method: 'POST',
                             headers: {
@@ -365,19 +386,20 @@ export default {
 
                         const data = await CommonUtils.checkJsonResponseStatus(response);
                         if (data.code === 200) {
-                            showToast("内容保存成功!", 'success');
-                            lastUpdated.value = formatTime(Date.now());
+                            showToast(t('clipboard.saveSuccess'), 'success');
+                            lastUpdatedTimestamp.value = Date.now();
                             editorExist.value = true;
-                            editorStatusInfo.value = "保存成功";
+                            editorStatus.value = 'saved';
                             return true;
                         } else {
-                            showToast(`保存失败: ${data.msg}`, 'error');
-                            editorStatusInfo.value = "保存失败";
+                            showToast(t('clipboard.saveFailed', { message: translateErrorMessage(data.msg) }), 'error');
+                            editorStatus.value = 'saveFailed';
                             return false;
                         }
                     } catch (error) {
-                        showToast(`网络错误: ${error.message}`, 'error');
-                        editorStatusInfo.value = "网络错误";
+                        showToast(`${t('common.error.networkError')}: ${error.message}`, 'error');
+                        editorStatusDetail.value = error.message;
+                        editorStatus.value = 'networkError';
                         return false;
                     }
                 };
@@ -386,22 +408,23 @@ export default {
                 const deleteClipboard = async () => {
                     if (!clipboardId.value) return;
 
-                    if (!confirm("确定要删除这个剪贴板吗？此操作不可撤销！")) {
+                    if (!confirm(t('clipboard.deleteConfirm'))) {
                         return;
                     }
 
                     try {
-                        editorStatusInfo.value = "正在删除...";
+                        editorStatus.value = 'deleting';
                         const response = await fetch(`/api/clipboard/delete?id=${clipboardId.value}`, {
                             method: 'DELETE'
                         });
 
                         const data = await CommonUtils.checkJsonResponseStatus(response);
                         if (data.code === 200) {
-                            showToast("剪贴板已成功删除", 'success');
+                            showToast(t('clipboard.deleteSuccess'), 'success');
                             editorContent.value = "";
-                            editorStatusInfo.value = "已删除";
+                            editorStatus.value = 'deleted';
                             editorExist.value = false;
+                            lastUpdatedTimestamp.value = null;
 
                             // 禁用自动刷新
                             if (refreshInterval) {
@@ -409,18 +432,25 @@ export default {
                                 refreshInterval = null;
                             }
                         } else {
-                            showToast(`删除失败: ${data.msg}`, 'error');
-                            editorStatusInfo.value = "删除失败";
+                            showToast(t('clipboard.deleteFailed', { message: translateErrorMessage(data.msg) }), 'error');
+                            editorStatus.value = 'deleteFailed';
                         }
                     } catch (error) {
-                        showToast(`网络错误: ${error.message}`, 'error');
-                        editorStatusInfo.value = "网络错误";
+                        showToast(`${t('common.error.networkError')}: ${error.message}`, 'error');
+                        editorStatusDetail.value = error.message;
+                        editorStatus.value = 'networkError';
                     }
                 };
 
                 // 复制内容到剪贴板
-                const copyToClipboard = () => {
-                    CommonUtils.copyToClipboard(editorContent.value, showToast);
+                const copyToClipboard = async () => {
+                    try {
+                        await navigator.clipboard.writeText(editorContent.value);
+                        showToast(t('common.copiedToClipboard'), 'success');
+                    } catch (error) {
+                        console.error('Failed to copy clipboard content:', error);
+                        showToast(t('common.copyFailed'), 'error');
+                    }
                 };
 
                 // 自动刷新变化处理
@@ -460,7 +490,7 @@ export default {
                             }
                             const success = await saveContent();
                             if (success) {
-                                showToast("内容已自动保存", 'success');
+                                showToast(t('clipboard.autoSaveSuccess'), 'success');
                             }
                         }, 1000);
                     }
@@ -494,12 +524,12 @@ export default {
                     const id = newClipboardId.value.trim();
 
                     if (!id) {
-                        showToast('请输入剪贴板ID', 'warning');
+                        showToast(t('clipboard.enterId'), 'warning');
                         return;
                     }
 
                     if (!/^[a-zA-Z0-9\-]+$/.test(id)) {
-                        showToast('ID只能包含字母、数字和连字符', 'error');
+                        showToast(t('clipboard.invalidId'), 'error');
                         return;
                     }
 
@@ -532,8 +562,7 @@ export default {
                         initEditor();
                     } else {
                         // 首页，聚焦输入框
-                        const input = document.querySelector('input[placeholder*="剪贴板ID"]');
-                        if (input) input.focus();
+                        clipboardIdInput.value?.focus();
                     }
 
                     // 添加键盘事件监听
@@ -543,9 +572,10 @@ export default {
                 watch(() => route.params.id, async (newId) => {
                     clipboardId.value = newId || null;
                     editorExist.value = false;
-                    lastUpdated.value = '';
+                    lastUpdatedTimestamp.value = null;
                     editorContent.value = '';
-                    editorStatusInfo.value = '就绪';
+                    editorStatus.value = 'ready';
+                    editorStatusDetail.value = '';
 
                     if (refreshInterval) {
                         clearInterval(refreshInterval);
@@ -575,10 +605,11 @@ export default {
                     clipboardId,
                     newClipboardId,
                     toastRef,
+                    clipboardIdInput,
                     editorContent,
                     editorExist,
                     editorStatusInfo,
-                    lastUpdated,
+                    formattedLastUpdated,
                     settings,
                     examples,
 

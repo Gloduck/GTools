@@ -10,6 +10,6 @@ import jakarta.ws.rs.ext.Provider;
 public class ApiExceptionMapper implements ExceptionMapper<ApiException> {
     @Override
     public Response toResponse(ApiException exception) {
-        return Response.ok(Result.fail(exception.getMessage()), MediaType.APPLICATION_JSON).build();
+        return Response.ok(Result.fail(exception.getError().name()), MediaType.APPLICATION_JSON).build();
     }
 }

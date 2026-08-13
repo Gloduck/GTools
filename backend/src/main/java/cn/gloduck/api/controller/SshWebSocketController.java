@@ -3,6 +3,8 @@ package cn.gloduck.api.controller;
 import cn.gloduck.api.entity.model.ssh.SshConnectionInfo;
 import cn.gloduck.api.entity.model.ssh.SshWebSocketEvent;
 import cn.gloduck.api.entity.model.ssh.SshWebSocketMessage;
+import cn.gloduck.api.exceptions.ApiError;
+import cn.gloduck.api.exceptions.ApiException;
 import cn.gloduck.api.service.ssh.SshService;
 import cn.gloduck.api.utils.JsonUtils;
 import jakarta.inject.Inject;
@@ -37,7 +39,7 @@ public class SshWebSocketController {
             sshService.verify(queryValue(session.getQueryString(), "securityKey"));
         } catch (Exception e) {
             LOGGER.log(Level.WARNING, "SSH WebSocket authentication failed: {0}", e.getMessage());
-            session.close(new CloseReason(CloseReason.CloseCodes.VIOLATED_POLICY, e.getMessage()));
+            session.close(new CloseReason(CloseReason.CloseCodes.VIOLATED_POLICY, errorOf(e).name()));
         }
     }
 
@@ -48,7 +50,7 @@ public class SshWebSocketController {
             String type = message.type == null ? "" : message.type;
             if (connectionId == null) {
                 if (!"connect".equalsIgnoreCase(type)) {
-                    send(SshWebSocketEvent.error("first message must be connect"));
+                    send(SshWebSocketEvent.error(ApiError.SSH_CONNECT_REQUIRED));
                     return;
                 }
                 SshConnectionInfo info = sshService.connect(
@@ -71,11 +73,11 @@ public class SshWebSocketController {
             } else if ("close".equalsIgnoreCase(type)) {
                 closeCurrent();
             } else {
-                send(SshWebSocketEvent.error("unsupported message type: " + type));
+                send(SshWebSocketEvent.error(ApiError.SSH_MESSAGE_TYPE_UNSUPPORTED));
             }
         } catch (Exception e) {
             LOGGER.log(Level.WARNING, "SSH WebSocket message failed", e);
-            send(SshWebSocketEvent.error(e.getMessage()));
+            send(SshWebSocketEvent.error(errorOf(e)));
         }
     }
 
@@ -93,14 +95,14 @@ public class SshWebSocketController {
         onClose();
     }
 
-    private void closeByService(String message) {
+    private void closeByService(ApiError error) {
         String id = connectionId;
         connectionId = null;
-        send(SshWebSocketEvent.closed(id, message));
+        send(SshWebSocketEvent.closed(id, error));
         Session session = webSocketSession;
         if (session != null && session.isOpen()) {
             try {
-                session.close(new CloseReason(CloseReason.CloseCodes.NORMAL_CLOSURE, message));
+                session.close(new CloseReason(CloseReason.CloseCodes.NORMAL_CLOSURE, error.name()));
             } catch (IOException ignored) {
             }
         }
@@ -147,4 +149,11 @@ public class SshWebSocketController {
     private String urlDecode(String value) {
         return URLDecoder.decode(value, StandardCharsets.UTF_8);
     }
+
+    private ApiError errorOf(Exception exception) {
+        return exception instanceof ApiException apiException
+                ? apiException.getError()
+                : ApiError.SSH_MESSAGE_INVALID;
+    }
+
 }

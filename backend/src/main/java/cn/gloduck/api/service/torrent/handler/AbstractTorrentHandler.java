@@ -1,6 +1,7 @@
 package cn.gloduck.api.service.torrent.handler;
 
 import cn.gloduck.api.entity.config.TorrentConfig;
+import cn.gloduck.api.exceptions.ApiError;
 import cn.gloduck.api.exceptions.ApiException;
 import cn.gloduck.api.utils.HttpClientUtils;
 import cn.gloduck.api.utils.JsonUtils;
@@ -59,7 +60,7 @@ public abstract class AbstractTorrentHandler implements TorrentHandler {
             return JsonUtils.readTree(body);
         } catch (Exception e) {
             LOGGER.warning(String.format("Request [%s] Error: %s, response: %s", request.uri(), e.getMessage(), body));
-            throw new ApiException("Request Api Error: " + e.getMessage());
+            throw new ApiException(ApiError.TORRENT_REQUEST_FAILED, e);
         }
     }
 
@@ -74,7 +75,7 @@ public abstract class AbstractTorrentHandler implements TorrentHandler {
             return body;
         } catch (Exception e) {
             LOGGER.warning(String.format("Request [%s] Error: %s, response: %s", request.uri(), e.getMessage(), body));
-            throw new ApiException("Request Api Error: " + e.getMessage());
+            throw new ApiException(ApiError.TORRENT_REQUEST_FAILED, e);
         }
     }
 

@@ -10,84 +10,94 @@ import CodeEditorView from '@/views/CodeEditorView.vue';
 
 export const pageDefinitions = [
   {
+    id: 'index',
     paths: ['/'],
     component: IndexView,
-    title: '工具导航',
+    titleKey: 'pages.index.title',
+    descKey: 'pages.index.description',
     icon: 'fas fa-tools'
   },
   {
+    id: 'jrebel',
     paths: ['/jrebel'],
     component: JrebelView,
-    title: 'JRebel激活工具',
+    titleKey: 'pages.jrebel.title',
     icon: 'fas fa-bolt',
-    desc: '一键激活Jrebel开发工具',
-    category: '开发'
+    descKey: 'pages.jrebel.description',
+    categoryId: 'development'
   },
   {
+    id: 'torrent',
     paths: ['/torrent'],
     component: TorrentView,
-    title: '磁力聚合搜索',
+    titleKey: 'pages.torrent.title',
     icon: 'fas fa-magnet',
-    desc: '支持多个磁力网站的磁力搜索',
-    category: '搜索'
+    descKey: 'pages.torrent.description',
+    categoryId: 'search'
   },
   {
+    id: 'github',
     paths: ['/github'],
     component: GithubView,
-    title: 'GitHub仓库搜索',
+    titleKey: 'pages.github.title',
     icon: 'fab fa-github',
-    desc: '搜索Github上的项目',
-    category: '开发'
+    descKey: 'pages.github.description',
+    categoryId: 'development'
   },
   {
+    id: 'image-editor',
     paths: ['/imageEditor'],
     component: ImageEditorView,
-    title: '图片处理工具',
+    titleKey: 'pages.imageEditor.title',
     icon: 'fas fa-image',
-    desc: '在线图片缩放、压缩、裁剪工具',
-    category: '工具'
+    descKey: 'pages.imageEditor.description',
+    categoryId: 'utilities'
   },
   {
+    id: 'forward',
     paths: ['/forward'],
     component: ForwardView,
-    title: '转发下载工具',
+    titleKey: 'pages.forward.title',
     icon: 'fas fa-download',
-    desc: '通过转发服务器下载文件',
-    category: '工具'
+    descKey: 'pages.forward.description',
+    categoryId: 'utilities'
   },
   {
+    id: 'clipboard',
     paths: ['/clipboard', '/clipboard/:id'],
     component: ClipboardView,
-    title: '网络剪贴板',
+    titleKey: 'pages.clipboard.title',
     icon: 'fas fa-clipboard',
-    desc: '多设备之间同步文本的网络剪贴板',
-    category: '工具'
+    descKey: 'pages.clipboard.description',
+    categoryId: 'utilities'
   },
   {
+    id: 'markdown',
     paths: ['/mdeditor'],
     component: MdEditorView,
-    title: 'Markdown编辑器',
+    titleKey: 'pages.markdown.title',
     icon: 'fas fa-pen-nib',
-    desc: '基于Vditor的Markdown在线编辑器',
-    category: '开发'
+    descKey: 'pages.markdown.description',
+    categoryId: 'development'
   },
   {
+    id: 'code-editor',
     paths: ['/codeEditor'],
     component: CodeEditorView,
-    title: '代码编辑器',
+    titleKey: 'pages.codeEditor.title',
     icon: 'fas fa-code',
-    desc: '基于浏览器文件访问能力的在线代码编辑器',
-    category: '开发'
+    descKey: 'pages.codeEditor.description',
+    categoryId: 'development'
   }
 ];
 
 export const toolCards = pageDefinitions
-  .filter((page) => page.category)
-  .map((page, index) => ({
-    id: index + 1,
-    name: page.title,
+  .filter((page) => page.categoryId)
+  .map((page) => ({
+    id: page.id,
+    titleKey: page.titleKey,
     href: page.paths[0],
-    desc: page.desc,
-    category: page.category,
+    descKey: page.descKey,
+    categoryId: page.categoryId,
     icon: page.icon
   }));

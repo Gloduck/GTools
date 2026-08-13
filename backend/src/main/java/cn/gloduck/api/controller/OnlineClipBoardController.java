@@ -1,6 +1,7 @@
 package cn.gloduck.api.controller;
 
 import cn.gloduck.api.entity.db.OnlineClipBoard;
+import cn.gloduck.api.exceptions.ApiError;
 import cn.gloduck.api.service.clipboard.OnlineClipBoardService;
 import cn.gloduck.common.entity.base.Result;
 import jakarta.ws.rs.DELETE;
@@ -30,13 +31,13 @@ public class OnlineClipBoardController {
     @Path("/save")
     public Result<Void> save(OnlineClipBoard onlineClipBoard) {
         boolean success = service.save(onlineClipBoard);
-        return success ? Result.success() : Result.fail();
+        return success ? Result.success() : Result.fail(ApiError.CLIPBOARD_SAVE_FAILED.name());
     }
 
     @DELETE
     @Path("/delete")
     public Result<Void> delete(@QueryParam("id") String id) {
         boolean success = service.delete(id);
-        return success ? Result.success() : Result.fail();
+        return success ? Result.success() : Result.fail(ApiError.CLIPBOARD_NOT_FOUND.name());
     }
 }

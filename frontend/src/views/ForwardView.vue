@@ -12,15 +12,15 @@
                 <div class="max-w-3xl mx-auto">
                     <!-- 介绍卡片 -->
                     <div class="bg-white rounded-xl shadow-lg p-6 mb-8">
-                        <h2 class="text-xl font-semibold text-gray-800 mb-3">通过转发下载文件</h2>
+                        <h2 class="text-xl font-semibold text-gray-800 mb-3">{{ $t('forward.title') }}</h2>
                         <p class="text-gray-600 mb-4">
-                            输入您想要下载的文件链接，系统将通过转发服务器为您下载该文件。支持各种类型的文件，包括文档、图片、视频等。
+                            {{ $t('forward.description') }}
                         </p>
 
                         <!-- 输入区域 -->
                         <div class="relative mt-6">
                             <div class="flex">
-                                <input type="url" v-model="fileUrl" placeholder="请输入文件下载链接..."
+                                <input type="url" v-model="fileUrl" :placeholder="$t('forward.urlPlaceholder')"
                                     class="flex-1 px-4 py-3 rounded-l-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-all duration-300"
                                     @keyup.enter="startDownload">
                                 <button @click="startDownload" :disabled="isDownloading" :class="[
@@ -28,7 +28,7 @@
                                         isDownloading ? 'bg-gray-400 cursor-not-allowed' : 'bg-primary hover:bg-primary/90'
                                     ]">
                                     <i class="fas fa-download mr-2"></i>
-                                    {{ isDownloading ? '下载中...' : '开始下载' }}
+                                    {{ isDownloading ? $t('forward.downloading') : $t('forward.startDownload') }}
                                 </button>
                             </div>
                             <p v-if="urlError" class="text-red-500 text-sm mt-2">{{ urlError }}</p>
@@ -44,14 +44,14 @@
 
                         <!-- 文件名 -->
                         <div class="mb-4">
-                            <p class="text-sm text-gray-500">文件名</p>
+                            <p class="text-sm text-gray-500">{{ $t('forward.fileName') }}</p>
                             <p class="text-gray-800 font-medium break-all">{{ fileName }}</p>
                         </div>
 
                         <!-- 进度条 -->
                         <div v-if="showProgress" class="mb-4">
                             <div class="flex justify-between text-sm mb-1">
-                                <span class="text-gray-600">下载进度</span>
+                                <span class="text-gray-600">{{ $t('forward.progress') }}</span>
                                 <span class="text-primary font-medium">{{ progressPercent }}%</span>
                             </div>
                             <div class="h-2 bg-gray-200 rounded-full overflow-hidden">
@@ -63,11 +63,11 @@
                         <!-- 下载信息 -->
                         <div class="grid grid-cols-2 gap-4 text-sm">
                             <div>
-                                <p class="text-gray-500">已下载</p>
+                                <p class="text-gray-500">{{ $t('forward.downloaded') }}</p>
                                 <p class="text-gray-800 font-medium">{{ downloadedSize }}</p>
                             </div>
                             <div>
-                                <p class="text-gray-500">速度</p>
+                                <p class="text-gray-500">{{ $t('forward.speed') }}</p>
                                 <p class="text-gray-800 font-medium">{{ downloadSpeed }}</p>
                             </div>
                         </div>
@@ -76,7 +76,7 @@
                         <div class="mt-6">
                             <button @click="cancelDownload"
                                 class="bg-gray-200 hover:bg-gray-300 text-gray-700 px-6 py-2 rounded-lg font-medium transition-all duration-300">
-                                <i class="fas fa-times mr-2"></i>取消下载
+                                <i class="fas fa-times mr-2"></i>{{ $t('common.cancel') }}
                             </button>
                         </div>
                     </div>
@@ -87,13 +87,13 @@
                         <div class="flex justify-between items-center mb-4">
                             <h2 class="text-xl font-semibold text-gray-800 flex items-center">
                                 <i class="fas fa-history mr-2 text-primary"></i>
-                                <span>下载历史</span>
+                                <span>{{ $t('forward.history') }}</span>
                             </h2>
                             <!-- 清除下载历史按钮：仅当有历史记录时显示 -->
                             <button v-if="downloadHistory.length > 0" @click="clearDownloadHistory"
                                 class="text-sm text-red-500 hover:text-red-600 flex items-center transition-all duration-300">
                                 <i class="fas fa-trash-alt mr-1"></i>
-                                清除历史
+                                {{ $t('common.clear') }}
                             </button>
                         </div>
 
@@ -101,7 +101,7 @@
                             <div v-if="downloadHistory.length === 0"
                                 class="text-center text-gray-500 py-8 border border-dashed border-gray-200 rounded-lg">
                                 <i class="fas fa-file-download text-3xl mb-2 text-gray-300"></i>
-                                <p>暂无下载历史</p>
+                                <p>{{ $t('forward.emptyHistory') }}</p>
                             </div>
 
                             <div v-for="item in downloadHistory" :key="item.id"
@@ -118,7 +118,7 @@
                                                   item.status === 'success' ? 'text-green-500' : 'text-red-500']">
                                         <i
                                             :class="[item.status === 'success' ? 'fas fa-check-circle' : 'fas fa-times-circle']"></i>
-                                        {{ item.status === 'success' ? '完成' : '取消' }}
+                                        {{ $t(`forward.historyStatus.${item.status}`) }}
                                     </span>
                                     <button @click="copyUrl(item.url)"
                                         class="text-gray-400 hover:text-primary transition-all duration-300">
@@ -140,6 +140,7 @@
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
 import { CommonUtils } from '@/shared/common-utils.js';
 import { CommonComponents } from '@/shared/common-components.js';
+import { t, currentLocale, translateErrorMessage } from '@/i18n/index.js';
 
 export default {
     name: 'ForwardView',
@@ -151,7 +152,6 @@ export default {
 
             setup() {
                 // 公共工具函数
-                const formatTime = CommonUtils.formatTime;
                 const formatFileSize = CommonUtils.formatFileSize;
                 const showToast = (message, type) => {
                     if (toastRef.value) {
@@ -170,10 +170,12 @@ export default {
                 const showProgress = ref(false);
 
                 // 下载状态
-                const statusText = ref('准备下载...');
+                const downloadStatus = ref('preparing');
+                const statusErrorMessage = ref('');
                 const fileName = ref('-');
                 const progressPercent = ref(0);
-                const downloadedSize = ref('0 KB');
+                const downloadedBytes = ref(0);
+                const downloadedSize = computed(() => formatFileSize(downloadedBytes.value));
                 const downloadSpeed = ref('-');
 
                 // 下载控制
@@ -185,17 +187,33 @@ export default {
                 // 下载历史
                 const downloadHistory = ref([]);
 
+                const statusText = computed(() => t(`forward.status.${downloadStatus.value}`, {
+                    message: statusErrorMessage.value
+                }));
+
                 // 计算下载状态图标
                 const downloadStatusIcon = computed(() => {
-                    if (statusText.value.includes('连接中') || statusText.value.includes('正在下载')) {
+                    if (downloadStatus.value === 'connecting' || downloadStatus.value === 'downloading') {
                         return 'fas fa-circle-notch fa-spin text-primary';
-                    } else if (statusText.value.includes('完成')) {
+                    } else if (downloadStatus.value === 'completed') {
                         return 'fas fa-check-circle text-green-500';
-                    } else if (statusText.value.includes('失败') || statusText.value.includes('取消')) {
+                    } else if (downloadStatus.value === 'failed' || downloadStatus.value === 'cancelled') {
                         return 'fas fa-times-circle text-red-500';
                     }
                     return 'fas fa-circle-notch text-primary';
                 });
+
+                const formatTime = (timestamp) => {
+                    if (!timestamp) return t('common.unknown');
+                    const locale = currentLocale.value || currentLocale;
+                    return new Intl.DateTimeFormat(locale, {
+                        year: 'numeric',
+                        month: '2-digit',
+                        day: '2-digit',
+                        hour: '2-digit',
+                        minute: '2-digit'
+                    }).format(new Date(timestamp));
+                };
 
                 // 从URL解析文件名
                 const getFileNameFromUrl = (url) => {
@@ -203,9 +221,9 @@ export default {
                         const urlObj = new URL(url);
                         const pathname = urlObj.pathname;
                         const fileName = pathname.split('/').pop();
-                        return fileName || 'downloaded_file';
+                        return fileName || t('forward.defaultFileName');
                     } catch (e) {
-                        return 'downloaded_file';
+                        return t('forward.defaultFileName');
                     }
                 };
 
@@ -245,8 +263,14 @@ export default {
                 };
 
                 // 复制URL
-                const copyUrl = (url) => {
-                    CommonUtils.copyToClipboard(url, showToast);
+                const copyUrl = async (url) => {
+                    try {
+                        await navigator.clipboard.writeText(url);
+                        showToast(t('common.copiedToClipboard'), 'success');
+                    } catch (error) {
+                        console.error('Failed to copy download URL:', error);
+                        showToast(t('common.copyFailed'), 'error');
+                    }
                 };
 
                 // 计算下载速度
@@ -257,24 +281,9 @@ export default {
                     const elapsedTime = (currentTime - downloadStartTime) / 1000;
 
                     if (elapsedTime > 0) {
-                        const currentBytesText = downloadedSize.value;
-                        const match = currentBytesText.match(/([\d.]+)\s*(\w+)/);
-
-                        if (match) {
-                            const value = parseFloat(match[1]);
-                            const unit = match[2];
-                            const bytes = value * {
-                                'Bytes': 1,
-                                'KB': 1024,
-                                'MB': 1024 * 1024,
-                                'GB': 1024 * 1024 * 1024
-                            }[unit] || 0;
-
-                            const bytesSinceLastCheck = bytes - lastDownloadedBytes;
-                            lastDownloadedBytes = bytes;
-
-                            downloadSpeed.value = formatFileSize(bytesSinceLastCheck) + '/s';
-                        }
+                        const bytesSinceLastCheck = downloadedBytes.value - lastDownloadedBytes;
+                        lastDownloadedBytes = downloadedBytes.value;
+                        downloadSpeed.value = formatFileSize(bytesSinceLastCheck) + '/s';
                     }
                 };
 
@@ -284,7 +293,7 @@ export default {
 
                     // 验证输入
                     if (!url || !isValidUrl(url)) {
-                        urlError.value = '请输入有效的URL地址';
+                        urlError.value = t('forward.invalidUrl');
                         return;
                     }
 
@@ -297,10 +306,11 @@ export default {
                     isDownloading.value = true;
                     showDownloadStatus.value = true;
                     showProgress.value = true;
-                    statusText.value = '连接中...';
+                    downloadStatus.value = 'connecting';
+                    statusErrorMessage.value = '';
                     fileName.value = getFileNameFromUrl(url);
                     progressPercent.value = 0;
-                    downloadedSize.value = '0 KB';
+                    downloadedBytes.value = 0;
                     downloadSpeed.value = '-';
 
                     // 创建AbortController用于取消请求
@@ -325,8 +335,14 @@ export default {
 
                         if (!response.ok) {
                             const errorBody = (await response.text()).trim();
-                            const detail = errorBody ? `: ${errorBody.slice(0, 300)}` : '';
-                            throw new Error(`HTTP错误: ${response.status}${detail}`);
+                            let translatedError = errorBody;
+                            try {
+                                translatedError = translateErrorMessage(JSON.parse(errorBody));
+                            } catch {
+                                translatedError = translateErrorMessage(errorBody);
+                            }
+                            const detail = translatedError ? `: ${translatedError}` : '';
+                            throw new Error(t('forward.httpError', { status: response.status, detail }));
                         }
 
                         // 从响应头获取文件名
@@ -347,7 +363,7 @@ export default {
 
                         // 更新UI
                         fileName.value = finalFileName;
-                        statusText.value = '正在下载...';
+                        downloadStatus.value = 'downloading';
 
                         const contentLength = response.headers.get('Content-Length');
                         const totalBytes = contentLength ? parseInt(contentLength) : null;
@@ -373,13 +389,13 @@ export default {
                                 document.body.removeChild(a);
 
                                 // 更新状态
-                                statusText.value = '下载完成';
+                                downloadStatus.value = 'completed';
                                 progressPercent.value = 100;
                                 downloadSpeed.value = '-';
 
                                 // 添加到历史记录
                                 addToHistory(finalFileName, 'success', fileUrl.value);
-                                showToast('下载完成', 'success');
+                                showToast(t('forward.downloadComplete'), 'success');
 
                                 break;
                             }
@@ -394,20 +410,21 @@ export default {
                             }
 
                             // 更新已下载大小
-                            downloadedSize.value = formatFileSize(receivedBytes);
+                            downloadedBytes.value = receivedBytes;
                         }
                     } catch (error) {
                         if (error.name !== 'AbortError') {
                             console.error('下载错误:', error);
-                            statusText.value = `下载失败: ${error.message}`;
+                            downloadStatus.value = 'failed';
+                            statusErrorMessage.value = error.message;
                             downloadSpeed.value = '-';
-                            showToast(`下载失败: ${error.message}`, 'error');
+                            showToast(t('forward.downloadFailed', { message: error.message }), 'error');
 
                             // 添加到历史记录
                             addToHistory(fileName.value, 'failed', fileUrl.value);
                         } else {
-                            statusText.value = '下载已取消';
-                            showToast('下载已取消', 'warning');
+                            downloadStatus.value = 'cancelled';
+                            showToast(t('forward.downloadCancelled'), 'warning');
                         }
                     } finally {
                         // 清理
@@ -429,12 +446,12 @@ export default {
                 const cancelDownload = () => {
                     if (abortController) {
                         abortController.abort();
-                        statusText.value = '下载已取消';
+                        downloadStatus.value = 'cancelled';
                         downloadSpeed.value = '-';
 
                         // 添加到历史记录
                         addToHistory(fileName.value, 'cancelled', fileUrl.value);
-                        showToast('下载已取消', 'warning');
+                        showToast(t('forward.downloadCancelled'), 'warning');
                     }
                 };
 
@@ -453,16 +470,16 @@ export default {
                 // 修改点2：添加清除下载历史的方法
                 const clearDownloadHistory = () => {
                     // 确认是否清除（可选：增加确认提示提升用户体验）
-                    if (confirm('确定要清除所有下载历史吗？此操作不可恢复！')) {
+                    if (confirm(t('forward.clearHistoryConfirm'))) {
                         // 清空内存中的历史记录
                         downloadHistory.value = [];
                         // 删除本地存储中的历史记录
                         try {
                             localStorage.removeItem('downloadHistory');
-                            showToast('下载历史已清空', 'success');
+                            showToast(t('forward.historyCleared'), 'success');
                         } catch (e) {
                             console.error('清除本地历史记录失败:', e);
-                            showToast('清除历史记录失败', 'error');
+                            showToast(t('forward.clearHistoryFailed'), 'error');
                         }
                     }
                 };

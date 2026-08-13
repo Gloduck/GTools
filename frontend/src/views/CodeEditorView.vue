@@ -25,7 +25,7 @@
       <section v-show="activeView === 'explorer'" class="panel-view active">
         <header class="panel-header">
           <div class="panel-title">
-            <p class="eyebrow">Explorer</p>
+            <p class="eyebrow">{{ tr('activity.explorer') }}</p>
             <h1>{{ tr('panel.files') }}</h1>
             <small class="panel-workspace-name" :title="rootHandle ? rootName : tr('workspace.none')">{{ rootHandle ? rootName : tr('workspace.none') }}</small>
           </div>
@@ -47,7 +47,7 @@
       <section v-show="activeView === 'search'" class="panel-view active">
         <header class="panel-header">
           <div>
-            <p class="eyebrow">Search</p>
+            <p class="eyebrow">{{ tr('activity.search') }}</p>
             <h1>{{ tr('panel.search') }}</h1>
           </div>
           <button class="icon-button" :title="tr('search.clear')" :aria-label="tr('search.clear')" :disabled="!searchQuery && searchResults.length === 0" @click="clearSearchResults">
@@ -92,7 +92,7 @@
       <section v-show="activeView === 'changes'" class="panel-view active">
         <header class="panel-header">
           <div>
-            <p class="eyebrow">Changes</p>
+            <p class="eyebrow">{{ tr('activity.changes') }}</p>
             <h1>{{ tr('panel.changes') }}</h1>
           </div>
           <span class="change-count">{{ dirtyFiles.length }}</span>
@@ -122,7 +122,7 @@
       <section v-show="activeView === 'ai'" class="panel-view active ai-panel-view">
         <header class="panel-header ai-panel-header">
           <div>
-            <p class="eyebrow">Assistant</p>
+            <p class="eyebrow">{{ tr('activity.ai') }}</p>
             <h1>{{ tr('panel.ai') }}</h1>
             <span class="ai-context-length">{{ tr('ai.contextLength', { count: aiContextLength }) }}</span>
           </div>
@@ -180,7 +180,7 @@
             <article v-for="message in aiMessages" :key="message.id" class="ai-message" :class="`ai-message-${message.role}`">
               <template v-if="message.role === 'tool' && message.tool">
                 <button type="button" class="ai-tool-toggle" @click="message.expanded = !message.expanded">
-                  <span>{{ tr('ai.role.tool') }} · {{ message.tool.name }} · {{ message.tool.pending ? tr('ai.toolRunning') : (message.tool.cancelled ? tr('ai.toolCancelled') : (message.tool.ok ? 'OK' : 'ERROR')) }} · {{ message.tool.batchIndex }}/{{ message.tool.batchSize }}</span>
+                  <span>{{ tr('ai.role.tool') }} · {{ message.tool.name }} · {{ message.tool.pending ? tr('ai.toolRunning') : (message.tool.cancelled ? tr('ai.toolCancelled') : (message.tool.ok ? tr('ai.toolSuccess') : tr('ai.toolError'))) }} · {{ message.tool.batchIndex }}/{{ message.tool.batchSize }}</span>
                   <span class="codicon" :class="message.tool.pending ? 'codicon-loading codicon-modifier-spin' : (message.tool.cancelled ? 'codicon-circle-slash' : (message.expanded ? 'codicon-chevron-down' : 'codicon-chevron-right'))" aria-hidden="true"></span>
                 </button>
                 <div class="ai-message-content" v-html="renderMarkdown(message.content)"></div>
@@ -242,7 +242,7 @@
         <aside v-if="aiHistoryVisible" class="ai-history-drawer" :aria-label="tr('ai.sessions')" @click.stop @keydown.esc.prevent.stop="closeAiHistory">
           <header class="ai-history-header">
             <div>
-              <p class="eyebrow">Sessions</p>
+              <p class="eyebrow">{{ tr('ai.sessions') }}</p>
               <h2>{{ tr('ai.sessions') }}</h2>
             </div>
             <button type="button" class="icon-button" :title="tr('ai.closeHistory')" :aria-label="tr('ai.closeHistory')" @click="closeAiHistory">
@@ -277,7 +277,7 @@
       <section v-show="activeView === 'ssh'" class="panel-view active">
         <header class="panel-header">
           <div>
-            <p class="eyebrow">SSH</p>
+            <p class="eyebrow">{{ tr('activity.ssh') }}</p>
             <h1>{{ tr('panel.ssh') }}</h1>
           </div>
           <button class="icon-button" :title="tr('ssh.add')" :aria-label="tr('ssh.add')" :disabled="!sshFeatureEnabled" @click="openCreateSshDialog">
@@ -339,7 +339,7 @@
       <section v-show="activeView === 'settings'" class="panel-view active">
         <header class="panel-header">
           <div>
-            <p class="eyebrow">Preferences</p>
+            <p class="eyebrow">{{ tr('panel.settings') }}</p>
             <h1>{{ tr('panel.settings') }}</h1>
           </div>
         </header>
@@ -347,16 +347,16 @@
           <label class="setting-row">
             <span>{{ tr('settings.theme') }}</span>
             <select v-model="settings.theme" @change="applyTheme">
-              <option value="vs-dark">Dark Modern</option>
-              <option value="vs">Light Modern</option>
-              <option value="hc-black">High Contrast</option>
+              <option value="vs-dark">{{ tr('theme.darkModern') }}</option>
+              <option value="vs">{{ tr('theme.lightModern') }}</option>
+              <option value="hc-black">{{ tr('theme.highContrast') }}</option>
             </select>
           </label>
           <label class="setting-row">
             <span>{{ tr('settings.locale') }}</span>
-            <select v-model="settings.locale" @change="applyLocale">
-              <option value="zh-CN">简体中文</option>
-              <option value="en-US">English</option>
+            <select :value="getCurrentLocale()" @change="applyLocale($event.target.value)">
+              <option value="zh-CN">{{ tr('locale.zhCN') }}</option>
+              <option value="en-US">{{ tr('locale.enUS') }}</option>
             </select>
           </label>
           <section class="setting-row keybinding-card">
@@ -427,7 +427,7 @@
             <label class="setting-row">
               <span>{{ tr('settings.sshTerminalTheme') }}</span>
               <select v-model="settings.ssh.terminalTheme" @change="applySshTerminalTheme">
-                <option v-for="theme in sshTerminalThemeOptions" :key="theme.value" :value="theme.value">{{ theme.label }}</option>
+                <option v-for="theme in sshTerminalThemeOptions" :key="theme.value" :value="theme.value">{{ tr(theme.labelKey) }}</option>
               </select>
             </label>
             <label class="setting-row">
@@ -567,7 +567,7 @@
         <div class="status-right-group">
           <span id="status-right">{{ status.right }}</span>
           <select v-model="activeLanguage" :disabled="!activeTextFile || activeFile.deleted || activeSshTerminal" :aria-label="tr('status.language')" @change="changeActiveLanguage">
-            <option v-for="language in languageOptions" :key="language.id" :value="language.id">{{ language.label }}</option>
+            <option v-for="language in languageOptions" :key="language.id" :value="language.id">{{ language.labelKey ? tr(language.labelKey) : language.label }}</option>
           </select>
         </div>
       </footer>
@@ -752,6 +752,8 @@ import { enableEditorPwa } from "@/shared/pwa-install.js";
 import { RequestProxy } from "@/shared/request-proxy.js";
 import { prepareRunScript } from "@/shared/node-worker/run-script-preparer.js";
 import { AiCredentialStore } from "@/shared/ai-credential-store.js";
+import { currentLocale, setLocale, t, translateErrorMessage } from "@/i18n/index.js";
+import { codeEditorMessages } from "@/i18n/messages/code-editor.js";
 import {
   createFileSystem,
   FileConflictError,
@@ -910,824 +912,9 @@ let monacoLanguageIndex = null;
 
 window.process ||= { env: {} };
 
-const messages = {
-  "zh-CN": {
-    "nav.main": "主导航",
-    "activity.explorer": "资源管理器",
-    "activity.search": "搜索",
-    "activity.changes": "变更",
-    "activity.ai": "AI 助手",
-    "activity.ssh": "SSH",
-    "activity.settings": "设置",
-    "panel.files": "文件",
-    "panel.search": "搜索",
-    "panel.changes": "变更",
-    "panel.ai": "AI 助手",
-    "panel.ssh": "SSH 连接",
-    "panel.settings": "设置",
-    "commandCenter.placeholder": "搜索命令或文件...",
-    "commandCenter.title": "打开命令面板",
-    "action.openFolder": "打开文件夹",
-    "action.openBrowserFolder": "打开浏览器文件夹",
-    "action.clearBrowserFolder": "清空浏览器文件夹",
-    "action.saveAs": "另存为",
-    "action.newFile": "新建文件",
-    "action.newFolder": "新建文件夹",
-    "action.rename": "重命名",
-    "action.move": "移动",
-    "action.copy": "复制",
-    "action.delete": "删除",
-    "action.revert": "回滚更改",
-    "action.refreshTree": "刷新文件树",
-    "action.close": "关闭",
-    "action.save": "保存",
-    "action.format": "格式化文档",
-    "action.findReferences": "查找引用",
-    "action.preview": "预览",
-    "action.toggleSidebar": "切换侧边栏",
-    "action.aiComplete": "AI 代码补全",
-    "dialog.alertTitle": "提示",
-    "dialog.confirmTitle": "请确认",
-    "dialog.promptTitle": "请输入",
-    "dialog.ok": "确定",
-    "dialog.cancel": "取消",
-    "dialog.close": "关闭",
-    "dialog.inputLabel": "内容",
-    "dialog.filePath": "文件路径",
-    "dialog.folderPath": "文件夹路径",
-    "settings.theme": "主题",
-    "settings.locale": "界面语言",
-    "settings.ai": "AI",
-    "settings.aiApiKey": "API Key",
-    "settings.aiApiKeyPlaceholder": "仅保存在当前浏览器 localStorage",
-    "settings.aiBaseUrl": "Base URL",
-    "settings.npmRegistryUrl": "自定义 npm 源",
-    "settings.npmRegistryHint": "AI 工具调用传入的 registry_url 优先；未传时使用此设置，留空则使用官方源 https://registry.npmjs.org。",
-    "settings.aiFetchModels": "从 API 拉取模型",
-    "settings.aiModelsLoading": "正在拉取模型...",
-    "settings.aiCompletionModel": "补全模型",
-    "settings.aiImageModel": "图片生成模型",
-    "settings.aiAgentModel": "Agent 模型",
-    "settings.aiAgentModelsPlaceholder": "用逗号分隔，例如 gpt-5.5,gpt-5.4-mini",
-    "settings.aiAutoSaveSessions": "新建 AI 会话默认保存到浏览器",
-    "settings.aiAgentModelToAdd": "选择模型添加",
-    "settings.aiAddAgentModel": "添加",
-    "settings.aiHint": "当前直接从浏览器请求 OpenAI-compatible API，Base URL 可填根地址或 /v1 地址；适合本机自用，公开部署会暴露 API Key。",
-    "settings.backend": "后端服务器",
-    "settings.backendEnabled": "启用后端服务器",
-    "settings.backendBaseUrl": "后端地址",
-    "settings.backendHint": "用于 request_proxy、SSH 等需要后端转发或连接的工具。默认地址是当前页面同源后端；未启用时相关功能不可用。",
-    "settings.sshSecurityKey": "SSH 安全密钥",
-    "settings.sshSecurityKeyPlaceholder": "如果后端配置了 ssh.securityKey，则需要填写",
-    "settings.sshTerminalTheme": "SSH 终端配色",
-    "settings.sshWhitelistTemplate": "SSH 白名单模板",
-    "settings.resetSshWhitelistTemplate": "恢复默认白名单模板",
-    "settings.keybindings": "快捷键映射",
-    "settings.resetKeybindings": "恢复默认",
-    "settings.shortcutHint": "默认采用 VS Code 快捷键。可输入 Ctrl/Cmd/Shift/Alt 加按键，例如 Ctrl+S、Shift+Alt+F。",
-    "settings.fontSize": "字体大小",
-    "settings.wordWrap": "自动换行",
-    "settings.minimap": "显示 Minimap",
-    "settings.maxMemoryReadMb": "内存完整读取上限（MB）",
-    "settings.maxMemoryWriteMb": "内存完整写入上限（MB）",
-    "settings.exportUrl": "导出设置 URL",
-    "settings.copyExportUrl": "复制导出 URL",
-    "settings.exportUrlHint": "导出 URL 会包含完整设置 JSON，包括 API Key。只分享给可信对象。访问带 settings 参数的 URL 时会询问是否覆盖本地设置。",
-    "settings.exportUrlCopied": "导出 URL 已复制",
-    "settings.importTitle": "发现导入设置",
-    "settings.importConfirm": "当前 URL 包含 settings 参数。是否用 URL 中的配置覆盖本地配置？",
-    "settings.importApply": "覆盖配置",
-    "settings.importKeep": "保留本地配置",
-    "settings.importApplied": "已导入 URL 配置",
-    "settings.importSkipped": "已保留本地配置",
-    "settings.importInvalid": "URL 中的 settings 参数无法解析，已忽略。",
-    "workspace.none": "未打开文件夹",
-    "workspace.treeEmpty": "尚未载入文件树",
-    "workspace.root": "工作区根目录",
-    "changes.none": "没有未保存的变更",
-    "changes.openDiff": "打开对比",
-    "changes.deleted": "待删除",
-    "changes.selectChange": "选择变更",
-    "changes.selectAll": "全选",
-    "changes.selectedCount": "已选 {count}",
-    "changes.saveSelected": "保存所选",
-    "changes.revertSelected": "回滚所选",
-    "changes.batchSaved": "已保存 {count} 个变更",
-    "changes.batchReverted": "已回滚 {count} 个变更",
-    "search.placeholder": "搜索",
-    "search.replacePlaceholder": "替换",
-    "search.submit": "搜索",
-    "search.replaceAll": "全部替换",
-    "search.matchCase": "区分大小写",
-    "search.running": "正在搜索...",
-    "search.empty": "输入内容后在工作区中搜索。",
-    "search.noResults": "没有结果",
-    "search.clear": "清空搜索结果",
-    "search.results": "{count} 个结果",
-    "search.replaced": "已替换 {count} 处",
-    "empty.title": "打开一个目录，然后选择文件",
-    "empty.description": "此编辑器使用 Monaco Editor，并可通过 File System Access API 或 OPFS 读写文件。",
-    "editor.aria": "代码编辑器",
-    "diff.aria": "变更对比编辑器",
-    "status.ready": "Ready",
-    "status.loaded": "Monaco Editor loaded",
-    "status.language": "切换当前文件语言",
-    "status.unsaved": "未保存",
-    "status.saved": "已保存",
-    "status.saveButton": "保存 {shortcut}",
-    "status.openedFolder": "已打开 {name}",
-    "status.permissionGranted": "读写权限已授予",
-    "status.browserStorage": "浏览器私有存储",
-    "status.browserFolderCleared": "已清空浏览器文件夹",
-    "status.packagingFolder": "正在打包 {name}",
-    "status.savedAs": "已另存为 {name}",
-    "status.refreshed": "已刷新 {name}",
-    "status.itemCount": "{count} 项",
-    "status.openedFile": "已打开 {name}",
-    "status.savedFile": "已保存 {name}",
-    "status.deleted": "已删除 {path}",
-    "status.renamed": "已将 {source} 重命名为 {destination}",
-    "status.moved": "已将 {source} 移动到 {destination}",
-    "status.copied": "已将 {source} 复制到 {destination}",
-    "status.downloadReady": "已准备下载 {name}",
-    "status.pendingCreate": "已标记新建 {path}",
-    "status.pendingDelete": "已标记删除 {path}",
-    "status.reverted": "已回滚 {path}",
-    "status.diff": "正在对比 {path}",
-    "status.shortcutInvalid": "快捷键无效：{shortcut}",
-    "status.shortcutUpdated": "快捷键已更新",
-    "status.aiCompleted": "AI 任务完成",
-    "status.aiStopped": "AI 任务已停止",
-    "status.aiChangedFile": "AI 已修改 {path}",
-    "status.aiModelsLoaded": "已拉取 {count} 个模型",
-    "ai.empty": "告诉 AI 你想做什么，它会尽力帮你完成。",
-    "ai.placeholder": "描述你想让 AI 完成的修改...",
-    "ai.send": "发送",
-    "ai.attachFiles": "添加文件",
-    "ai.removeAttachment": "移除附件 {name}",
-    "ai.attachmentOnlyPrompt": "请查看并处理附件。",
-    "ai.attachmentsSummary": "附件：{names}",
-    "ai.running": "运行中...",
-    "ai.stop": "停止 AI 任务",
-    "ai.contextLength": "上次用量 {count}",
-    "ai.usageNotMeasured": "未统计",
-    "ai.usageMeasured": "输入 {input} / 输出 {output} / 合计 {total} tokens{cache}",
-    "ai.usageCache": " / 缓存 {cached} ({rate}%)",
-    "ai.usageCacheMiss": " / 缓存 未命中",
-    "ai.compressContext": "压缩上下文",
-    "ai.contextCompressed": "上下文已压缩",
-    "ai.contextSummaryTitle": "上下文摘要",
-    "ai.resetConversation": "重置对话",
-    "ai.conversationReset": "当前对话已重置",
-    "ai.session": "会话",
-    "ai.defaultSessionTitle": "会话 {count}",
-    "ai.newSession": "新建会话",
-    "ai.deleteSession": "删除会话",
-    "ai.sessionCreated": "已新建会话",
-    "ai.sessionDeleted": "会话已删除",
-    "ai.sessionName": "会话名称",
-    "ai.sessionNamePlaceholder": "输入会话名称",
-    "ai.newSessionDraft": "新会话",
-    "ai.sessionDraft": "草稿",
-    "ai.sessionDraftSaveHint": "首次发送消息后按此选项保存会话",
-    "ai.editSessionName": "编辑会话名称",
-    "ai.generateSessionName": "AI 总结名称",
-    "ai.generatingSessionName": "正在总结...",
-    "ai.saveSession": "保存会话",
-    "ai.savedSession": "已保存",
-    "ai.temporarySession": "临时会话",
-    "ai.savedSessionHint": "消息变化会同步保存到浏览器",
-    "ai.temporarySessionHint": "关闭页面后不会保留此会话",
-    "ai.sessionNameGenerated": "已生成会话名称",
-    "ai.sessions": "会话",
-    "ai.switchSession": "切换会话",
-    "ai.history": "历史会话",
-    "ai.closeHistory": "关闭历史会话",
-    "ai.searchHistory": "搜索会话名称或消息",
-    "ai.noHistory": "没有已保存的会话",
-    "ai.noMatchingSessions": "没有匹配的会话",
-    "ai.runningSessions": "运行中",
-    "ai.temporarySessions": "临时会话",
-    "ai.savedSessions": "已保存会话",
-    "ai.historyToday": "今天",
-    "ai.historyYesterday": "昨天",
-    "ai.historyEarlier": "更早",
-    "ai.messageCount": "{count} 条消息",
-    "ai.moreActions": "更多会话操作",
-    "ai.noModel": "未选择模型",
-    "ai.agentModel": "对话模型",
-    "ai.reasoningEffort": "思考等级",
-    "ai.reasoning.default": "默认",
-    "ai.reasoning.low": "低",
-    "ai.reasoning.medium": "中",
-    "ai.reasoning.high": "高",
-    "ai.reasoning.xhigh": "极高",
-    "ai.reasoning.max": "最大",
-    "ai.role.user": "你",
-    "ai.role.assistant": "AI",
-    "ai.role.tool": "工具",
-    "ai.toolArgs": "入参",
-    "ai.toolResult": "结果",
-    "ai.toolRunning": "执行中",
-    "ai.toolRunningReason": "执行中\n\n用途：{reason}",
-    "ai.toolPurpose": "用途：{reason}",
-    "ai.toolCancelled": "已取消",
-    "ai.javascriptCompleted": "JavaScript 执行完成，耗时 {elapsed}ms{files}",
-    "ai.javascriptProducedFiles": "，生成 {count} 个文件",
-    "ai.javascriptFailed": "JavaScript 执行失败：{message}",
-    "ai.imageGenerated": "已生成图片 {path}",
-    "ai.imageEdited": "已编辑图片 {path}",
-    "ai.error.emptySessionName": "AI 未返回有效的会话名称。",
-    "ai.error.unsupportedAttachment": "仅支持文本文件和 PNG、JPEG、WebP 图片：{name}",
-    "ai.error.tooManyAttachments": "单次最多添加 {count} 个附件。",
-    "ai.error.textAttachmentTooLarge": "文本附件不能超过 {size}：{name}",
-    "ai.error.imageAttachmentTooLarge": "图片附件不能超过 {size}：{name}",
-    "ai.error.attachmentsTooLarge": "附件总大小不能超过 {size}。",
-    "ai.error.readAttachment": "读取附件失败：{name}",
-    "ai.error.missingConfig": "请先在设置中填写 API Key 和模型。",
-    "ai.error.missingApiKey": "请先在设置中填写 API Key。",
-    "ai.error.noWorkspace": "请先打开工作区。",
-    "ai.error.backendDisabled": "后端服务器未启用，请先在设置中启用后端服务器。",
-    "ai.error.invalidBackendBaseUrl": "后端地址不合法。",
-    "ssh.add": "添加 SSH",
-    "ssh.addTitle": "添加 SSH 设置",
-    "ssh.editTitle": "修改 SSH 设置",
-    "ssh.empty": "还没有 SSH 设置。",
-    "ssh.disabledTitle": "SSH 功能未启用",
-    "ssh.disabledDescription": "请先在设置中启用后端服务器并配置后端地址。",
-    "ssh.name": "名称",
-    "ssh.host": "地址",
-    "ssh.port": "端口",
-    "ssh.username": "用户名",
-    "ssh.authType": "登录方式",
-    "ssh.authPassword": "账号密码登录",
-    "ssh.authPrivateKey": "SSH 私钥登录",
-    "ssh.password": "密码",
-    "ssh.privateKey": "私钥",
-    "ssh.passphrase": "私钥密码短语",
-    "ssh.exposeToAi": "允许 AI 使用此连接",
-    "ssh.whitelist": "AI 白名单主命令",
-    "ssh.whitelistPlaceholder": "每行一个主命令，例如：ls\npwd\ngit",
-    "ssh.applyWhitelistTemplate": "填入模板",
-    "ssh.aiHint": "AI 只能看到已暴露的 SSH 配置。AI 执行命令时必须提供主命令列表；列表里有白名单外主命令就需要授权。高风险命令即使在白名单内也会要求授权。",
-    "ssh.aiExposed": "AI 可使用",
-    "ssh.aiHidden": "仅手动使用",
-    "ssh.connected": "已连接",
-    "ssh.disconnected": "未连接",
-    "ssh.connect": "连接",
-    "ssh.disconnect": "断开",
-    "ssh.edit": "修改",
-    "ssh.delete": "删除",
-    "ssh.terminal": "SSH 终端",
-    "ssh.noOutput": "暂无 SSH 输出。",
-    "ssh.commandPlaceholder": "输入命令后回车执行",
-    "ssh.run": "执行",
-    "ssh.connecting": "正在连接 {name}",
-    "ssh.connectedStatus": "SSH 已连接 {name}",
-    "ssh.closedStatus": "SSH 已断开 {name}",
-    "ssh.connectFailedStatus": "SSH 连接失败",
-    "ssh.connectFailed": "SSH 连接失败",
-    "ssh.connectTimeout": "连接超时，未收到后端响应",
-    "ssh.websocketAbnormalClose": "WebSocket 异常关闭（代码 1006，浏览器未收到服务端原因）。请检查后端服务、HTTPS/WSS 和反向代理的 WebSocket Upgrade 配置。",
-    "ssh.websocketClosed": "WebSocket 已关闭（代码 {code}）",
-    "ssh.deletedStatus": "已删除 SSH 设置 {name}",
-    "ssh.confirmDelete": "确定删除 SSH 设置“{name}”吗？",
-    "ssh.confirmUnauthorizedCommand": "AI 请求执行白名单外 SSH 命令，需要授权。\n\n连接：{name}\n主命令：{commands}\n说明：{reason}\n命令：{command}",
-    "ssh.confirmHighRiskCommand": "AI 请求执行高风险 SSH 命令，即使它在白名单内也需要授权。\n\n连接：{name}\n主命令：{commands}\n说明：{reason}\n命令：{command}",
-    "ssh.toolExecutedCommand": "已执行 SSH 命令：{command}\n用途：{reason}",
-    "ssh.error.required": "请填写 SSH 名称、地址和用户名。",
-    "ssh.error.backendDisabled": "后端服务器未启用，SSH 功能不可用。",
-    "ssh.error.notExposed": "该 SSH 设置未允许 AI 使用。",
-    "ssh.error.commandReasonRequired": "AI 执行 SSH 命令时必须说明用途。",
-    "ssh.error.commandListRequired": "AI 执行 SSH 命令时必须提供主命令列表。",
-    "ssh.error.commandRejected": "SSH 命令授权已拒绝。",
-    "sftp.upload": "上传",
-    "sftp.download": "下载",
-    "sftp.uploadTitle": "上传文件到服务器",
-    "sftp.downloadTitle": "从服务器下载文件",
-    "sftp.dialogHint": "连接：{name}。本地路径是当前工作区内的相对路径。",
-    "sftp.localPath": "本地路径",
-    "sftp.remotePath": "远程路径",
-    "sftp.localPathPlaceholder": "例如 dist/app.zip",
-    "sftp.useUnsaved": "上传未保存的修改内容",
-    "sftp.tasks": "文件传输",
-    "sftp.noTasks": "暂无文件传输任务。",
-    "sftp.cancel": "取消任务",
-    "sftp.status.running": "进行中",
-    "sftp.status.completed": "已完成",
-    "sftp.status.failed": "失败",
-    "sftp.status.cancelled": "已取消",
-    "sftp.uploadStarted": "已开始上传 {path}",
-    "sftp.downloadStarted": "已开始下载 {path}",
-    "sftp.uploadCompleted": "上传完成 {path}",
-    "sftp.downloadCompleted": "下载完成 {path}",
-    "sftp.cancelled": "传输已取消",
-    "sftp.error.workspaceRequired": "请先打开工作区。",
-    "sftp.error.connectionMissing": "SSH 设置不存在。",
-    "sftp.error.backendResponse": "后端返回异常。",
-    "menu.fileTree": "文件树菜单",
-    "menu.changes": "变更菜单",
-    "menu.editor": "编辑器菜单",
-    "editorMenu.cut": "剪切",
-    "editorMenu.copy": "复制",
-    "editorMenu.paste": "粘贴",
-    "editorMenu.format": "格式化文档",
-    "editorMenu.find": "查找",
-    "editorMenu.selectAll": "全选",
-    "editorMenu.commandPalette": "命令面板",
-    "confirm.binary": "“{name}” 可能不是文本文件或体积较大，仍要尝试打开吗？",
-    "confirm.delete": "确定删除“{path}”吗？{folderHint}{dirtyHint}",
-    "confirm.deleteFolderHint": "\n\n该文件夹会被递归删除。",
-    "confirm.deleteDirtyHint": "\n\n包含 {count} 个未保存文件，删除后这些修改会丢失。",
-    "confirm.revert": "确定回滚“{path}”的未保存修改吗？",
-    "confirm.revertSelected": "确定回滚所选 {count} 个未保存变更吗？",
-    "confirm.clearBrowserFolder": "确定清空浏览器文件夹（OPFS）吗？其中的全部文件和文件夹都会被永久删除。",
-    "confirm.mergeSaveFolder": "目标位置已存在文件夹“{name}”。继续后会覆盖同名文件，但不会删除目标文件夹中多余的文件。",
-    "confirm.deleteAiSession": "确定删除当前 AI 会话吗？此操作不会回滚文件修改。",
-    "confirm.leaveWithSsh": "当前存在未保存内容、活跃 SSH 连接或正在进行的文件传输，离开后 SSH 连接和文件传输会被中断。确定离开吗？",
-    "imagePreview.aria": "图片预览",
-    "imagePreview.type": "图片",
-    "unsupportedFile.aria": "不支持文件预览",
-    "unsupportedFile.title": "不支持预览当前文件",
-    "unsupportedFile.description": "此文件不是可编辑文本，编辑器不会读取或修改内容。你仍然可以关闭、标记删除并保存删除。",
-    "unsupportedFile.type": "不支持预览",
-    "diff.unsupportedTitle": "文件内容不支持对比预览",
-    "diff.unsupportedDescription": "此文件有变更，但当前编辑器无法展示具体内容差异。保存后会应用文件级操作。",
-    "preview.aria": "文件预览",
-    "preview.html": "HTML 预览",
-    "preview.markdown": "Markdown 预览",
-    "preview.openNewTab": "在新页签中打开",
-    "prompt.newFile": "输入新文件路径",
-    "prompt.newFolder": "输入新文件夹路径",
-    "prompt.renameNode": "输入新名称",
-    "prompt.moveNode": "选择“{path}”要移动到的文件夹",
-    "prompt.copyNode": "选择“{path}”要复制到的文件夹",
-    "dialog.name": "名称",
-    "dialog.destinationFolder": "目标文件夹",
-    "fileAction.applyImmediately": "立即应用到磁盘",
-    "fileAction.createImmediateHint": "取消选中后，文件会作为未保存的新建变更，保存时才写入磁盘。",
-    "fileAction.immediateOnlyHint": "该操作暂不支持临时态，必须立即应用到磁盘。",
-    "fileAction.deleteImmediateHint": "取消选中后，文件会标记为待删除，保存时才从磁盘删除。",
-    "fileAction.unsavedItemDeleteHint": "该项目尚未写入磁盘，删除只会丢弃其中的未保存内容。",
-    "saveAs.message": "选择要另存为的内容版本。",
-    "saveAs.includeUnsaved": "包含未保存的变更",
-    "saveAs.includeUnsavedHint": "包含未保存的新建和修改，并排除待删除文件。",
-    "saveAs.includeUnsavedRequired": "该项目仅存在于未保存变更中，必须包含未保存内容。",
-    "saveAs.pendingDelete": "该文件已标记删除，只能另存磁盘中的已保存版本。",
-    "saveAs.noUnsaved": "当前项目没有未保存变更，将使用磁盘内容。",
-    "download.title": "下载文件",
-    "download.ready": "文件“{name}”已准备好，请点击“下载文件”。",
-    "download.action": "下载文件",
-    "error.unsupportedBrowser": "当前浏览器不支持 File System Access API。请使用 Chrome、Edge 或 Arc，并通过 localhost 或 HTTPS 打开页面。",
-    "error.opfsUnsupported": "当前环境不支持 OPFS。OPFS 需要支持该 API 的浏览器，并通过 localhost 或 HTTPS 等安全上下文打开页面。",
-    "error.clearBrowserFolder": "清空浏览器文件夹失败",
-    "error.saveAs": "另存为失败",
-    "error.saveAsSource": "不能另存回原文件，请使用保存操作。",
-    "error.destinationInsideSource": "不能把文件夹另存到它自身或其子文件夹中。",
-    "error.createFile": "新建文件失败",
-    "error.createFolder": "新建文件夹失败",
-    "error.rename": "重命名失败",
-    "error.move": "移动失败",
-    "error.copy": "复制失败",
-    "error.unsavedNodeTransfer": "“{path}”包含 {count} 个未保存文件，请先保存或回滚这些变更。",
-    "error.destinationExists": "目标已存在：{path}",
-    "error.nodeNotPersisted": "该项目尚未写入磁盘，无法执行此操作：{path}",
-    "error.nodeActionUnsupported": "当前文件系统不支持此操作：{path}",
-    "error.overlappingNodeTransfer": "不能在相互重叠的目录之间执行此操作。",
-    "error.noMoveDestination": "工作区中没有可移动到的其他文件夹。",
-    "error.openFolder": "打开文件夹失败",
-    "error.refreshTree": "刷新文件树失败",
-    "error.openFile": "打开文件失败",
-    "error.saveFile": "保存文件失败",
-    "error.delete": "删除失败",
-    "error.invalidPath": "路径不合法",
-    "error.invalidName": "名称不合法",
-    "error.unsupportedFile": "不支持打开该文件类型",
-    "error.fileTooLarge": "文件过大：{path}，实际 {size}，限制 {limit}",
-    "shortcut.save": "保存",
-    "shortcut.format": "格式化文档",
-    "shortcut.commandPalette": "命令面板",
-    "shortcut.search": "全局搜索",
-    "shortcut.findReferences": "查找引用",
-    "shortcut.preview": "预览",
-    "shortcut.toggleSidebar": "切换侧边栏",
-    "shortcut.fold": "折叠当前区域",
-    "shortcut.unfold": "展开当前区域",
-    "shortcut.foldAll": "折叠全部",
-    "shortcut.unfoldAll": "展开全部",
-    "shortcut.aiComplete": "AI 代码补全",
-  },
-  "en-US": {
-    "nav.main": "Main Navigation",
-    "activity.explorer": "Explorer",
-    "activity.search": "Search",
-    "activity.changes": "Changes",
-    "activity.ai": "AI Assistant",
-    "activity.ssh": "SSH",
-    "activity.settings": "Settings",
-    "panel.files": "Files",
-    "panel.search": "Search",
-    "panel.changes": "Changes",
-    "panel.ai": "AI Assistant",
-    "panel.ssh": "SSH Connections",
-    "panel.settings": "Settings",
-    "commandCenter.placeholder": "Search commands or files...",
-    "commandCenter.title": "Open Command Palette",
-    "action.openFolder": "Open Folder",
-    "action.openBrowserFolder": "Open Browser Folder",
-    "action.clearBrowserFolder": "Clear Browser Folder",
-    "action.saveAs": "Save As",
-    "action.newFile": "New File",
-    "action.newFolder": "New Folder",
-    "action.rename": "Rename",
-    "action.move": "Move",
-    "action.copy": "Copy",
-    "action.delete": "Delete",
-    "action.revert": "Revert Changes",
-    "action.refreshTree": "Refresh Tree",
-    "action.close": "Close",
-    "action.save": "Save",
-    "action.format": "Format Document",
-    "action.findReferences": "Find References",
-    "action.preview": "Preview",
-    "action.toggleSidebar": "Toggle Sidebar",
-    "action.aiComplete": "AI Code Completion",
-    "dialog.alertTitle": "Notice",
-    "dialog.confirmTitle": "Confirm",
-    "dialog.promptTitle": "Input",
-    "dialog.ok": "OK",
-    "dialog.cancel": "Cancel",
-    "dialog.close": "Close",
-    "dialog.inputLabel": "Value",
-    "dialog.filePath": "File path",
-    "dialog.folderPath": "Folder path",
-    "settings.theme": "Theme",
-    "settings.locale": "Display Language",
-    "settings.ai": "AI",
-    "settings.aiApiKey": "API Key",
-    "settings.aiApiKeyPlaceholder": "Stored only in this browser localStorage",
-    "settings.aiBaseUrl": "Base URL",
-    "settings.npmRegistryUrl": "Custom npm Registry",
-    "settings.npmRegistryHint": "A registry_url supplied by the AI tool takes priority. Otherwise this setting is used; leave it empty to use https://registry.npmjs.org.",
-    "settings.aiFetchModels": "Fetch Models from API",
-    "settings.aiModelsLoading": "Fetching models...",
-    "settings.aiCompletionModel": "Completion Model",
-    "settings.aiImageModel": "Image Generation Model",
-    "settings.aiAgentModel": "Agent Model",
-    "settings.aiAgentModelsPlaceholder": "Comma-separated, for example gpt-5.5,gpt-5.4-mini",
-    "settings.aiAutoSaveSessions": "Save new AI sessions in this browser by default",
-    "settings.aiAgentModelToAdd": "Select model to add",
-    "settings.aiAddAgentModel": "Add",
-    "settings.aiHint": "Requests are sent directly from the browser to an OpenAI-compatible API. Base URL can be the root or /v1 URL. This is suitable for local use; public deployment exposes the API key.",
-    "settings.backend": "Backend Server",
-    "settings.backendEnabled": "Enable Backend Server",
-    "settings.backendBaseUrl": "Backend URL",
-    "settings.backendHint": "Used by tools that need backend forwarding or connections, such as request_proxy and SSH. The default URL is the current same-origin backend; related features are unavailable while disabled.",
-    "settings.sshSecurityKey": "SSH Security Key",
-    "settings.sshSecurityKeyPlaceholder": "Required if backend ssh.securityKey is configured",
-    "settings.sshTerminalTheme": "SSH Terminal Theme",
-    "settings.sshWhitelistTemplate": "SSH Whitelist Template",
-    "settings.resetSshWhitelistTemplate": "Reset Whitelist Template",
-    "settings.keybindings": "Keyboard Shortcuts",
-    "settings.resetKeybindings": "Reset",
-    "settings.shortcutHint": "VS Code shortcuts are used by default. Use Ctrl/Cmd/Shift/Alt plus a key, for example Ctrl+S or Shift+Alt+F.",
-    "settings.fontSize": "Font Size",
-    "settings.wordWrap": "Word Wrap",
-    "settings.minimap": "Show Minimap",
-    "settings.maxMemoryReadMb": "Full Memory Read Limit (MB)",
-    "settings.maxMemoryWriteMb": "Full Memory Write Limit (MB)",
-    "settings.exportUrl": "Export Settings URL",
-    "settings.copyExportUrl": "Copy Export URL",
-    "settings.exportUrlHint": "The exported URL contains the full settings JSON, including API keys. Share it only with trusted recipients. Visiting a URL with the settings parameter asks before overriding local settings.",
-    "settings.exportUrlCopied": "Export URL copied",
-    "settings.importTitle": "Import Settings Found",
-    "settings.importConfirm": "The current URL contains a settings parameter. Override local settings with the URL settings?",
-    "settings.importApply": "Override Settings",
-    "settings.importKeep": "Keep Local Settings",
-    "settings.importApplied": "Imported URL settings",
-    "settings.importSkipped": "Kept local settings",
-    "settings.importInvalid": "The settings parameter in the URL could not be parsed and was ignored.",
-    "workspace.none": "No Folder Opened",
-    "workspace.treeEmpty": "No file tree loaded",
-    "workspace.root": "Workspace Root",
-    "changes.none": "No unsaved changes",
-    "changes.openDiff": "Open Diff",
-    "changes.deleted": "Pending delete",
-    "changes.selectChange": "Select change",
-    "changes.selectAll": "Select all",
-    "changes.selectedCount": "Selected {count}",
-    "changes.saveSelected": "Save Selected",
-    "changes.revertSelected": "Revert Selected",
-    "changes.batchSaved": "Saved {count} change(s)",
-    "changes.batchReverted": "Reverted {count} change(s)",
-    "search.placeholder": "Search",
-    "search.replacePlaceholder": "Replace",
-    "search.submit": "Search",
-    "search.replaceAll": "Replace All",
-    "search.matchCase": "Match Case",
-    "search.running": "Searching...",
-    "search.empty": "Enter text to search in the workspace.",
-    "search.noResults": "No results",
-    "search.clear": "Clear Search Results",
-    "search.results": "{count} results",
-    "search.replaced": "Replaced {count} occurrence(s)",
-    "empty.title": "Open a folder, then choose a file",
-    "empty.description": "This editor uses Monaco Editor with the File System Access API or OPFS to read and write files.",
-    "editor.aria": "Code editor",
-    "diff.aria": "Diff editor",
-    "status.ready": "Ready",
-    "status.loaded": "Monaco Editor loaded",
-    "status.language": "Switch current file language",
-    "status.unsaved": "Unsaved",
-    "status.saved": "Saved",
-    "status.saveButton": "Save {shortcut}",
-    "status.openedFolder": "Opened {name}",
-    "status.permissionGranted": "Read/write permission granted",
-    "status.browserStorage": "Browser private storage",
-    "status.browserFolderCleared": "Browser folder cleared",
-    "status.packagingFolder": "Packaging {name}",
-    "status.savedAs": "Saved {name} as a local copy",
-    "status.refreshed": "Refreshed {name}",
-    "status.itemCount": "{count} items",
-    "status.openedFile": "Opened {name}",
-    "status.savedFile": "Saved {name}",
-    "status.deleted": "Deleted {path}",
-    "status.renamed": "Renamed {source} to {destination}",
-    "status.moved": "Moved {source} to {destination}",
-    "status.copied": "Copied {source} to {destination}",
-    "status.downloadReady": "Prepared {name} for download",
-    "status.pendingCreate": "Marked {path} as new",
-    "status.pendingDelete": "Marked {path} for deletion",
-    "status.reverted": "Reverted {path}",
-    "status.diff": "Comparing {path}",
-    "status.shortcutInvalid": "Invalid shortcut: {shortcut}",
-    "status.shortcutUpdated": "Shortcuts updated",
-    "status.aiCompleted": "AI task completed",
-    "status.aiStopped": "AI task stopped",
-    "status.aiChangedFile": "AI changed {path}",
-    "status.aiModelsLoaded": "Loaded {count} models",
-    "ai.empty": "Enter a request to use AI. File read, search, and edit tools are unavailable until a folder is opened.",
-    "ai.placeholder": "Describe the change you want AI to make...",
-    "ai.send": "Send",
-    "ai.attachFiles": "Add Files",
-    "ai.removeAttachment": "Remove attachment {name}",
-    "ai.attachmentOnlyPrompt": "Review and process the attached files.",
-    "ai.attachmentsSummary": "Attachments: {names}",
-    "ai.running": "Running...",
-    "ai.stop": "Stop AI task",
-    "ai.contextLength": "Last usage {count}",
-    "ai.usageNotMeasured": "not measured",
-    "ai.usageMeasured": "in {input} / out {output} / total {total} tokens{cache}",
-    "ai.usageCache": " / cached {cached} ({rate}%)",
-    "ai.usageCacheMiss": " / cache miss",
-    "ai.compressContext": "Compress Context",
-    "ai.contextCompressed": "Context compressed",
-    "ai.contextSummaryTitle": "Context Summary",
-    "ai.resetConversation": "Reset Chat",
-    "ai.conversationReset": "Current chat reset",
-    "ai.session": "Session",
-    "ai.defaultSessionTitle": "Session {count}",
-    "ai.newSession": "New Session",
-    "ai.deleteSession": "Delete Session",
-    "ai.sessionCreated": "Session created",
-    "ai.sessionDeleted": "Session deleted",
-    "ai.sessionName": "Session Name",
-    "ai.sessionNamePlaceholder": "Enter a session name",
-    "ai.newSessionDraft": "New Session",
-    "ai.sessionDraft": "Draft",
-    "ai.sessionDraftSaveHint": "This setting takes effect after the first message is sent",
-    "ai.editSessionName": "Edit session name",
-    "ai.generateSessionName": "Generate Name",
-    "ai.generatingSessionName": "Generating...",
-    "ai.saveSession": "Save Session",
-    "ai.savedSession": "Saved",
-    "ai.temporarySession": "Temporary",
-    "ai.savedSessionHint": "Message changes are saved in this browser",
-    "ai.temporarySessionHint": "This session is discarded when the page closes",
-    "ai.sessionNameGenerated": "Session name generated",
-    "ai.sessions": "Sessions",
-    "ai.switchSession": "Switch session",
-    "ai.history": "Session History",
-    "ai.closeHistory": "Close session history",
-    "ai.searchHistory": "Search names or messages",
-    "ai.noHistory": "No saved sessions",
-    "ai.noMatchingSessions": "No matching sessions",
-    "ai.runningSessions": "Running",
-    "ai.temporarySessions": "Temporary Sessions",
-    "ai.savedSessions": "Saved Sessions",
-    "ai.historyToday": "Today",
-    "ai.historyYesterday": "Yesterday",
-    "ai.historyEarlier": "Earlier",
-    "ai.messageCount": "{count} messages",
-    "ai.moreActions": "More session actions",
-    "ai.noModel": "No model selected",
-    "ai.agentModel": "Chat Model",
-    "ai.reasoningEffort": "Reasoning",
-    "ai.reasoning.default": "Default",
-    "ai.reasoning.low": "Low",
-    "ai.reasoning.medium": "Medium",
-    "ai.reasoning.high": "High",
-    "ai.reasoning.xhigh": "XHigh",
-    "ai.reasoning.max": "Max",
-    "ai.role.user": "You",
-    "ai.role.assistant": "AI",
-    "ai.role.tool": "Tool",
-    "ai.toolArgs": "Arguments",
-    "ai.toolResult": "Result",
-    "ai.toolRunning": "RUNNING",
-    "ai.toolRunningReason": "RUNNING\n\nPurpose: {reason}",
-    "ai.toolPurpose": "Purpose: {reason}",
-    "ai.toolCancelled": "CANCELLED",
-    "ai.javascriptCompleted": "JavaScript completed in {elapsed}ms{files}",
-    "ai.javascriptProducedFiles": " and produced {count} file(s)",
-    "ai.javascriptFailed": "JavaScript failed: {message}",
-    "ai.imageGenerated": "Generated image {path}",
-    "ai.imageEdited": "Edited image {path}",
-    "ai.error.emptySessionName": "AI did not return a valid session name.",
-    "ai.error.unsupportedAttachment": "Only text files and PNG, JPEG, or WebP images are supported: {name}",
-    "ai.error.tooManyAttachments": "You can attach up to {count} files at a time.",
-    "ai.error.textAttachmentTooLarge": "Text attachments must not exceed {size}: {name}",
-    "ai.error.imageAttachmentTooLarge": "Image attachments must not exceed {size}: {name}",
-    "ai.error.attachmentsTooLarge": "Total attachment size must not exceed {size}.",
-    "ai.error.readAttachment": "Failed to read attachment: {name}",
-    "ai.error.missingConfig": "Fill in API key and model in Settings first.",
-    "ai.error.missingApiKey": "Fill in API key in Settings first.",
-    "ai.error.noWorkspace": "Open a workspace first.",
-    "ai.error.backendDisabled": "Backend server is disabled. Enable it in Settings first.",
-    "ai.error.invalidBackendBaseUrl": "Invalid backend URL.",
-    "ssh.add": "Add SSH",
-    "ssh.addTitle": "Add SSH Setting",
-    "ssh.editTitle": "Edit SSH Setting",
-    "ssh.empty": "No SSH settings yet.",
-    "ssh.disabledTitle": "SSH is disabled",
-    "ssh.disabledDescription": "Enable the backend server and configure its URL in Settings first.",
-    "ssh.name": "Name",
-    "ssh.host": "Host",
-    "ssh.port": "Port",
-    "ssh.username": "Username",
-    "ssh.authType": "Login Method",
-    "ssh.authPassword": "Password login",
-    "ssh.authPrivateKey": "SSH key login",
-    "ssh.password": "Password",
-    "ssh.privateKey": "Private Key",
-    "ssh.passphrase": "Passphrase",
-    "ssh.exposeToAi": "Allow AI to use this connection",
-    "ssh.whitelist": "AI Main Command Whitelist",
-    "ssh.whitelistPlaceholder": "One main command per line, for example:\nls\npwd\ngit",
-    "ssh.applyWhitelistTemplate": "Use Template",
-    "ssh.aiHint": "AI can only see exposed SSH settings. AI must provide a main-command list when executing commands; any main command outside the whitelist requires approval. High-risk commands require approval even when whitelisted.",
-    "ssh.aiExposed": "AI allowed",
-    "ssh.aiHidden": "Manual only",
-    "ssh.connected": "Connected",
-    "ssh.disconnected": "Disconnected",
-    "ssh.connect": "Connect",
-    "ssh.disconnect": "Disconnect",
-    "ssh.edit": "Edit",
-    "ssh.delete": "Delete",
-    "ssh.terminal": "SSH Terminal",
-    "ssh.noOutput": "No SSH output yet.",
-    "ssh.commandPlaceholder": "Enter a command and press Enter",
-    "ssh.run": "Run",
-    "ssh.connecting": "Connecting {name}",
-    "ssh.connectedStatus": "SSH connected {name}",
-    "ssh.closedStatus": "SSH disconnected {name}",
-    "ssh.connectFailedStatus": "SSH connection failed",
-    "ssh.connectFailed": "SSH connection failed",
-    "ssh.connectTimeout": "Connection timed out without a response from the backend",
-    "ssh.websocketAbnormalClose": "WebSocket closed abnormally (code 1006, no server reason was available to the browser). Check the backend service, HTTPS/WSS, and the reverse proxy WebSocket Upgrade configuration.",
-    "ssh.websocketClosed": "WebSocket closed (code {code})",
-    "ssh.deletedStatus": "Deleted SSH setting {name}",
-    "ssh.confirmDelete": "Delete SSH setting “{name}”?",
-    "ssh.confirmUnauthorizedCommand": "AI requests to run an SSH command outside the whitelist. Approval is required.\n\nConnection: {name}\nMain commands: {commands}\nReason: {reason}\nCommand: {command}",
-    "ssh.confirmHighRiskCommand": "AI requests to run a high-risk SSH command. Approval is required even if it is whitelisted.\n\nConnection: {name}\nMain commands: {commands}\nReason: {reason}\nCommand: {command}",
-    "ssh.toolExecutedCommand": "Executed SSH command: {command}\nPurpose: {reason}",
-    "ssh.error.required": "Fill in SSH name, host, and username.",
-    "ssh.error.backendDisabled": "Backend server is disabled, so SSH is unavailable.",
-    "ssh.error.notExposed": "This SSH setting is not exposed to AI.",
-    "ssh.error.commandReasonRequired": "AI must explain the purpose before running SSH commands.",
-    "ssh.error.commandListRequired": "AI must provide a main-command list before running SSH commands.",
-    "ssh.error.commandRejected": "SSH command approval was rejected.",
-    "sftp.upload": "Upload",
-    "sftp.download": "Download",
-    "sftp.uploadTitle": "Upload File to Server",
-    "sftp.downloadTitle": "Download File from Server",
-    "sftp.dialogHint": "Connection: {name}. Local path is relative to the current workspace.",
-    "sftp.localPath": "Local Path",
-    "sftp.remotePath": "Remote Path",
-    "sftp.localPathPlaceholder": "For example dist/app.zip",
-    "sftp.useUnsaved": "Upload unsaved modified content",
-    "sftp.tasks": "File Transfers",
-    "sftp.noTasks": "No file transfer tasks yet.",
-    "sftp.cancel": "Cancel Task",
-    "sftp.status.running": "Running",
-    "sftp.status.completed": "Completed",
-    "sftp.status.failed": "Failed",
-    "sftp.status.cancelled": "Cancelled",
-    "sftp.uploadStarted": "Started uploading {path}",
-    "sftp.downloadStarted": "Started downloading {path}",
-    "sftp.uploadCompleted": "Upload completed {path}",
-    "sftp.downloadCompleted": "Download completed {path}",
-    "sftp.cancelled": "Transfer cancelled",
-    "sftp.error.workspaceRequired": "Open a workspace first.",
-    "sftp.error.connectionMissing": "SSH setting does not exist.",
-    "sftp.error.backendResponse": "Backend returned an error.",
-    "menu.fileTree": "File tree menu",
-    "menu.changes": "Changes menu",
-    "menu.editor": "Editor menu",
-    "editorMenu.cut": "Cut",
-    "editorMenu.copy": "Copy",
-    "editorMenu.paste": "Paste",
-    "editorMenu.format": "Format Document",
-    "editorMenu.find": "Find",
-    "editorMenu.selectAll": "Select All",
-    "editorMenu.commandPalette": "Command Palette",
-    "confirm.binary": "“{name}” may be a binary or large file. Try opening it anyway?",
-    "confirm.delete": "Delete “{path}”?{folderHint}{dirtyHint}",
-    "confirm.deleteFolderHint": "\n\nThis folder will be deleted recursively.",
-    "confirm.deleteDirtyHint": "\n\nIt contains {count} unsaved file(s). Those changes will be lost.",
-    "confirm.revert": "Revert unsaved changes in “{path}”?",
-    "confirm.revertSelected": "Revert {count} selected unsaved change(s)?",
-    "confirm.clearBrowserFolder": "Clear the browser folder (OPFS)? All files and folders in it will be permanently deleted.",
-    "confirm.mergeSaveFolder": "A folder named “{name}” already exists at the destination. Continuing will overwrite files with matching names but will not remove extra destination files.",
-    "confirm.deleteAiSession": "Delete the current AI session? This will not revert file changes.",
-    "confirm.leaveWithSsh": "There are unsaved changes, active SSH connections, or running file transfers. SSH connections and file transfers will be interrupted if you leave. Leave this page?",
-    "imagePreview.aria": "Image Preview",
-    "imagePreview.type": "Image",
-    "unsupportedFile.aria": "Unsupported File Preview",
-    "unsupportedFile.title": "Preview is not supported for this file",
-    "unsupportedFile.description": "This file is not editable text, so the editor will not read or change its content. You can still close it, mark it for deletion, and save the deletion.",
-    "unsupportedFile.type": "Unsupported preview",
-    "diff.unsupportedTitle": "File content diff is not supported",
-    "diff.unsupportedDescription": "This file has changes, but the editor cannot display a content diff. Saving will apply the file-level operation.",
-    "preview.aria": "File Preview",
-    "preview.html": "HTML Preview",
-    "preview.markdown": "Markdown Preview",
-    "preview.openNewTab": "Open in New Tab",
-    "prompt.newFile": "Enter new file path",
-    "prompt.newFolder": "Enter new folder path",
-    "prompt.renameNode": "Enter a new name",
-    "prompt.moveNode": "Choose a folder to move “{path}” into",
-    "prompt.copyNode": "Choose a folder to copy “{path}” into",
-    "dialog.name": "Name",
-    "dialog.destinationFolder": "Destination folder",
-    "fileAction.applyImmediately": "Apply immediately to disk",
-    "fileAction.createImmediateHint": "Clear this option to keep the file as an unsaved creation until it is saved.",
-    "fileAction.immediateOnlyHint": "This operation does not support a temporary state yet and must be applied to disk immediately.",
-    "fileAction.deleteImmediateHint": "Clear this option to mark the file for deletion and remove it from disk only when saved.",
-    "fileAction.unsavedItemDeleteHint": "This item has not been written to disk. Deleting it will only discard its unsaved content.",
-    "saveAs.message": "Choose which version of the content to save as.",
-    "saveAs.includeUnsaved": "Include unsaved changes",
-    "saveAs.includeUnsavedHint": "Includes unsaved creations and modifications and excludes files marked for deletion.",
-    "saveAs.includeUnsavedRequired": "This item exists only in unsaved changes, so unsaved content must be included.",
-    "saveAs.pendingDelete": "This file is marked for deletion, so only its saved disk version can be saved as.",
-    "saveAs.noUnsaved": "This item has no unsaved changes. Disk content will be used.",
-    "download.title": "Download File",
-    "download.ready": "“{name}” is ready. Select Download File to continue.",
-    "download.action": "Download File",
-    "error.unsupportedBrowser": "This browser does not support the File System Access API. Use Chrome, Edge, or Arc, and open the page from localhost or HTTPS.",
-    "error.opfsUnsupported": "OPFS is unavailable in this environment. Use a browser that supports it and open the page in a secure context such as localhost or HTTPS.",
-    "error.clearBrowserFolder": "Failed to clear browser folder",
-    "error.saveAs": "Failed to save as",
-    "error.saveAsSource": "Cannot save as the original file. Use Save instead.",
-    "error.destinationInsideSource": "A folder cannot be saved inside itself or one of its subfolders.",
-    "error.createFile": "Failed to create file",
-    "error.createFolder": "Failed to create folder",
-    "error.rename": "Failed to rename",
-    "error.move": "Failed to move",
-    "error.copy": "Failed to copy",
-    "error.unsavedNodeTransfer": "“{path}” contains {count} unsaved file(s). Save or revert those changes first.",
-    "error.destinationExists": "Destination already exists: {path}",
-    "error.nodeNotPersisted": "This item has not been written to disk: {path}",
-    "error.nodeActionUnsupported": "The current file system does not support this operation: {path}",
-    "error.overlappingNodeTransfer": "This operation cannot use overlapping source and destination directories.",
-    "error.noMoveDestination": "There is no other folder in this workspace to move the item into.",
-    "error.openFolder": "Failed to open folder",
-    "error.refreshTree": "Failed to refresh file tree",
-    "error.openFile": "Failed to open file",
-    "error.saveFile": "Failed to save file",
-    "error.delete": "Failed to delete",
-    "error.invalidPath": "Invalid path",
-    "error.invalidName": "Invalid name",
-    "error.unsupportedFile": "Unsupported file type",
-    "error.fileTooLarge": "File too large: {path}; actual {size}, limit {limit}",
-    "shortcut.save": "Save",
-    "shortcut.format": "Format Document",
-    "shortcut.commandPalette": "Command Palette",
-    "shortcut.search": "Global Search",
-    "shortcut.findReferences": "Find References",
-    "shortcut.preview": "Preview",
-    "shortcut.toggleSidebar": "Toggle Sidebar",
-    "shortcut.fold": "Fold Current Region",
-    "shortcut.unfold": "Unfold Current Region",
-    "shortcut.foldAll": "Fold All",
-    "shortcut.unfoldAll": "Unfold All",
-    "shortcut.aiComplete": "AI Code Completion",
-  },
-};
-
 const languageOptions = [
   ["plaintext", "Plain Text"], ["javascript", "JavaScript"], ["flow", "Flow"], ["typescript", "TypeScript"], ["html", "HTML"], ["vue", "Vue"], ["angular", "Angular"], ["handlebars", "Handlebars"], ["css", "CSS"], ["scss", "SCSS"], ["less", "Less"], ["json", "JSON"], ["jsonc", "JSONC"], ["json5", "JSON5"], ["markdown", "Markdown"], ["mdx", "MDX"], ["graphql", "GraphQL"], ["yaml", "YAML"], ["python", "Python"], ["go", "Go"], ["rust", "Rust"], ["java", "Java"], ["c", "C"], ["cpp", "C++"], ["csharp", "C#"], ["bat", "Batch"], ["dart", "Dart"], ["fsharp", "F#"], ["ini", "INI"], ["kotlin", "Kotlin"], ["php", "PHP"], ["r", "R"], ["ruby", "Ruby"], ["shell", "Shell"], ["powershell", "PowerShell"], ["sql", "SQL"], ["swift", "Swift"], ["xml", "XML"], ["dockerfile", "Dockerfile"], ["lua", "Lua"],
-].map(([id, label]) => ({ id, label }));
+].map(([id, label]) => ({ id, label, labelKey: id === "plaintext" ? "language.plaintext" : "" }));
 
 const aiReasoningEfforts = ["default", "low", "medium", "high", "xhigh", "max"];
 const renderMarkdown = MarkdownUtils.renderMarkdown;
@@ -1810,10 +997,10 @@ const sshTerminalThemes = {
 };
 
 const sshTerminalThemeOptions = [
-  { value: "dark", label: "Dark" },
-  { value: "light", label: "Light" },
-  { value: "solarizedDark", label: "Solarized Dark" },
-  { value: "monokai", label: "Monokai" },
+  { value: "dark", labelKey: "terminalTheme.dark" },
+  { value: "light", labelKey: "terminalTheme.light" },
+  { value: "solarizedDark", labelKey: "terminalTheme.solarizedDark" },
+  { value: "monokai", labelKey: "terminalTheme.monokai" },
 ];
 
 const shortcutItems = [
@@ -1906,7 +1093,7 @@ const workspaceFileActionDisposables = [];
 let workspaceFileActionKey = "";
 let editorOpenerDisposable = null;
 const workspaceModelPaths = new Set();
-const status = reactive({ left: "Ready", right: "Monaco Editor" });
+const status = reactive({ left: tr("status.ready"), right: tr("status.loaded") });
 const contextMenu = reactive({ visible: false, x: 0, y: 0, node: null });
 const changesContextMenu = reactive({ visible: false, x: 0, y: 0, file: null });
 const dialogInput = ref(null);
@@ -1916,6 +1103,7 @@ const dialogPrimaryButton = ref(null);
 const dialogState = reactive({ visible: false, mode: "alert", title: "", message: "", value: "", inputLabel: "", placeholder: "", selectOptions: [], optionLabel: "", optionHint: "", optionChecked: false, optionDisabled: false, confirmLabel: "", cancelLabel: "", tone: "default", selectOnFocus: false, closeOnBackdrop: true });
 const downloadDialog = reactive({ visible: false, url: "", name: "" });
 const settings = reactive(loadSettings());
+settings.locale = getCurrentLocale();
 const maxMemoryReadMb = computed({
   get: () => bytesToMegabytes(settings.maxMemoryReadBytes),
   set: (value) => { settings.maxMemoryReadBytes = megabytesToBytes(value, DEFAULT_MAX_MEMORY_READ_BYTES); },
@@ -2068,7 +1256,15 @@ const dialogIconClass = computed(() => {
   return dialogState.tone === "danger" ? "codicon-error" : "codicon-info";
 });
 
-watch(() => settings.locale, () => { document.documentElement.lang = settings.locale; });
+watch(currentLocale, (locale, previousLocale) => {
+  const previousMessages = codeEditorMessages[previousLocale]?.codeEditor || {};
+  if (status.left === previousMessages["status.ready"] && status.right === previousMessages["status.loaded"]) {
+    setStatus(tr("status.ready"), tr("status.loaded"));
+  }
+  settings.locale = locale;
+  document.documentElement.lang = locale;
+  if (monaco) registerKeybindings();
+});
 watch(() => aiMessages.value.length, () => { nextTick(scrollAiMessagesToBottom); });
 watch(activeSshTerminalId, () => { nextTick(attachActiveSshTerminal); });
 watch(activeAiSessionId, () => {
@@ -2080,14 +1276,15 @@ watch(aiSessions, handleAiSessionsChanged, { deep: true, flush: "sync" });
 watch(searchMatchCase, () => { if (searchSearched.value && searchQuery.value.trim()) runGlobalSearch(); });
 watch(() => dirtyFiles.value.map((file) => file.path).join("\0"), pruneSelectedChangePaths);
 watch(previewPaneVisible, () => { nextTick(layoutVisibleEditors); });
-watch([previewPaneVisible, previewPath, previewUrlSuffix, dirtyRevision, () => settings.locale], () => { void updatePreviewContent(); });
+watch([previewPaneVisible, previewPath, previewUrlSuffix, dirtyRevision, currentLocale], () => { void updatePreviewContent(); });
 watch(settings, () => {
   syncFileOperationPolicy();
   persistSettings();
 }, { deep: true });
+persistSettings();
 
 onMounted(async () => {
-  document.documentElement.lang = settings.locale;
+  document.documentElement.lang = getCurrentLocale();
   const pageTitle = document.title;
   const pageDescription = document.querySelector('meta[name="description"]')?.content || pageTitle;
   disableEditorPwa = enableEditorPwa({
@@ -2188,10 +1385,11 @@ onBeforeUnmount(() => {
 });
 
 function tr(key, params = {}) {
-  const dictionary = messages[settings.locale] || messages[defaultSettings.locale];
-  let value = dictionary[key] || messages[defaultSettings.locale][key] || key;
-  Object.entries(params).forEach(([name, replacement]) => { value = value.replaceAll(`{${name}}`, replacement); });
-  return value;
+  return t(`codeEditor.${key}`, params);
+}
+
+function getCurrentLocale() {
+  return currentLocale.value || currentLocale || defaultSettings.locale;
 }
 
 function togglePreview() {
@@ -2307,7 +1505,7 @@ function createPreviewPageUrl(initialUpdate) {
   const frameContent = initialUpdate.content;
   const title = initialUpdate.title;
   const documentContent = `<!doctype html>
-<html lang="${escapePreviewAttribute(settings.locale)}">
+<html lang="${escapePreviewAttribute(getCurrentLocale())}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -2410,7 +1608,7 @@ async function navigatePreviewDocument(path, suffix = "") {
 
 function createMarkdownPreviewDocument(content, title) {
   return `<!doctype html>
-<html lang="${escapePreviewAttribute(settings.locale)}">
+<html lang="${escapePreviewAttribute(getCurrentLocale())}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -2880,7 +2078,7 @@ async function connectSshConfig(config) {
     session.websocketUrl = buildSshWebSocketUrl();
     socket = new WebSocket(session.websocketUrl);
   } catch (error) {
-    failSshConnection(session, error?.message);
+    failSshConnection(session, translateErrorMessage(error?.message));
     return session;
   }
   session.ws = socket;
@@ -2901,7 +2099,7 @@ async function connectSshConfig(config) {
       return;
     }
     const reason = getSshWebSocketCloseReason(event);
-    if (reason) appendSshOutput(session, `\n[${new Date().toLocaleTimeString(settings.locale)}] ${reason}\n`);
+    if (reason) appendSshOutput(session, `\n[${new Date().toLocaleTimeString(getCurrentLocale())}] ${reason}\n`);
     markSshSessionClosed(session);
   });
   return session;
@@ -3195,7 +2393,7 @@ function failSftpTask(task, error) {
     task.error = tr("sftp.cancelled");
   } else {
     task.status = "failed";
-    task.error = error?.message || String(error);
+    task.error = translateErrorMessage(error?.message || String(error));
   }
   task.cancel = null;
 }
@@ -3386,7 +2584,7 @@ function encodeSshConnectHeader(payload) {
 
 function parseBackendResult(text) {
   const result = JSON.parse(text || "{}");
-  if (result.code !== 200) throw new Error(result.msg || tr("sftp.error.backendResponse"));
+  if (result.code !== 200) throw new Error(result.msg ? translateErrorMessage(result.msg) : tr("sftp.error.backendResponse"));
   return result;
 }
 
@@ -3408,7 +2606,7 @@ function handleSshWebSocketMessage(session, raw) {
     session.connectionId = event.connectionId || event.connection?.id || "";
     session.connectionInfo = event.connection || null;
     session.lastActiveAt = Date.now();
-    appendSshOutput(session, `[${new Date().toLocaleTimeString(settings.locale)}] ${tr("ssh.connected")}\n`);
+    appendSshOutput(session, `[${new Date().toLocaleTimeString(getCurrentLocale())}] ${tr("ssh.connected")}\n`);
     setStatus(tr("ssh.connectedStatus", { name: session.title }), session.connectionId);
     scheduleSshTerminalFit(session);
     return;
@@ -3419,12 +2617,13 @@ function handleSshWebSocketMessage(session, raw) {
     return;
   }
   if (event.type === "closed") {
-    appendSshOutput(session, `\n[${new Date().toLocaleTimeString(settings.locale)}] ${event.message || tr("ssh.disconnected")}\n`);
+    const message = event.message ? translateErrorMessage(event.message) : tr("ssh.disconnected");
+    appendSshOutput(session, `\n[${new Date().toLocaleTimeString(getCurrentLocale())}] ${message}\n`);
     markSshSessionClosed(session);
     return;
   }
   if (event.type === "error") {
-    failSshConnection(session, event.message);
+    failSshConnection(session, event.message ? translateErrorMessage(event.message) : "");
     return;
   }
   touchSshState();
@@ -3442,13 +2641,13 @@ function failSshConnection(session, reason = "") {
   window.clearInterval(session.heartbeatTimer);
   session.heartbeatTimer = 0;
   const message = session.failureReason ? `${tr("ssh.connectFailed")}: ${session.failureReason}` : tr("ssh.connectFailed");
-  appendSshOutput(session, `\n[${new Date().toLocaleTimeString(settings.locale)}] ${message}\n`);
+  appendSshOutput(session, `\n[${new Date().toLocaleTimeString(getCurrentLocale())}] ${message}\n`);
   setStatus(tr("ssh.connectFailedStatus"), session.failureReason || session.title);
 }
 
 function getSshWebSocketCloseReason(event) {
   const reason = String(event?.reason || "").trim();
-  if (reason) return reason;
+  if (reason) return translateErrorMessage(reason);
   if (event?.code === 1006) return tr("ssh.websocketAbnormalClose");
   if (event?.code && event.code !== 1000) return tr("ssh.websocketClosed", { code: event.code });
   return "";
@@ -3502,7 +2701,7 @@ function closeSshSession(session, options = {}) {
   try { session.ws?.close(); } catch {}
   session.connected = false;
   setSshTerminalInputEnabled(session, false);
-  if (!options.silent) appendSshOutput(session, `\n[${new Date().toLocaleTimeString(settings.locale)}] ${tr("ssh.disconnected")}\n`);
+  if (!options.silent) appendSshOutput(session, `\n[${new Date().toLocaleTimeString(getCurrentLocale())}] ${tr("ssh.disconnected")}\n`);
   touchSshState();
 }
 
@@ -4079,7 +3278,7 @@ function upsertPendingFileNode(nodes, file) {
 }
 
 function sortTreeNodes(nodes) {
-  nodes.sort((a, b) => a.kind !== b.kind ? (a.kind === "directory" ? -1 : 1) : a.name.localeCompare(b.name, settings.locale, { sensitivity: "base" }));
+  nodes.sort((a, b) => a.kind !== b.kind ? (a.kind === "directory" ? -1 : 1) : a.name.localeCompare(b.name, getCurrentLocale(), { sensitivity: "base" }));
   nodes.forEach((node) => { if (node.children?.length) sortTreeNodes(node.children); });
 }
 
@@ -4369,7 +3568,7 @@ async function saveFile(file, options = {}) {
     removeFileState(path);
     touchDirtyState();
     if (refresh) await refreshTree();
-    if (updateStatus) setStatus(tr("status.deleted", { path }), new Date().toLocaleTimeString(settings.locale));
+    if (updateStatus) setStatus(tr("status.deleted", { path }), new Date().toLocaleTimeString(getCurrentLocale()));
     return true;
   }
   if (getActiveBlobFile(file)) {
@@ -4394,7 +3593,7 @@ async function saveFile(file, options = {}) {
   }
   if (!file.dirty) selectedChangePaths.delete(file.path);
   touchDirtyState();
-  if (updateStatus) setStatus(tr("status.savedFile", { name: file.name }), file.dirty ? tr("status.unsaved") : new Date().toLocaleTimeString(settings.locale));
+  if (updateStatus) setStatus(tr("status.savedFile", { name: file.name }), file.dirty ? tr("status.unsaved") : new Date().toLocaleTimeString(getCurrentLocale()));
   return true;
 }
 
@@ -4675,7 +3874,7 @@ async function saveSelectedChanges() {
     }
     await refreshTree();
     touchDirtyState();
-    setStatus(tr("changes.batchSaved", { count: savedCount }), new Date().toLocaleTimeString(settings.locale));
+    setStatus(tr("changes.batchSaved", { count: savedCount }), new Date().toLocaleTimeString(getCurrentLocale()));
   } catch (error) {
     reportError("error.saveFile", error);
   }
@@ -4692,7 +3891,7 @@ async function revertSelectedChanges() {
     selectedChangePaths.delete(file.path);
     revertedCount += 1;
   }
-  setStatus(tr("changes.batchReverted", { count: revertedCount }), new Date().toLocaleTimeString(settings.locale));
+  setStatus(tr("changes.batchReverted", { count: revertedCount }), new Date().toLocaleTimeString(getCurrentLocale()));
 }
 
 function toggleDirectory(path) {
@@ -5400,9 +4599,10 @@ function applyChromeTheme() {
   document.body.classList.remove("theme-vs", "theme-vs-dark", "theme-hc-black");
 }
 
-function applyLocale() {
-  document.documentElement.lang = settings.locale;
-  setStatus(status.left, status.right);
+function applyLocale(locale) {
+  setLocale(locale);
+  settings.locale = getCurrentLocale();
+  document.documentElement.lang = getCurrentLocale();
 }
 
 function applyEditorOptions() {
@@ -5804,7 +5004,7 @@ async function fetchAiModels() {
     }
     setStatus(tr("status.aiModelsLoaded", { count: models.length }), getAiBaseUrl());
   } catch (error) {
-    setStatus("AI Models", error.message || String(error));
+    setStatus(tr("status.aiModels"), error.message || String(error));
     showAlert(`${tr("settings.aiFetchModels")}: ${error.message || error}`, { tone: "danger" });
   } finally {
     aiModelsLoading.value = false;
@@ -6042,10 +5242,10 @@ function activateAiHistorySession(id) {
 }
 
 function matchesAiHistoryQuery(session, query) {
-  const normalizedQuery = String(query || "").trim().toLocaleLowerCase(settings.locale);
+  const normalizedQuery = String(query || "").trim().toLocaleLowerCase(getCurrentLocale());
   if (!normalizedQuery) return true;
   return [session.title, session.prompt, ...session.messages.map((message) => message.content)]
-    .some((value) => String(value || "").toLocaleLowerCase(settings.locale).includes(normalizedQuery));
+    .some((value) => String(value || "").toLocaleLowerCase(getCurrentLocale()).includes(normalizedQuery));
 }
 
 function groupAiSessionDrawerItems(sessions) {
@@ -6077,7 +5277,7 @@ function getAiHistoryDateLabel(timestamp) {
 }
 
 function formatAiHistoryTime(timestamp) {
-  return new Intl.DateTimeFormat(settings.locale, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(timestamp));
+  return new Intl.DateTimeFormat(getCurrentLocale(), { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(timestamp));
 }
 
 function formatAiSessionState(session) {
@@ -6119,7 +5319,7 @@ async function generateAiSessionTitle() {
     setStatus(tr("ai.sessionNameGenerated"), title);
   } catch (error) {
     if (error.name !== "AbortError") {
-      setStatus("AI Error", error.message || String(error));
+      setStatus(tr("status.aiError"), error.message || String(error));
       await showAlert(error.message || String(error), { tone: "danger" });
     }
   } finally {
@@ -6505,7 +5705,7 @@ async function requestAiCompletion(file, model, position, signal) {
   }, signal);
   const text = extractResponseText(response).replace(/^```[\w-]*\n?/, "").replace(/```$/, "");
   const meta = response.__meta;
-  if (meta) setStatus("AI Completion", `${meta.ms}ms · ${(meta.bytes / 1024).toFixed(1)}KB`);
+  if (meta) setStatus(tr("status.aiCompletion"), `${meta.ms}ms · ${(meta.bytes / 1024).toFixed(1)}KB`);
   return text;
 }
 
@@ -6563,7 +5763,7 @@ async function sendAiPrompt() {
       setStatus(tr("status.aiStopped"), "");
     } else {
       addAiMessage("assistant", error.message || String(error), {}, session);
-      setStatus("AI Error", error.message || String(error));
+      setStatus(tr("status.aiError"), error.message || String(error));
     }
   } finally {
     if (session.abortController === controller) {
@@ -6638,7 +5838,7 @@ async function compressAiContext() {
       setStatus(tr("status.aiStopped"), "");
     } else {
       addAiMessage("assistant", error.message || String(error), {}, session);
-      setStatus("AI Error", error.message || String(error));
+      setStatus(tr("status.aiError"), error.message || String(error));
     }
   } finally {
     if (session.abortController === controller) {
@@ -6860,7 +6060,7 @@ function buildAgentWorkspaceContext() {
     "Tool requirement status:",
     ...formatAiRequirementStatusLines(),
     `${AI_AGENTS_FILE_NAME}: ${getRootAgentsMdContent() ? "loaded" : "not loaded"}`,
-    `Locale: ${settings.locale}`,
+    `Locale: ${getCurrentLocale()}`,
   ].join("\n");
 }
 
@@ -6966,7 +6166,7 @@ function getAiToolDefinitions() {
 }
 
 function getAiAllToolDefinitions() {
-  const reasonLanguage = settings.locale === "zh-CN" ? "Chinese" : "English";
+  const reasonLanguage = getCurrentLocale() === "zh-CN" ? "Chinese" : "English";
   return [
     { type: "function", name: "get_tool_availability", description: aiToolDescription(
       "Check current AI tool availability and requirement status.",
@@ -7563,7 +6763,10 @@ async function promptImportSettingsFromUrl() {
     cancelLabel: tr("settings.importKeep"),
   });
   if (confirmed) {
+    const importedLocale = imported.locale;
     applySettingsSnapshot(imported);
+    if (importedLocale) setLocale(importedLocale);
+    settings.locale = getCurrentLocale();
     persistSettings();
     setStatus(tr("settings.importApplied"), SETTINGS_URL_PARAM);
   } else {
@@ -7599,7 +6802,8 @@ function normalizeSettings(value = {}) {
 function applySettingsSnapshot(value) {
   Object.keys(settings).forEach((key) => { delete settings[key]; });
   Object.assign(settings, value);
-  document.documentElement.lang = settings.locale;
+  settings.locale = getCurrentLocale();
+  document.documentElement.lang = getCurrentLocale();
   if (monaco) applyTheme();
   applyEditorOptions();
   applySshTerminalTheme();
@@ -9256,7 +8460,8 @@ function getLanguageId(fileName) {
 }
 
 function getLanguageLabel(languageId) {
-  return languageOptions.find((item) => item.id === languageId)?.label || languageId;
+  const language = languageOptions.find((item) => item.id === languageId);
+  return language?.labelKey ? tr(language.labelKey) : language?.label || languageId;
 }
 
 function getMonacoLanguageId(languageId) {

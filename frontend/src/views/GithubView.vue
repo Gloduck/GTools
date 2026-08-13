@@ -15,17 +15,17 @@
                     <form @submit.prevent="searchRepositories" class="flex flex-col md:flex-row gap-4">
                         <div class="flex-grow relative">
                             <i class="fab fa-github absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"></i>
-                            <input type="text" v-model="keyword" placeholder="输入GitHub仓库名称、描述或主题..."
+                            <input type="text" v-model="keyword" :placeholder="$t('github.searchPlaceholder')"
                                 class="w-full pl-10 pr-4 py-3 rounded-lg border border-gray-300 focus:border-primary focus:ring-2 focus:ring-primary/20 outline-none transition-all">
                         </div>
 
                         <div class="w-full md:w-auto">
                             <select v-model="sortBy"
                                 class="w-full md:w-48 bg-white border border-gray-300 text-gray-700 py-3 px-4 pr-8 rounded-lg appearance-none focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all bg-no-repeat bg-right">
-                                <option value="stars">按星标排序</option>
-                                <option value="updated">按更新排序</option>
-                                <option value="forks">按复刻排序</option>
-                                <option value="help-wanted-issues">按所需帮助排序</option>
+                                <option value="stars">{{ $t('github.sort.stars') }}</option>
+                                <option value="updated">{{ $t('github.sort.updated') }}</option>
+                                <option value="forks">{{ $t('github.sort.forks') }}</option>
+                                <option value="help-wanted-issues">{{ $t('github.sort.helpWanted') }}</option>
                             </select>
                         </div>
 
@@ -33,14 +33,14 @@
                             :class="['w-full md:w-auto text-white font-medium py-3 px-6 rounded-lg transition-all duration-300 transform hover:scale-105 flex items-center justify-center gap-2',
                                          isLoading ? 'bg-gray-400 cursor-not-allowed' : 'bg-primary hover:bg-secondary']">
                             <i class="fas fa-search"></i>
-                            <span>搜索</span>
+                            <span>{{ $t('common.search') }}</span>
                         </button>
                     </form>
 
                     <div class="mt-4">
-                        <p class="text-sm text-gray-500 mb-2">提示：直接搜索仓库名称，如 "vuejs/vue" 或 "facebook/react"</p>
+                        <p class="text-sm text-gray-500 mb-2">{{ $t('github.searchTip') }}</p>
                         <div class="flex flex-wrap gap-2">
-                            <span class="text-sm text-gray-500">热门搜索:</span>
+                            <span class="text-sm text-gray-500">{{ $t('github.popularSearches') }}</span>
                             <button v-for="example in examples" :key="example"
                                 @click="keyword = example; searchRepositories()"
                                 class="px-3 py-1 text-xs bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-full transition-colors">
@@ -54,13 +54,13 @@
                 <section v-if="showResults" class="mb-8">
                     <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-3">
                         <h2 class="text-xl font-bold text-gray-800">
-                            搜索结果
+                            {{ $t('github.searchResults') }}
                             <span v-if="results.length > 0" class="text-primary font-normal text-base">
-                                ({{ totalCount }} 个结果，显示 {{ Math.min(pageSize, results.length) }} 个)
+                                {{ $t('github.resultSummary', { total: formatNumber(totalCount), shown: formatNumber(Math.min(pageSize, results.length)) }) }}
                             </span>
                         </h2>
                         <div class="text-sm text-gray-500 w-full sm:w-auto flex justify-between items-center gap-4">
-                            <span v-if="totalCount > 0">总共找到 {{ totalCount.toLocaleString() }} 个仓库</span>
+                            <span v-if="totalCount > 0">{{ $t('github.totalRepositories', { count: formatNumber(totalCount) }) }}</span>
                         </div>
                     </div>
 
@@ -72,8 +72,8 @@
                         <!-- 无结果提示 -->
                         <div v-if="results.length === 0" class="py-16 text-center">
                             <i class="fab fa-github text-5xl text-gray-300 mb-4"></i>
-                            <p class="text-gray-500 text-lg">未找到匹配的仓库</p>
-                            <p class="text-gray-400 text-sm mt-2">尝试不同的关键词或检查拼写</p>
+                            <p class="text-gray-500 text-lg">{{ $t('github.noMatchingRepositories') }}</p>
+                            <p class="text-gray-400 text-sm mt-2">{{ $t('github.tryAnotherKeyword') }}</p>
                         </div>
 
                         <!-- 结果项 -->
@@ -87,11 +87,11 @@
                                             <h3 class="font-semibold text-gray-800 text-lg" :title="repo.fullName">{{
                                                 repo.fullName }}</h3>
                                             <span v-if="repo.isPrivate"
-                                                class="px-2 py-0.5 text-xs bg-yellow-100 text-yellow-800 rounded-full">私有</span>
+                                                class="px-2 py-0.5 text-xs bg-yellow-100 text-yellow-800 rounded-full">{{ $t('github.private') }}</span>
                                         </div>
                                         <p class="text-gray-600 mb-3 break-all"
-                                            :title="truncateText(repo.description) || '无描述'">
-                                            {{ truncateText(repo.description) || '此仓库没有描述' }}
+                                            :title="truncateText(repo.description) || $t('github.noDescription')">
+                                            {{ truncateText(repo.description) || $t('github.repositoryHasNoDescription') }}
                                         </p>
                                         <div class="flex flex-wrap gap-x-4 gap-y-2 text-sm text-gray-500">
                                             <div v-if="repo.language" class="flex items-center gap-1">
@@ -101,21 +101,21 @@
                                             </div>
                                             <div class="flex items-center gap-1">
                                                 <i class="fas fa-star text-yellow-500"></i>
-                                                <span>{{ repo.stargazersCount.toLocaleString() }}</span>
+                                                 <span>{{ formatNumber(repo.stargazersCount) }}</span>
                                             </div>
                                             <div class="flex items-center gap-1">
                                                 <i class="fas fa-code-branch text-blue-500"></i>
-                                                <span>{{ repo.forksCount.toLocaleString() }}</span>
+                                                 <span>{{ formatNumber(repo.forksCount) }}</span>
                                             </div>
                                             <div class="flex items-center gap-1">
                                                 <i class="fas fa-circle text-gray-400"></i>
-                                                <span>{{ formatRelativeTime(repo.updatedAt) }}更新</span>
+                                                <span>{{ $t('github.updatedAt', { time: formatRelativeTime(repo.updatedAt) }) }}</span>
                                             </div>
                                         </div>
                                     </div>
                                     <button
                                         class="text-primary hover:text-secondary transition-colors px-3 py-1 rounded flex items-center gap-1 mt-2 md:mt-0">
-                                        <span>详情</span>
+                                        <span>{{ $t('common.details') }}</span>
                                         <i class="fas fa-chevron-right text-xs"></i>
                                     </button>
                                 </div>
@@ -144,17 +144,17 @@
                         <button @click="activeTab = 'info'"
                             :class="['px-4 py-2 text-sm font-medium border-b-2 transition-colors',
                                          activeTab === 'info' ? 'text-primary border-primary' : 'text-gray-500 hover:text-gray-700 border-transparent']">
-                            <i class="fas fa-info-circle mr-2"></i>仓库信息
+                            <i class="fas fa-info-circle mr-2"></i>{{ $t('github.repositoryInfo') }}
                         </button>
                         <button @click="activeTab = 'releases'; loadReleases()"
                             :class="['px-4 py-2 text-sm font-medium border-b-2 transition-colors',
                                          activeTab === 'releases' ? 'text-primary border-primary' : 'text-gray-500 hover:text-gray-700 border-transparent']">
-                            <i class="fas fa-tag mr-2"></i>发布版本
+                            <i class="fas fa-tag mr-2"></i>{{ $t('github.releases') }}
                         </button>
                         <button @click="activeTab = 'readme'; loadReadme()"
                             :class="['px-4 py-2 text-sm font-medium border-b-2 transition-colors',
                                          activeTab === 'readme' ? 'text-primary border-primary' : 'text-gray-500 hover:text-gray-700 border-transparent']">
-                            <i class="fas fa-book mr-2"></i>README
+                            <i class="fas fa-book mr-2"></i>{{ $t('github.readme') }}
                         </button>
                     </nav>
                 </div>
@@ -163,37 +163,37 @@
                 <div v-if="activeTab === 'info'" class="space-y-6">
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div class="bg-neutral p-4 rounded-lg">
-                            <h4 class="text-sm text-gray-500 mb-1">仓库名称</h4>
+                            <h4 class="text-sm text-gray-500 mb-1">{{ $t('github.repositoryName') }}</h4>
                             <p class="font-medium">{{ selectedRepo.fullName }}</p>
                         </div>
                         <div class="bg-neutral p-4 rounded-lg">
-                            <h4 class="text-sm text-gray-500 mb-1">描述</h4>
-                            <p>{{ selectedRepo.description || '无描述' }}</p>
+                            <h4 class="text-sm text-gray-500 mb-1">{{ $t('github.description') }}</h4>
+                            <p>{{ selectedRepo.description || $t('github.noDescription') }}</p>
                         </div>
                         <div class="bg-neutral p-4 rounded-lg">
-                            <h4 class="text-sm text-gray-500 mb-1">星标数量</h4>
+                            <h4 class="text-sm text-gray-500 mb-1">{{ $t('github.starCount') }}</h4>
                             <div class="flex items-center gap-1">
                                 <i class="fas fa-star text-yellow-500"></i>
-                                <p>{{ selectedRepo.stargazersCount.toLocaleString() }}</p>
+                                <p>{{ formatNumber(selectedRepo.stargazersCount) }}</p>
                             </div>
                         </div>
                         <div class="bg-neutral p-4 rounded-lg">
-                            <h4 class="text-sm text-gray-500 mb-1">复刻数量</h4>
+                            <h4 class="text-sm text-gray-500 mb-1">{{ $t('github.forkCount') }}</h4>
                             <div class="flex items-center gap-1">
                                 <i class="fas fa-code-branch text-blue-500"></i>
-                                <p>{{ selectedRepo.forksCount.toLocaleString() }}</p>
+                                <p>{{ formatNumber(selectedRepo.forksCount) }}</p>
                             </div>
                         </div>
                         <div class="bg-neutral p-4 rounded-lg">
-                            <h4 class="text-sm text-gray-500 mb-1">语言</h4>
-                            <p>{{ selectedRepo.language || '未知' }}</p>
+                            <h4 class="text-sm text-gray-500 mb-1">{{ $t('github.language') }}</h4>
+                            <p>{{ selectedRepo.language || $t('common.unknown') }}</p>
                         </div>
                         <div class="bg-neutral p-4 rounded-lg">
-                            <h4 class="text-sm text-gray-500 mb-1">最后更新</h4>
+                            <h4 class="text-sm text-gray-500 mb-1">{{ $t('github.lastUpdated') }}</h4>
                             <p>{{ formatTime(selectedRepo.updatedAt) }}</p>
                         </div>
                         <div class="bg-neutral p-4 rounded-lg md:col-span-2">
-                            <h4 class="text-sm text-gray-500 mb-1">仓库地址</h4>
+                            <h4 class="text-sm text-gray-500 mb-1">{{ $t('github.repositoryUrl') }}</h4>
                             <a :href="selectedRepo.htmlUrl" target="_blank"
                                 class="text-primary hover:underline break-all">{{ selectedRepo.htmlUrl }}</a>
                         </div>
@@ -207,7 +207,7 @@
                     <div v-else>
                         <div v-if="releases.length === 0" class="py-8 text-center">
                             <i class="fas fa-tag text-4xl text-gray-300 mb-4"></i>
-                            <p class="text-gray-500">此仓库没有发布版本</p>
+                            <p class="text-gray-500">{{ $t('github.noReleases') }}</p>
                         </div>
 
                         <div v-else class="space-y-4">
@@ -222,12 +222,12 @@
                                             <span
                                                 :class="['px-2 py-0.5 text-xs rounded-full', 
                                                          release.isPrerelease ? 'bg-purple-100 text-purple-800' : 'bg-green-100 text-green-800']">
-                                                {{ release.isPrerelease ? '预发布' : '正式版' }}
+                                                 {{ release.isPrerelease ? $t('github.prerelease') : $t('github.stableRelease') }}
                                             </span>
                                         </div>
                                         <p class="text-gray-600 text-sm mb-2 line-clamp-2">
                                             {{ release.body ? release.body.substring(0, 100) + (release.body.length >
-                                            100 ? '...' : '') : '无说明' }}
+                                             100 ? '...' : '') : $t('github.noReleaseNotes') }}
                                         </p>
                                         <div class="flex flex-wrap gap-x-4 gap-y-2 text-xs text-gray-500">
                                             <div class="flex items-center gap-1">
@@ -236,13 +236,13 @@
                                             </div>
                                             <div class="flex items-center gap-1">
                                                 <i class="fas fa-download"></i>
-                                                <span>{{ release.assets ? release.assets.length : 0 }} 个文件</span>
+                                                 <span>{{ $t('github.fileCount', { count: formatNumber(release.assets ? release.assets.length : 0) }) }}</span>
                                             </div>
                                         </div>
                                     </div>
                                     <button
                                         class="text-primary hover:text-secondary transition-colors px-3 py-1 rounded flex items-center gap-1 mt-2 md:mt-0">
-                                        <span>查看</span>
+                                         <span>{{ $t('common.details') }}</span>
                                         <i class="fas fa-chevron-right text-xs"></i>
                                     </button>
                                 </div>
@@ -258,7 +258,7 @@
                     <div v-else>
                         <div v-if="!readmeContent" class="py-8 text-center">
                             <i class="fas fa-file-alt text-4xl text-gray-300 mb-4"></i>
-                            <p class="text-gray-500">此仓库没有README文件</p>
+                             <p class="text-gray-500">{{ $t('github.noReadme') }}</p>
                         </div>
 
                         <div v-else v-html="renderMarkdown(readmeContent)"></div>
@@ -274,16 +274,16 @@
             <div v-if="selectedRelease">
                 <div class="space-y-6">
                     <div class="bg-neutral p-4 rounded-lg">
-                        <h4 class="text-sm text-gray-500 mb-1">版本说明</h4>
+                         <h4 class="text-sm text-gray-500 mb-1">{{ $t('github.releaseNotes') }}</h4>
                         <div v-if="selectedRelease.body" class="text-sm"
                             v-html="renderMarkdown(selectedRelease.body)"></div>
-                        <div v-else class="text-gray-500 italic">此版本没有说明</div>
+                         <div v-else class="text-gray-500 italic">{{ $t('github.releaseHasNoNotes') }}</div>
                     </div>
 
                     <div>
                         <h4 class="font-semibold text-gray-800 mb-3 flex items-center gap-2">
                             <i class="fas fa-download text-primary"></i>
-                            发布文件
+                             {{ $t('github.releaseAssets') }}
                         </h4>
 
                         <common-loading-spinner v-if="loadingAssets"></common-loading-spinner>
@@ -291,7 +291,7 @@
                         <div v-else>
                             <div v-if="selectedRelease.assets.length === 0" class="py-4 text-center">
                                 <i class="fas fa-file-archive text-3xl text-gray-300 mb-2"></i>
-                                <p class="text-gray-500">此版本没有发布文件</p>
+                                 <p class="text-gray-500">{{ $t('github.noReleaseAssets') }}</p>
                             </div>
 
                             <ul v-else class="space-y-2 max-h-60 overflow-y-auto pr-2">
@@ -316,29 +316,29 @@
         </common-modal>
 
         <!-- 下载链接弹窗 -->
-        <common-modal v-model:visible="showDownloadModalVisible" title="下载链接" max-width="max-w-2xl">
+         <common-modal v-model:visible="showDownloadModalVisible" :title="$t('github.downloadLinks')" max-width="max-w-2xl">
             <div class="space-y-6">
                 <div class="bg-neutral p-4 rounded-lg">
-                    <h4 class="text-sm text-gray-500 mb-1">文件名</h4>
+                     <h4 class="text-sm text-gray-500 mb-1">{{ $t('github.fileName') }}</h4>
                     <p class="font-medium break-all">{{ downloadFileName }}</p>
                 </div>
 
                 <div>
                     <h4 class="font-semibold text-gray-800 mb-3 flex items-center gap-2">
                         <i class="fas fa-link text-primary"></i>
-                        原始下载链接
+                         {{ $t('github.originalDownloadLink') }}
                     </h4>
                     <div class="flex items-center gap-2">
                         <input type="text" :value="downloadUrl" readonly
                             class="flex-grow p-3 rounded-lg border border-gray-300 bg-gray-50 font-mono text-sm break-all">
                         <button @click="copyToClipboard(downloadUrl)"
                             class="bg-gray-200 hover:bg-gray-300 text-gray-800 px-4 py-3 rounded-lg transition-colors flex items-center gap-2"
-                            title="复制链接">
+                             :title="$t('github.copyLink')">
                             <i class="fas fa-copy"></i>
                         </button>
                         <button @click="downloadFile(downloadUrl)"
                             class="bg-primary hover:bg-secondary text-white px-4 py-3 rounded-lg transition-colors flex items-center gap-2"
-                            title="直接下载">
+                             :title="$t('github.downloadDirectly')">
                             <i class="fas fa-download"></i>
                         </button>
                     </div>
@@ -347,7 +347,7 @@
                 <div>
                     <h4 class="font-semibold text-gray-800 mb-3 flex items-center gap-2">
                         <i class="fas fa-bolt text-primary"></i>
-                        代理下载链接
+                         {{ $t('github.proxyDownloadLinks') }}
                     </h4>
                     <div class="space-y-3">
                         <div v-for="proxy in proxyPrefixes" :key="proxy.name" class="flex items-center gap-2">
@@ -359,12 +359,12 @@
                                 class="flex-grow p-3 rounded-lg border border-gray-300 bg-gray-50 font-mono text-sm break-all">
                             <button @click="copyToClipboard(`${proxy.url}/${downloadUrl}`)"
                                 class="bg-gray-200 hover:bg-gray-300 text-gray-800 px-3 py-3 rounded-lg transition-colors flex items-center gap-2"
-                                title="复制链接">
+                                 :title="$t('github.copyLink')">
                                 <i class="fas fa-copy"></i>
                             </button>
                             <button @click="downloadFile(`${proxy.url}/${downloadUrl}`)"
                                 class="bg-green-500 hover:bg-green-600 text-white px-3 py-3 rounded-lg transition-colors flex items-center gap-2"
-                                title="直接下载">
+                                 :title="$t('github.downloadDirectly')">
                                 <i class="fas fa-download"></i>
                             </button>
                         </div>
@@ -379,6 +379,7 @@ import { ref, onMounted } from 'vue';
 import { CommonUtils } from '@/shared/common-utils.js';
 import { MarkdownUtils } from '@/shared/markdown-utils.js';
 import { CommonComponents } from '@/shared/common-components.js';
+import { t, currentLocale, translateErrorMessage } from '@/i18n/index.js';
 
 export default {
     name: 'GithubView',
@@ -445,9 +446,11 @@ export default {
                         const data = await response.json();
                         if (data.code === 200 && data.data) {
                             examples.value = data.data;
+                        } else if (data.code !== 200) {
+                            throw new Error(translateErrorMessage(data.msg || t('github.loadHotSearchesFailed')));
                         }
                     } catch (error) {
-                        console.error('加载热门搜索失败:', error);
+                        console.error('Failed to load popular searches:', error);
                     }
                 };
 
@@ -470,11 +473,47 @@ export default {
                 };
 
                 // 公共工具函数
-                const formatTime = CommonUtils.formatTime;
-                const formatRelativeTime = CommonUtils.formatRelativeTime;
                 const formatFileSize = CommonUtils.formatFileSize;
                 const truncateText = CommonUtils.truncateText;
-                const copyToClipboard = (text) => CommonUtils.copyToClipboard(text, showToast);
+                const locale = () => currentLocale.value || currentLocale;
+                const formatNumber = (value) => Number(value || 0).toLocaleString(locale());
+                const formatTime = (timeString) => {
+                    if (!timeString) return t('common.unknown');
+                    return new Date(timeString).toLocaleString(locale(), {
+                        year: 'numeric',
+                        month: '2-digit',
+                        day: '2-digit',
+                        hour: '2-digit',
+                        minute: '2-digit'
+                    });
+                };
+                const formatRelativeTime = (timeString) => {
+                    if (!timeString) return t('common.unknown');
+                    const diffSeconds = (new Date(timeString).getTime() - Date.now()) / 1000;
+                    const ranges = [
+                        ['year', 60 * 60 * 24 * 365],
+                        ['month', 60 * 60 * 24 * 30],
+                        ['week', 60 * 60 * 24 * 7],
+                        ['day', 60 * 60 * 24],
+                        ['hour', 60 * 60],
+                        ['minute', 60]
+                    ];
+                    const formatter = new Intl.RelativeTimeFormat(locale(), { numeric: 'auto' });
+                    for (const [unit, seconds] of ranges) {
+                        if (Math.abs(diffSeconds) >= seconds) {
+                            return formatter.format(Math.round(diffSeconds / seconds), unit);
+                        }
+                    }
+                    return formatter.format(Math.round(diffSeconds), 'second');
+                };
+                const copyToClipboard = (text) => {
+                    navigator.clipboard.writeText(text)
+                        .then(() => showToast(t('common.copiedToClipboard'), 'success'))
+                        .catch((error) => {
+                            console.error('Copy failed:', error);
+                            showToast(t('common.copyFailed'), 'error');
+                        });
+                };
 
                 const formatRepository = (rawRepo) => {
                     return {
@@ -528,7 +567,7 @@ export default {
                 // 搜索仓库
                 const searchRepositories = async () => {
                     if (!keyword.value.trim()) {
-                        showToast('请输入搜索关键词', 'warning');
+                        showToast(t('common.searchKeywordRequired'), 'warning');
                         return;
                     }
 
@@ -549,7 +588,7 @@ export default {
                         totalCount.value = data.total_count || 0;
                         hasNextPage.value = totalCount.value > pageSize.value * currentPage.value;
                     } catch (error) {
-                        CommonUtils.handleGithubApiError(error, showToast);
+                        handleGithubApiError(error);
                         results.value = [];
                         totalCount.value = 0;
                         hasNextPage.value = false;
@@ -592,7 +631,7 @@ export default {
                         const rawReleases = await CommonUtils.checkJsonResponseStatus(response);
                         releases.value = rawReleases.map(formatRelease);
                     } catch (error) {
-                        CommonUtils.handleGithubApiError(error, showToast);
+                        handleGithubApiError(error);
                         releases.value = [];
                     } finally {
                         loadingReleases.value = false;
@@ -617,7 +656,7 @@ export default {
                             readmeContent.value = await response.text();
                         }
                     } catch (error) {
-                        CommonUtils.handleGithubApiError(error, showToast);
+                        handleGithubApiError(error);
                         readmeContent.value = null;
                     } finally {
                         loadingReadme.value = false;
@@ -642,7 +681,15 @@ export default {
                 // 下载文件
                 const downloadFile = (url) => {
                     window.open(url, '_blank');
-                    showToast('正在下载文件...', 'info');
+                    showToast(t('github.downloadingFile'), 'info');
+                };
+
+                const handleGithubApiError = (error) => {
+                    console.error('GitHub API request failed:', error);
+                    const message = error?.message?.includes('API rate limit exceeded')
+                        ? t('common.error.githubRateLimit')
+                        : t('github.requestFailed', { message: translateErrorMessage(error?.message || t('common.unknown')) });
+                    showToast(message, 'error');
                 };
 
                 return {
@@ -695,6 +742,7 @@ export default {
                     formatTime,
                     formatRelativeTime,
                     formatFileSize,
+                    formatNumber,
                     truncateText,
                     getLanguageColor,
                     renderMarkdown

@@ -62,7 +62,7 @@ function createManifestUrl(options) {
     description: options.description || name,
     lang: options.lang || 'zh-CN',
     start_url: new URL(options.startUrl || window.location.pathname, window.location.origin).toString(),
-    scope: new URL('/', window.location.origin).toString(),
+    scope: new URL(options.scope || '/', window.location.origin).toString(),
     display: 'standalone',
     display_override: ['window-controls-overlay', 'standalone', 'minimal-ui'],
     orientation: 'any',

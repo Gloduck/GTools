@@ -315,6 +315,8 @@ import { enableEditorPwa } from '@/shared/pwa-install.js';
 import { t, currentLocale, translateErrorMessage } from '@/i18n/index.js';
 
 const VDITOR_CDN_BASE = `${import.meta.env.BASE_URL}vendor/vditor/3.11.2`;
+const MD_EDITOR_WEB_PATH = '/mdeditor';
+const MD_EDITOR_PWA_PATH = '/mdeditor/pwa/';
 const MAX_MEMORY_WRITE_BYTES = 50 * 1024 * 1024;
 let vditorLoadPromise;
 
@@ -708,7 +710,7 @@ export default {
             };
 
             const exportConfigUrl = () => {
-                const baseUrl = window.location.origin + window.location.pathname;
+                const baseUrl = new URL(MD_EDITOR_WEB_PATH, window.location.origin).toString();
                 const params = new URLSearchParams();
                 for (let settingHandler of settingHandlers) {
                     const value = settingHandler.getter();
@@ -1217,7 +1219,8 @@ export default {
                     name: pageTitle,
                     shortName: pageTitle,
                     description: pageDescription,
-                    startUrl: `${window.location.pathname}?source=pwa`,
+                    startUrl: MD_EDITOR_PWA_PATH,
+                    scope: MD_EDITOR_PWA_PATH,
                     icon: '/pwa-md-editor-icon.svg',
                     meta: {
                         'theme-color': '#111827',

@@ -64,7 +64,7 @@ export const pageDefinitions = [
   },
   {
     id: 'markdown',
-    paths: ['/mdeditor'],
+    paths: ['/mdeditor', '/mdeditor/pwa/'],
     titleKey: 'pages.markdown.title',
     icon: 'fas fa-pen-nib',
     descKey: 'pages.markdown.description',
@@ -72,7 +72,7 @@ export const pageDefinitions = [
   },
   {
     id: 'code-editor',
-    paths: ['/codeEditor'],
+    paths: ['/codeEditor', '/codeEditor/pwa/'],
     titleKey: 'pages.codeEditor.title',
     icon: 'fas fa-code',
     descKey: 'pages.codeEditor.description',

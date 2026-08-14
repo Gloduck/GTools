@@ -759,6 +759,8 @@ import {
 } from "@/shared/file-system/index.js";
 
 const STORAGE_KEY = "browser-code-editor-settings";
+const CODE_EDITOR_WEB_PATH = "/codeEditor";
+const CODE_EDITOR_PWA_PATH = "/codeEditor/pwa/";
 const AI_SESSION_DATABASE_NAME = "browser-code-editor";
 const AI_SESSION_DATABASE_VERSION = 1;
 const AI_SESSION_STORE_NAME = "aiSessions";
@@ -1289,7 +1291,8 @@ onMounted(async () => {
     name: pageTitle,
     shortName: pageTitle,
     description: pageDescription,
-    startUrl: `${window.location.pathname}?source=pwa`,
+    startUrl: CODE_EDITOR_PWA_PATH,
+    scope: CODE_EDITOR_PWA_PATH,
     icon: "/pwa-code-editor-icon.svg",
     meta: {
       "theme-color": "#0f172a",
@@ -6808,7 +6811,7 @@ function isSshSessionActive(session) {
 }
 
 async function exportSettingsUrl() {
-  const url = new URL(window.location.href);
+  const url = new URL(CODE_EDITOR_WEB_PATH, window.location.origin);
   url.searchParams.delete(SETTINGS_URL_PARAM);
   url.hash = `${SETTINGS_URL_PARAM}=${await encodeSettingsForUrl(settings)}`;
   const value = url.toString();
@@ -7560,9 +7563,10 @@ async function aiToolRunJavaScript({ reason, code, entry_file: entryFile, format
     throwIfAiAborted(signal);
     const proxy = isBackendEnabled();
     const backendBaseUrl = proxy ? getBackendBaseUrl() : "";
-    const requestProxy = new RequestProxy(backendBaseUrl, { baseUrl: window.location.href });
+    const webBaseUrl = new URL(CODE_EDITOR_WEB_PATH, window.location.origin).toString();
+    const requestProxy = new RequestProxy(backendBaseUrl, { baseUrl: webBaseUrl });
     prepareNetwork = new NetworkLimit(requestProxy, {
-      baseUrl: window.location.href,
+      baseUrl: webBaseUrl,
       maxRequestCount: AI_JAVASCRIPT_MAX_PREPARE_REQUEST_COUNT,
       maxResponseBytes: maxReadBytes,
       maxResponseTotalBytes: maxReadBytes,
@@ -7614,7 +7618,7 @@ async function aiToolRunJavaScript({ reason, code, entry_file: entryFile, format
       },
       network: {
         serverUrl: backendBaseUrl,
-        baseUrl: window.location.href,
+        baseUrl: webBaseUrl,
         useTargetOrigin: proxyOptions?.use_target_origin === true,
         useTargetReferer: proxyOptions?.use_target_referer === true,
         limits: {

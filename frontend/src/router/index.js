@@ -11,6 +11,7 @@ const pageComponents = {
   'github': () => import('@/views/GithubView.vue'),
   'image-editor': () => import('@/views/ImageEditorView.vue'),
   'forward': () => import('@/views/ForwardView.vue'),
+  'file-transfer': () => import('@/views/FileTransferView.vue'),
   'clipboard': () => import('@/views/ClipboardView.vue'),
   'markdown': () => import('@/views/MdEditorView.vue'),
   'code-editor': () => import('@/views/CodeEditorView.vue')

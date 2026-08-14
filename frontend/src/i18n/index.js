@@ -9,6 +9,7 @@ import { githubMessages } from './messages/github.js';
 import { torrentMessages } from './messages/torrent.js';
 import { mdEditorMessages } from './messages/md-editor.js';
 import { codeEditorMessages } from './messages/code-editor.js';
+import { fileTransferMessages } from './messages/file-transfer.js';
 
 const DEFAULT_LOCALE = 'zh-CN';
 const STORAGE_KEY = 'gtools-locale';
@@ -56,7 +57,8 @@ const messageModules = [
     githubMessages,
     torrentMessages,
     mdEditorMessages,
-    codeEditorMessages
+    codeEditorMessages,
+    fileTransferMessages
 ];
 
 const messages = Object.fromEntries(SUPPORTED_LOCALES.map((locale) => [

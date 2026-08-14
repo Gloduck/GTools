@@ -1,0 +1,302 @@
+export const fileTransferMessages = {
+    'zh-CN': {
+        pages: {
+            fileTransfer: {
+                title: '点对点文件传输',
+                description: '使用 WebRTC 在浏览器之间直接传输文件'
+            }
+        },
+        fileTransfer: {
+            hero: {
+                eyebrow: 'WEBRTC DATA CHANNEL',
+                title: '让文件直接抵达另一台设备',
+                description: '后端只交换连接信息，文件内容通过加密的点对点通道传输，不经过 GTools 服务器。',
+                direct: '端到端直传',
+                encrypted: 'DTLS 加密',
+                temporary: '临时会话'
+            },
+            setup: {
+                createTitle: '创建传输会话',
+                createDescription: '生成一个 6 位连接码，发送给另一台设备。',
+                joinTitle: '加入已有会话',
+                joinDescription: '输入对方提供的连接码，进入同一个传输会话。',
+                deviceName: '设备名称',
+                deviceNamePlaceholder: '例如：书房电脑',
+                deviceCodeHint: '当前页面设备码：{code}。刷新或重新打开页面时会重新生成。',
+                createAction: '生成连接码',
+                joinAction: '加入会话',
+                codeLabel: '连接码',
+                codePlaceholder: '000 000',
+                codeHint: '连接码由创建方浏览器随机生成，会话结束后立即失效。'
+            },
+            session: {
+                owner: '创建方',
+                member: '加入方',
+                codeLabel: '当前连接码',
+                copied: '连接码已复制',
+                peerLabel: '对端设备',
+                waitingPeer: '等待另一台设备加入',
+                noPeer: '尚未发现对端',
+                closeAction: '结束会话',
+                leaveAction: '离开会话',
+                newAction: '新建会话',
+                deviceCount: '房间内 {current} / {max} 台设备'
+            },
+            devices: {
+                title: '房间设备',
+                description: '选择一台设备作为本次文件传输目标。每台设备之间使用独立的点对点连接。',
+                count: '{current} / {max} 台',
+                selected: '当前目标',
+                empty: '等待其他设备加入',
+                emptyHint: '将上方连接码发送给其他设备，最多可同时加入 {max} 台。',
+                unknown: '未知设备'
+            },
+            connection: {
+                title: '连接状态',
+                signaling: '信令',
+                peer: 'WebRTC',
+                channel: '文件通道',
+                devices: '房间设备',
+                channels: '可用文件通道',
+                idle: '未开始',
+                loadingConfig: '读取配置',
+                creating: '创建会话',
+                joining: '加入会话',
+                reconnecting: '正在恢复连接',
+                waiting: '等待对端',
+                negotiating: '协商连接',
+                connecting: '正在连接',
+                connected: '已连接',
+                disconnected: '连接中断',
+                failed: '连接失败',
+                closed: '已关闭',
+                polling: '轮询中',
+                online: '在线',
+                error: '异常'
+            },
+            files: {
+                title: '发送文件',
+                description: '可一次选择多个文件。对方确认后才会开始传输。',
+                choose: '选择文件',
+                addMore: '继续添加',
+                clear: '清空列表',
+                send: '发送 {count} 个文件',
+                empty: '把要发送的文件加入这里',
+                emptyHint: '文件不会上传到服务器',
+                waitingConnection: '建立文件通道后即可发送',
+                offering: '等待对方确认',
+                sending: '正在发送',
+                finishing: '等待接收确认',
+                receiving: '正在接收',
+                completed: '发送完成',
+                rejected: '对方拒绝了文件',
+                cancelled: '传输已取消',
+                failed: '传输失败',
+                cancel: '取消传输',
+                remove: '移除文件',
+                targetLabel: '发送目标',
+                targetRequired: '请先在房间设备中选择目标设备'
+            },
+            incoming: {
+                title: '收到文件请求',
+                description: '{device} 希望发送 {count} 个文件，共 {size}。',
+                acceptBrowser: '在浏览器中接收',
+                acceptFolder: '保存到文件夹',
+                reject: '拒绝',
+                memoryWarning: '浏览器接收模式会暂存在内存中，整批文件超过 {limit} 时必须直接保存到文件夹。',
+                memoryLimitExceeded: '文件总大小为 {size}，已超过浏览器内存接收上限 {limit}，文件内容尚未开始传输。',
+                memoryTooLarge: '文件过大，无法使用内存接收',
+                largeFileUnavailable: '当前浏览器不支持直接保存到文件夹，无法接收这批大文件。请改用 Chrome、Edge 或让发送方拆分文件。',
+                receiving: '正在接收',
+                completed: '接收完成',
+                rejected: '已拒绝文件请求',
+                savedToFolder: '已保存到所选文件夹'
+            },
+            received: {
+                title: '已接收文件',
+                empty: '接收完成的文件会显示在这里',
+                download: '下载文件',
+                saved: '已写入磁盘'
+            },
+            progress: {
+                sent: '已发送 {current} / {total}',
+                received: '已接收 {current} / {total}',
+                fileCount: '{completed} / {total} 个文件',
+                target: '发送至 {device}'
+            },
+            messages: {
+                configFailed: '无法读取 WebRTC 配置',
+                createFailed: '创建会话失败',
+                joinFailed: '加入会话失败',
+                invalidCode: '请输入 6 位连接码',
+                deviceNameRequired: '请输入设备名称',
+                connectionReady: '点对点文件通道已建立',
+                connectionReadyFor: '已连接到 {device}',
+                connectionFailed: '与 {device} 的连接失败',
+                peerJoined: '{device} 已加入会话',
+                peerLeft: '{device} 已离开会话',
+                sessionClosed: '会话已结束',
+                selectFiles: '请先选择文件',
+                targetRequired: '请先选择接收文件的设备',
+                targetNotReady: '{device} 的文件通道尚未连接',
+                reconnecting: '连接中断，正在自动恢复会话',
+                reconnected: '会话已恢复',
+                sessionUnavailable: '原会话已结束或失效',
+                transferFailed: '文件传输失败：{message}',
+                folderUnavailable: '当前浏览器不支持直接保存到文件夹',
+                folderCancelled: '未选择保存文件夹',
+                networkHint: '仅使用 STUN 时，部分严格 NAT 或防火墙网络可能无法建立连接。'
+            }
+        }
+    },
+    'en-US': {
+        pages: {
+            fileTransfer: {
+                title: 'Peer-to-Peer File Transfer',
+                description: 'Transfer files directly between browsers with WebRTC'
+            }
+        },
+        fileTransfer: {
+            hero: {
+                eyebrow: 'WEBRTC DATA CHANNEL',
+                title: 'Send files straight to another device',
+                description: 'The server only exchanges connection metadata. File contents travel through an encrypted peer-to-peer channel and never pass through GTools.',
+                direct: 'Direct transfer',
+                encrypted: 'DTLS encrypted',
+                temporary: 'Temporary session'
+            },
+            setup: {
+                createTitle: 'Create a transfer session',
+                createDescription: 'Generate a six-digit connection code and share it with the other device.',
+                joinTitle: 'Join an existing session',
+                joinDescription: 'Enter the code from the other device to join the same transfer session.',
+                deviceName: 'Device name',
+                deviceNamePlaceholder: 'For example: Office laptop',
+                deviceCodeHint: 'Device code for this page: {code}. It is regenerated after a refresh or reopening the page.',
+                createAction: 'Generate code',
+                joinAction: 'Join session',
+                codeLabel: 'Connection code',
+                codePlaceholder: '000 000',
+                codeHint: 'The creator generates the code in the browser. It expires when the session ends.'
+            },
+            session: {
+                owner: 'Creator',
+                member: 'Participant',
+                codeLabel: 'Current connection code',
+                copied: 'Connection code copied',
+                peerLabel: 'Peer device',
+                waitingPeer: 'Waiting for another device',
+                noPeer: 'No peer detected yet',
+                closeAction: 'End session',
+                leaveAction: 'Leave session',
+                newAction: 'New session',
+                deviceCount: '{current} / {max} devices in the room'
+            },
+            devices: {
+                title: 'Devices in the room',
+                description: 'Select one device as the target for this transfer. Each device uses its own peer-to-peer connection.',
+                count: '{current} / {max} devices',
+                selected: 'Selected',
+                empty: 'Waiting for other devices',
+                emptyHint: 'Share the connection code above. Up to {max} devices can join the room.',
+                unknown: 'Unknown device'
+            },
+            connection: {
+                title: 'Connection status',
+                signaling: 'Signaling',
+                peer: 'WebRTC',
+                channel: 'File channel',
+                devices: 'Room devices',
+                channels: 'Available file channels',
+                idle: 'Idle',
+                loadingConfig: 'Loading config',
+                creating: 'Creating session',
+                joining: 'Joining session',
+                reconnecting: 'Reconnecting',
+                waiting: 'Waiting for peer',
+                negotiating: 'Negotiating',
+                connecting: 'Connecting',
+                connected: 'Connected',
+                disconnected: 'Disconnected',
+                failed: 'Failed',
+                closed: 'Closed',
+                polling: 'Polling',
+                online: 'Online',
+                error: 'Error'
+            },
+            files: {
+                title: 'Send files',
+                description: 'Select multiple files. Transfer starts only after the peer accepts.',
+                choose: 'Choose files',
+                addMore: 'Add more',
+                clear: 'Clear list',
+                send: 'Send {count} files',
+                empty: 'Add files to send',
+                emptyHint: 'Files are never uploaded to the server',
+                waitingConnection: 'You can send files after the data channel connects',
+                offering: 'Waiting for peer approval',
+                sending: 'Sending',
+                finishing: 'Waiting for receiver confirmation',
+                receiving: 'Receiving',
+                completed: 'Send complete',
+                rejected: 'The peer rejected the files',
+                cancelled: 'Transfer cancelled',
+                failed: 'Transfer failed',
+                cancel: 'Cancel transfer',
+                remove: 'Remove file',
+                targetLabel: 'Send to',
+                targetRequired: 'Select a target device from the room first'
+            },
+            incoming: {
+                title: 'Incoming file request',
+                description: '{device} wants to send {count} files ({size}).',
+                acceptBrowser: 'Receive in browser',
+                acceptFolder: 'Save to folder',
+                reject: 'Reject',
+                memoryWarning: 'Browser mode temporarily stores data in memory. Transfers larger than {limit} must be saved directly to a folder.',
+                memoryLimitExceeded: 'The transfer is {size}, exceeding the {limit} in-memory limit. File data has not started transferring.',
+                memoryTooLarge: 'Too large for in-memory receiving',
+                largeFileUnavailable: 'This browser cannot save directly to a folder, so it cannot receive this large transfer. Use Chrome or Edge, or ask the sender to split the files.',
+                receiving: 'Receiving',
+                completed: 'Receive complete',
+                rejected: 'File request rejected',
+                savedToFolder: 'Saved to the selected folder'
+            },
+            received: {
+                title: 'Received files',
+                empty: 'Completed files will appear here',
+                download: 'Download file',
+                saved: 'Written to disk'
+            },
+            progress: {
+                sent: 'Sent {current} / {total}',
+                received: 'Received {current} / {total}',
+                fileCount: '{completed} / {total} files',
+                target: 'Sending to {device}'
+            },
+            messages: {
+                configFailed: 'Unable to load the WebRTC configuration',
+                createFailed: 'Failed to create the session',
+                joinFailed: 'Failed to join the session',
+                invalidCode: 'Enter a six-digit connection code',
+                deviceNameRequired: 'Enter a device name',
+                connectionReady: 'The peer-to-peer file channel is ready',
+                connectionReadyFor: 'Connected to {device}',
+                connectionFailed: 'Connection to {device} failed',
+                peerJoined: '{device} joined the session',
+                peerLeft: '{device} left the session',
+                sessionClosed: 'The session has ended',
+                selectFiles: 'Select at least one file',
+                targetRequired: 'Select a device to receive the files',
+                targetNotReady: 'The file channel to {device} is not connected yet',
+                reconnecting: 'Connection interrupted. Restoring the session automatically.',
+                reconnected: 'Session restored',
+                sessionUnavailable: 'The previous session has ended or expired',
+                transferFailed: 'File transfer failed: {message}',
+                folderUnavailable: 'This browser cannot save directly to a folder',
+                folderCancelled: 'No destination folder was selected',
+                networkHint: 'With STUN only, strict NAT or firewall networks may be unable to connect.'
+            }
+        }
+    }
+};

@@ -47,6 +47,14 @@ export const pageDefinitions = [
     categoryId: 'utilities'
   },
   {
+    id: 'file-transfer',
+    paths: ['/fileTransfer'],
+    titleKey: 'pages.fileTransfer.title',
+    icon: 'fas fa-paper-plane',
+    descKey: 'pages.fileTransfer.description',
+    categoryId: 'network'
+  },
+  {
     id: 'clipboard',
     paths: ['/clipboard', '/clipboard/:id'],
     titleKey: 'pages.clipboard.title',

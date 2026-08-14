@@ -479,13 +479,7 @@ export default {
                 const formatNumber = (value) => Number(value || 0).toLocaleString(locale());
                 const formatTime = (timeString) => {
                     if (!timeString) return t('common.unknown');
-                    return new Date(timeString).toLocaleString(locale(), {
-                        year: 'numeric',
-                        month: '2-digit',
-                        day: '2-digit',
-                        hour: '2-digit',
-                        minute: '2-digit'
-                    });
+                    return CommonUtils.formatTime(timeString) || t('common.unknown');
                 };
                 const formatRelativeTime = (timeString) => {
                     if (!timeString) return t('common.unknown');
@@ -688,7 +682,7 @@ export default {
                     console.error('GitHub API request failed:', error);
                     const message = error?.message?.includes('API rate limit exceeded')
                         ? t('common.error.githubRateLimit')
-                        : t('github.requestFailed', { message: translateErrorMessage(error?.message || t('common.unknown')) });
+                        : t('github.requestFailed', { message: translateErrorMessage(error || t('common.unknown')) });
                     showToast(message, 'error');
                 };
 

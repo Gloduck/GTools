@@ -32,3 +32,16 @@ test('场景：后端错误枚举均可翻译', async () => {
         }
     }
 });
+
+test('场景：结构化请求错误在展示层翻译', () => {
+    setLocale('zh-CN');
+
+    const codedError = Object.assign(new Error('fallback message'), {code: 'INVALID_PARAMETER'});
+    assert.equal(translateErrorMessage(codedError), i18n.global.t('errors.INVALID_PARAMETER'));
+
+    const httpError = Object.assign(new Error(''), {status: 503});
+    assert.equal(
+        translateErrorMessage(httpError),
+        i18n.global.t('common.error.httpError', {status: 503})
+    );
+});

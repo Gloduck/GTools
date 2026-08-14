@@ -423,13 +423,7 @@ export default {
         setup() {
             const computePath = CommonUtils.computePath;
             const locale = () => currentLocale.value || currentLocale;
-            const formatDateTime = (timestamp) => new Date(timestamp).toLocaleString(locale(), {
-                year: 'numeric',
-                month: '2-digit',
-                day: '2-digit',
-                hour: '2-digit',
-                minute: '2-digit'
-            });
+            const formatDateTime = (timestamp) => CommonUtils.formatTime(timestamp) || t('common.unknown');
             const translatedError = (error) => translateErrorMessage(error?.message || t('common.unknown'));
 
             const isExternalResourceUrl = (url) => {

@@ -155,7 +155,15 @@ const updateActivationUrl = () => {
     activationUrl.value = `${window.location.origin}/api/jrebel/${generateUUID()}`;
 };
 
-const copyToClipboard = (text) => CommonUtils.copyToClipboard(text, showToast);
+const copyToClipboard = async (text) => {
+    try {
+        await CommonUtils.copyToClipboard(text);
+        showToast(t('common.copiedToClipboard'), 'success');
+    } catch (error) {
+        console.error('Copy failed:', error);
+        showToast(t('common.copyFailedManual'), 'error');
+    }
+};
 
 const generateNewUrl = () => {
     updateActivationUrl();

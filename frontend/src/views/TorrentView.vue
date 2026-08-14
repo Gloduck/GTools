@@ -260,13 +260,7 @@ export default {
                 const formatNumber = (value) => Number(value || 0).toLocaleString(locale());
                 const formatTime = (timeString) => {
                     if (!timeString) return t('common.unknown');
-                    return new Date(timeString).toLocaleString(locale(), {
-                        year: 'numeric',
-                        month: '2-digit',
-                        day: '2-digit',
-                        hour: '2-digit',
-                        minute: '2-digit'
-                    });
+                    return CommonUtils.formatTime(timeString) || t('common.unknown');
                 };
                 const copyToClipboard = (text) => {
                     navigator.clipboard.writeText(text)
@@ -278,7 +272,7 @@ export default {
                 };
                 const handleApiError = (error) => {
                     console.error('API request failed:', error);
-                    showToast(translateErrorMessage(error?.message || t('torrent.requestFailed')), 'error');
+                    showToast(translateErrorMessage(error || t('torrent.requestFailed')), 'error');
                 };
 
                 // 排序信息

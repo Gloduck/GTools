@@ -197,7 +197,7 @@ import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { CommonUtils } from '@/shared/common-utils.js';
 import { CommonComponents } from '@/shared/common-components.js';
-import { t, currentLocale, translateErrorMessage } from '@/i18n/index.js';
+import { t, translateErrorMessage } from '@/i18n/index.js';
 
 export default {
     name: 'ClipboardView',
@@ -254,14 +254,7 @@ export default {
                 });
                 const formatTime = (timestamp) => {
                     if (!timestamp) return t('clipboard.neverUpdated');
-                    const locale = currentLocale.value || currentLocale;
-                    return new Intl.DateTimeFormat(locale, {
-                        year: 'numeric',
-                        month: '2-digit',
-                        day: '2-digit',
-                        hour: '2-digit',
-                        minute: '2-digit'
-                    }).format(new Date(timestamp));
+                    return CommonUtils.formatTime(timestamp) || t('clipboard.neverUpdated');
                 };
                 const formattedLastUpdated = computed(() => formatTime(lastUpdatedTimestamp.value));
 
@@ -353,8 +346,9 @@ export default {
                             editorStatus.value = 'fetchFailed';
                         }
                     } catch (error) {
-                        showToast(`${t('common.error.networkError')}: ${error.message}`, 'error');
-                        editorStatusDetail.value = error.message;
+                        const message = translateErrorMessage(error);
+                        showToast(`${t('common.error.networkError')}: ${message}`, 'error');
+                        editorStatusDetail.value = message;
                         editorStatus.value = 'networkError';
                     } finally {
                         isUpdatingFromServer = false;
@@ -397,8 +391,9 @@ export default {
                             return false;
                         }
                     } catch (error) {
-                        showToast(`${t('common.error.networkError')}: ${error.message}`, 'error');
-                        editorStatusDetail.value = error.message;
+                        const message = translateErrorMessage(error);
+                        showToast(`${t('common.error.networkError')}: ${message}`, 'error');
+                        editorStatusDetail.value = message;
                         editorStatus.value = 'networkError';
                         return false;
                     }
@@ -436,8 +431,9 @@ export default {
                             editorStatus.value = 'deleteFailed';
                         }
                     } catch (error) {
-                        showToast(`${t('common.error.networkError')}: ${error.message}`, 'error');
-                        editorStatusDetail.value = error.message;
+                        const message = translateErrorMessage(error);
+                        showToast(`${t('common.error.networkError')}: ${message}`, 'error');
+                        editorStatusDetail.value = message;
                         editorStatus.value = 'networkError';
                     }
                 };

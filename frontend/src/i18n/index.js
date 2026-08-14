@@ -90,11 +90,21 @@ export function setLocale(locale) {
 }
 
 export function translateErrorMessage(message) {
+    const errorCode = String(message?.code || '').trim();
+    if (/^[A-Z][A-Z0-9_]*$/.test(errorCode)) {
+        const key = `errors.${errorCode}`;
+        if (i18n.global.te(key, currentLocale.value)) return t(key);
+    }
+
     const rawMessage = message instanceof Error
         ? message.message
         : (message?.msg || message?.message || message);
     const readableMessage = String(rawMessage || '').trim();
-    if (!readableMessage) return t('common.error.requestFailed');
+    if (!readableMessage) {
+        return message?.status
+            ? t('common.error.httpError', {status: message.status})
+            : t('common.error.requestFailed');
+    }
 
     if (/^[A-Z][A-Z0-9_]*$/.test(readableMessage)) {
         const key = `errors.${readableMessage}`;

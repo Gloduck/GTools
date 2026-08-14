@@ -140,7 +140,7 @@
                             <button v-for="participant in participants" :key="participant.participantId" type="button"
                                     class="min-w-0 rounded-xl border p-5 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60"
                                     :class="selectedTargetId === participant.participantId ? 'border-primary bg-blue-50 ring-2 ring-primary/10' : 'border-gray-200 bg-gray-50 hover:border-primary/40 hover:bg-white'"
-                                    :disabled="outgoingBusy" @click="selectTarget(participant.participantId)">
+                                    @click="selectTarget(participant.participantId)">
                                 <div class="flex items-start justify-between gap-3">
                                     <span class="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-white text-lg text-primary shadow-sm">
                                         <i :class="participantDeviceIcon(participant)"></i>
@@ -176,7 +176,7 @@
                                 </div>
                                 <div class="flex flex-wrap gap-2">
                                     <input ref="fileInput" class="hidden" type="file" multiple @change="handleFileSelection">
-                                    <button type="button" class="inline-flex items-center gap-2 rounded-lg bg-gray-100 px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-200" @click="fileInput?.click()">
+                                    <button type="button" class="inline-flex items-center gap-2 rounded-lg bg-gray-100 px-3 py-2 text-sm font-medium text-gray-700 transition-colors hover:bg-gray-200 disabled:cursor-not-allowed disabled:opacity-50" :disabled="!selectedTarget || outgoingBusy" @click="openFilePicker">
                                         <i class="fas fa-plus"></i>
                                         {{ selectedFiles.length ? t('fileTransfer.files.addMore') : t('fileTransfer.files.choose') }}
                                     </button>
@@ -220,28 +220,28 @@
                                 <span class="mt-2 text-sm text-gray-500">{{ t('fileTransfer.files.emptyHint') }}</span>
                             </div>
 
-                            <div v-if="outgoingTransfer" class="mt-6 rounded-lg border border-blue-100 bg-blue-50 p-4">
+                            <div v-if="selectedOutgoingTransfer" class="mt-4 rounded-lg border border-blue-100 bg-blue-50 p-4">
                                 <div class="flex items-center justify-between gap-3 text-sm">
-                                    <span class="font-semibold text-blue-800">{{ transferStatusText(outgoingTransfer.status) }}</span>
-                                    <span class="font-mono text-blue-700">{{ outgoingPercent }}%</span>
+                                    <span class="font-semibold text-blue-800">{{ transferStatusText(selectedOutgoingTransfer.status) }}</span>
+                                    <span class="font-mono text-blue-700">{{ transferPercent(selectedOutgoingTransfer) }}%</span>
                                 </div>
-                                <p class="mt-2 truncate text-xs text-blue-700">{{ t('fileTransfer.progress.target', { device: outgoingTarget?.displayName || outgoingTransfer.targetName || t('common.unknown') }) }}</p>
+                                <p class="mt-2 truncate text-xs text-blue-700">{{ t('fileTransfer.progress.target', { device: selectedOutgoingTransfer.participantName || t('common.unknown') }) }}</p>
                                 <div class="mt-3 h-2 overflow-hidden rounded-full bg-blue-100">
-                                    <div class="h-full rounded-full bg-primary transition-[width] duration-200" :style="{ width: `${outgoingPercent}%` }"></div>
+                                    <div class="h-full rounded-full bg-primary transition-[width] duration-200" :style="{ width: `${transferPercent(selectedOutgoingTransfer)}%` }"></div>
                                 </div>
                                 <div class="mt-3 flex flex-wrap justify-between gap-2 text-xs text-blue-700">
-                                    <span>{{ t('fileTransfer.progress.sent', { current: formatFileSize(outgoingTransfer.sentBytes), total: formatFileSize(outgoingTransfer.totalBytes) }) }}</span>
-                                    <span>{{ t('fileTransfer.progress.fileCount', { completed: outgoingTransfer.completedFiles, total: outgoingTransfer.files.length }) }}</span>
+                                    <span>{{ t('fileTransfer.progress.sent', { current: formatFileSize(selectedOutgoingTransfer.sentBytes), total: formatFileSize(selectedOutgoingTransfer.totalBytes) }) }}</span>
+                                    <span>{{ t('fileTransfer.progress.fileCount', { completed: selectedOutgoingTransfer.completedFiles, total: selectedOutgoingTransfer.files.length }) }}</span>
                                 </div>
+                                <button v-if="isOutgoingTransferActive(selectedOutgoingTransfer)" type="button" class="mt-3 rounded-lg bg-white px-3 py-2 text-xs font-medium text-blue-700 transition-colors hover:bg-blue-100" @click="cancelOutgoingTransfer(selectedOutgoingTransfer.participantId)">
+                                    {{ t('fileTransfer.files.cancel') }}
+                                </button>
                             </div>
 
                             <div class="mt-6 flex flex-col gap-3 sm:flex-row">
                                 <button type="button" class="inline-flex flex-1 items-center justify-center gap-2 rounded-lg bg-primary px-5 py-3 font-medium text-white transition-colors hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-50" :disabled="!canSendFiles" @click="sendSelectedFiles">
                                     <i class="fas fa-paper-plane"></i>
                                     {{ selectedFiles.length ? t('fileTransfer.files.send', { count: selectedFiles.length }) : t('fileTransfer.files.choose') }}
-                                </button>
-                                <button v-if="outgoingBusy" type="button" class="rounded-lg bg-gray-100 px-5 py-3 font-medium text-gray-700 transition-colors hover:bg-gray-200" @click="cancelOutgoingTransfer">
-                                    {{ t('fileTransfer.files.cancel') }}
                                 </button>
                             </div>
                             <p v-if="selectedTargetChannelStatus !== 'connected'" class="mt-3 text-xs text-amber-700">
@@ -256,33 +256,34 @@
                                     <h3 class="text-xl font-bold text-gray-800">
                                         <i class="fas fa-inbox mr-2 text-primary"></i>{{ t('fileTransfer.received.title') }}
                                     </h3>
-                                    <p v-if="incomingTransfer?.status === 'receiving'" class="mt-2 text-sm font-medium text-green-700">{{ t('fileTransfer.incoming.receiving') }}</p>
+                                    <p v-if="selectedIncomingTransfer?.status === 'receiving'" class="mt-2 text-sm font-medium text-green-700">{{ t('fileTransfer.incoming.receiving') }}</p>
                                 </div>
-                                <span class="shrink-0 rounded-full bg-gray-100 px-3 py-1 text-xs font-medium text-gray-600">{{ receivedFiles.length }}</span>
+                                <span class="shrink-0 rounded-full bg-gray-100 px-3 py-1 text-xs font-medium text-gray-600">{{ selectedReceivedFiles.length }}</span>
                             </div>
 
-                            <div v-if="incomingTransfer?.status === 'receiving'" class="mt-6 rounded-lg border border-green-100 bg-green-50 p-4">
+                            <div v-if="selectedIncomingTransfer" class="mt-4 rounded-lg border border-green-100 bg-green-50 p-4">
                                 <div class="flex items-center justify-between gap-3 text-sm">
-                                    <span class="font-semibold text-green-800">{{ transferStatusText(incomingTransfer.status) }}</span>
-                                    <span class="font-mono text-green-700">{{ incomingPercent }}%</span>
+                                    <span class="font-semibold text-green-800">{{ incomingStatusText(selectedIncomingTransfer.status) }}</span>
+                                    <span class="font-mono text-green-700">{{ transferPercent(selectedIncomingTransfer) }}%</span>
                                 </div>
+                                <p class="mt-2 truncate text-xs text-green-700">{{ t('fileTransfer.progress.source', { device: selectedIncomingTransfer.participantName || t('common.unknown') }) }}</p>
                                 <div class="mt-3 h-2 overflow-hidden rounded-full bg-green-100">
-                                    <div class="h-full rounded-full bg-green-500 transition-[width] duration-200" :style="{ width: `${incomingPercent}%` }"></div>
+                                    <div class="h-full rounded-full bg-green-500 transition-[width] duration-200" :style="{ width: `${transferPercent(selectedIncomingTransfer)}%` }"></div>
                                 </div>
                                 <div class="mt-3 text-xs text-green-700">
-                                    {{ t('fileTransfer.progress.received', { current: formatFileSize(incomingTransfer.receivedBytes), total: formatFileSize(incomingTransfer.totalBytes) }) }}
+                                    {{ t('fileTransfer.progress.received', { current: formatFileSize(selectedIncomingTransfer.receivedBytes), total: formatFileSize(selectedIncomingTransfer.totalBytes) }) }}
                                 </div>
                             </div>
 
-                            <div v-if="receivedFiles.length" class="mt-6 space-y-3">
-                                <div v-for="file in receivedFiles" :key="file.id" class="min-w-0 rounded-lg border border-gray-200 bg-gray-50 p-4">
+                            <div v-if="selectedReceivedFiles.length" class="mt-6 space-y-3">
+                                <div v-for="file in selectedReceivedFiles" :key="file.id" class="min-w-0 rounded-lg border border-gray-200 bg-gray-50 p-4">
                                     <div class="flex min-w-0 items-center gap-3">
                                         <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-green-100 text-green-600">
                                             <i class="fas fa-file-circle-check"></i>
                                         </div>
                                         <div class="min-w-0 flex-1">
                                             <div class="truncate font-medium text-gray-800">{{ file.name }}</div>
-                                            <div class="mt-1 text-xs text-gray-500">{{ formatFileSize(file.size) }} · {{ file.sourceName }}</div>
+                                            <div class="mt-1 text-xs text-gray-500">{{ formatFileSize(file.size) }}</div>
                                         </div>
                                     </div>
                                     <span class="mt-3 inline-flex items-center gap-2 text-sm font-medium text-green-700">
@@ -317,7 +318,7 @@
                 </div>
 
                 <div class="max-h-64 space-y-2 overflow-y-auto pr-1">
-                    <div v-for="file in incomingTransfer?.files || []" :key="file.id" class="flex min-w-0 items-center justify-between gap-4 rounded-lg border border-gray-200 bg-white px-4 py-3">
+                    <div v-for="file in incomingOffer?.files || []" :key="file.id" class="flex min-w-0 items-center justify-between gap-4 rounded-lg border border-gray-200 bg-white px-4 py-3">
                         <span class="min-w-0 truncate text-sm font-medium text-gray-800">{{ file.name }}</span>
                         <span class="shrink-0 text-xs text-gray-500">{{ formatFileSize(file.size) }}</span>
                     </div>
@@ -328,16 +329,16 @@
                 </p>
 
                 <div class="grid gap-3 sm:grid-cols-2">
-                    <button type="button" class="inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-4 py-3 font-medium text-white transition-colors hover:bg-secondary" @click="acceptIncomingInBrowser">
+                    <button type="button" class="inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-4 py-3 font-medium text-white transition-colors hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-50" :disabled="incomingActionBusy" @click="acceptIncomingInBrowser">
                         <i class="fas fa-download"></i>
                         {{ t('fileTransfer.incoming.acceptBrowser') }}
                     </button>
-                    <button type="button" class="inline-flex items-center justify-center gap-2 rounded-lg bg-green-600 px-4 py-3 font-medium text-white transition-colors hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50" :disabled="!supportsDirectoryPicker" @click="acceptIncomingToFolder">
+                    <button type="button" class="inline-flex items-center justify-center gap-2 rounded-lg bg-green-600 px-4 py-3 font-medium text-white transition-colors hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50" :disabled="!supportsDirectoryPicker || incomingActionBusy" @click="acceptIncomingToFolder">
                         <i class="fas fa-folder-open"></i>
                         {{ t('fileTransfer.incoming.acceptFolder') }}
                     </button>
                 </div>
-                <button type="button" class="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 font-medium text-red-600 transition-colors hover:bg-red-100" @click="rejectIncomingTransfer">
+                <button type="button" class="inline-flex w-full items-center justify-center gap-2 rounded-lg border border-red-200 bg-red-50 px-4 py-3 font-medium text-red-600 transition-colors hover:bg-red-100 disabled:cursor-not-allowed disabled:opacity-50" :disabled="incomingActionBusy" @click="rejectIncomingTransfer">
                     <i class="fas fa-xmark"></i>
                     {{ t('fileTransfer.incoming.reject') }}
                 </button>
@@ -367,7 +368,6 @@ const CommonModal = CommonComponents.Modal;
 const {t} = useI18n();
 const BROWSER_DEFAULT_MAX_PARTICIPANTS = 10;
 const DEVICE_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-const ACTIVE_TRANSFER_STATUSES = new Set(['offering', 'sending', 'finishing', 'receiving']);
 const RECOVERABLE_PARTICIPANT_CODES = new Set([
     'WEBRTC_PARTICIPANT_TOKEN_INVALID',
     'WEBRTC_PARTICIPANT_NOT_IN_SESSION'
@@ -391,13 +391,11 @@ const joinCode = ref('');
 const isOwner = ref(false);
 const participants = shallowRef([]);
 const selectedTargetId = ref('');
-const outgoingTargetId = ref('');
+const incomingOfferParticipantId = ref('');
+const incomingActionBusy = ref(false);
 const deviceIdentityCode = createDeviceIdentityCode();
 const deviceName = ref(readDeviceName(deviceIdentityCode));
 const signalingStatus = ref('loadingConfig');
-const selectedFiles = shallowRef([]);
-const outgoingTransfer = shallowRef(null);
-const incomingTransfer = shallowRef(null);
 const receivedFiles = shallowRef([]);
 
 let signalingClient = null;
@@ -407,6 +405,7 @@ let recoveryPromise = null;
 let recoveryScheduled = false;
 let recoveryTimer = null;
 let pageLeaveNotified = false;
+let fileSelectionTargetId = '';
 
 const heroBadges = computed(() => [
     {icon: 'fas fa-route', label: t('fileTransfer.hero.direct')},
@@ -416,7 +415,6 @@ const heroBadges = computed(() => [
 const formattedJoinCode = computed(() => formatConnectionCode(joinCode.value));
 const formattedSessionCode = computed(() => formatConnectionCode(sessionCode.value));
 const supportsDirectoryPicker = computed(() => Boolean(window.isSecureContext && window.showDirectoryPicker));
-const outgoingBusy = computed(() => ['offering', 'sending', 'finishing'].includes(outgoingTransfer.value?.status));
 const configuredMaxParticipants = computed(() => minimumPositiveLimit(
     config.value?.maxParticipants,
     BROWSER_DEFAULT_MAX_PARTICIPANTS
@@ -428,17 +426,30 @@ const roomMaxParticipants = computed(() => minimumPositiveLimit(
 const roomDeviceCount = computed(() => sessionActive.value ? participants.value.length + 1 : 0);
 const connectedParticipantCount = computed(() => participants.value.filter((participant) => participantChannelStatus(participant.participantId) === 'connected').length);
 const selectedTarget = computed(() => participants.value.find((participant) => participant.participantId === selectedTargetId.value) || null);
-const outgoingTarget = computed(() => participants.value.find((participant) => participant.participantId === outgoingTargetId.value) || null);
-const selectedTargetChannelStatus = computed(() => selectedTarget.value ? participantChannelStatus(selectedTarget.value.participantId) : 'idle');
+const selectedFiles = computed(() => getPeerSelectedFiles(selectedTargetId.value));
+const selectedOutgoingTransfer = computed(() => getPeerTransfer(selectedTargetId.value, 'outgoingTransfer'));
+const selectedIncomingTransfer = computed(() => {
+    const transfer = getPeerTransfer(selectedTargetId.value, 'incomingTransfer');
+    return transfer && ['offering', 'receiving'].includes(transfer.status) ? transfer : null;
+});
+const selectedReceivedFiles = computed(() => getPeerReceivedFiles(selectedTargetId.value));
+const outgoingBusy = computed(() => isOutgoingTransferActive(selectedOutgoingTransfer.value));
+const selectedTargetChannelStatus = computed(() => {
+    const participantId = selectedTargetId.value;
+    if (!participants.value.some((participant) => participant.participantId === participantId)) return 'idle';
+    return peerContexts.get(participantId)?.channelStatus || 'connecting';
+});
 const canSendFiles = computed(() => selectedFiles.value.length > 0 && selectedTargetChannelStatus.value === 'connected' && !outgoingBusy.value);
-const outgoingPercent = computed(() => progressPercent(outgoingTransfer.value?.sentBytes, outgoingTransfer.value?.totalBytes));
-const incomingPercent = computed(() => progressPercent(incomingTransfer.value?.receivedBytes, incomingTransfer.value?.totalBytes));
-const incomingOfferVisible = computed(() => incomingTransfer.value?.status === 'offering');
-const incomingParticipant = computed(() => participants.value.find((participant) => participant.participantId === incomingTransfer.value?.sourceParticipantId) || null);
+const incomingOffer = computed(() => {
+    const participantId = findIncomingOfferParticipantId(incomingOfferParticipantId.value);
+    return participantId ? peerContexts.get(participantId)?.incomingTransfer || null : null;
+});
+const incomingOfferContext = computed(() => incomingOffer.value ? peerContexts.get(incomingOffer.value.sourceParticipantId) || null : null);
+const incomingOfferVisible = computed(() => Boolean(incomingOffer.value));
 const incomingOfferDescription = computed(() => t('fileTransfer.incoming.description', {
-    device: incomingParticipant.value?.displayName || t('common.unknown'),
-    count: incomingTransfer.value?.files?.length || 0,
-    size: formatFileSize(incomingTransfer.value?.totalBytes || 0)
+    device: incomingOffer.value?.sourceName || t('common.unknown'),
+    count: incomingOffer.value?.files?.length || 0,
+    size: formatFileSize(incomingOffer.value?.totalBytes || 0)
 }));
 const statusCards = computed(() => [
     statusCard('fileTransfer.connection.signaling', signalingStatus.value, 'fas fa-tower-broadcast'),
@@ -681,10 +692,8 @@ async function activateSession(response, code, owner, credentials) {
     signalingStatus.value = 'polling';
     participants.value = [];
     selectedTargetId.value = '';
-    outgoingTargetId.value = '';
-    selectedFiles.value = [];
-    outgoingTransfer.value = null;
-    incomingTransfer.value = null;
+    incomingOfferParticipantId.value = '';
+    incomingActionBusy.value = false;
     const participantSync = syncParticipants(response.participants || []);
     signalingClient.start();
     await participantSync;
@@ -761,7 +770,10 @@ function createPeerContext(participant) {
         peerStatus: 'connecting',
         channelStatus: 'connecting',
         peerConnection: null,
-        fileTransfer: null
+        fileTransfer: null,
+        selectedFiles: [],
+        outgoingTransfer: null,
+        incomingTransfer: null
     };
 
     context.fileTransfer = new WebRtcFileTransfer({
@@ -770,7 +782,9 @@ function createPeerContext(participant) {
         onOutgoingState: (transfer) => updateOutgoingTransfer(context, transfer),
         onSendProgress: (transfer) => updateOutgoingTransfer(context, transfer),
         onReceiveProgress: (transfer) => updateIncomingTransfer(context, transfer),
-        onFileReceived: (file) => addReceivedFile(file, context.participant),
+        onFileReceived: (file) => {
+            if (isCurrentPeerContext(context)) addReceivedFile(file, context.participant);
+        },
         onError: (error) => {
             if (isCurrentPeerContext(context)) {
                 showError(t('fileTransfer.messages.transferFailed', {message: error?.message || t('common.unknown')}));
@@ -837,13 +851,10 @@ function removePeerContext(participantId) {
         peerContexts.delete(participantId);
     }
     participants.value = participants.value.filter((participant) => participant.participantId !== participantId);
-    if (incomingTransfer.value?.sourceParticipantId === participantId) incomingTransfer.value = null;
-    if (outgoingTargetId.value === participantId && outgoingBusy.value) {
-        outgoingTransfer.value = outgoingTransfer.value ? {...outgoingTransfer.value, status: 'cancelled'} : null;
-    }
-    if (outgoingTargetId.value === participantId) outgoingTargetId.value = '';
+    if (incomingOfferParticipantId.value === participantId) incomingOfferParticipantId.value = '';
     if (selectedTargetId.value === participantId) selectedTargetId.value = '';
     ensureSelectedTarget();
+    selectNextIncomingOffer();
 }
 
 function closePeerContexts() {
@@ -855,36 +866,34 @@ function closePeerContexts() {
 }
 
 function handleIncomingOffer(context, transfer) {
-    const current = incomingTransfer.value;
-    if (current && ACTIVE_TRANSFER_STATUSES.has(current.status)
-            && current.sourceParticipantId !== context.participant.participantId) {
-        context.fileTransfer.rejectIncoming('RECEIVER_BUSY');
-        return;
-    }
     updateIncomingTransfer(context, transfer);
 }
 
 function updateIncomingTransfer(context, transfer) {
     if (!isCurrentPeerContext(context)) return;
-    const current = incomingTransfer.value;
-    if (current && ACTIVE_TRANSFER_STATUSES.has(current.status)
-            && current.sourceParticipantId !== context.participant.participantId) return;
-    incomingTransfer.value = {
+    context.incomingTransfer = {
         ...transfer,
         sourceParticipantId: context.participant.participantId,
         sourceName: context.participant.displayName
     };
+    if (transfer.status === 'offering' && !incomingOfferParticipantId.value) {
+        incomingOfferParticipantId.value = context.participant.participantId;
+    } else if (incomingOfferParticipantId.value === context.participant.participantId && transfer.status !== 'offering') {
+        incomingOfferParticipantId.value = '';
+        selectNextIncomingOffer();
+    }
+    refreshParticipants();
 }
 
 function updateOutgoingTransfer(context, transfer) {
     if (!isCurrentPeerContext(context)) return;
-    outgoingTargetId.value = context.participant.participantId;
-    outgoingTransfer.value = {
+    context.outgoingTransfer = {
         ...transfer,
         targetParticipantId: context.participant.participantId,
         targetName: context.participant.displayName
     };
-    if (transfer.status === 'completed') selectedFiles.value = [];
+    if (transfer.status === 'completed') context.selectedFiles = [];
+    refreshParticipants();
 }
 
 function isCurrentPeerContext(context) {
@@ -902,8 +911,12 @@ function ensureSelectedTarget() {
 }
 
 function selectTarget(participantId) {
-    if (outgoingBusy.value || !peerContexts.has(participantId)) return;
+    if (!peerContexts.has(participantId)) return;
     selectedTargetId.value = participantId;
+}
+
+function selectNextIncomingOffer() {
+    incomingOfferParticipantId.value = findIncomingOfferParticipantId(incomingOfferParticipantId.value);
 }
 
 function participantChannelStatus(participantId) {
@@ -972,31 +985,57 @@ function teardownLocalSession({clearReceived = false} = {}) {
     joinCode.value = '';
     participants.value = [];
     selectedTargetId.value = '';
-    outgoingTargetId.value = '';
+    incomingOfferParticipantId.value = '';
+    incomingActionBusy.value = false;
     signalingStatus.value = config.value ? 'idle' : 'error';
-    selectedFiles.value = [];
-    outgoingTransfer.value = null;
-    incomingTransfer.value = null;
+    fileSelectionTargetId = '';
     pageLeaveNotified = false;
     if (clearReceived) clearReceivedFiles();
 }
 
+function openFilePicker() {
+    if (!selectedTarget.value) {
+        showToast(t('fileTransfer.files.targetRequired'), 'warning');
+        return;
+    }
+    if (outgoingBusy.value) return;
+    fileSelectionTargetId = selectedTarget.value.participantId;
+    fileInput.value?.click();
+}
+
 function handleFileSelection(event) {
     const files = Array.from(event.target.files || []);
-    const existing = new Set(selectedFiles.value.map((file) => fileKey(file)));
-    selectedFiles.value = [
-        ...selectedFiles.value,
+    const context = peerContexts.get(fileSelectionTargetId);
+    fileSelectionTargetId = '';
+    if (!context) {
+        event.target.value = '';
+        return;
+    }
+    if (isOutgoingTransferActive(context.outgoingTransfer)) {
+        event.target.value = '';
+        return;
+    }
+    const existing = new Set(context.selectedFiles.map((file) => fileKey(file)));
+    context.selectedFiles = [
+        ...context.selectedFiles,
         ...files.filter((file) => !existing.has(fileKey(file)))
     ];
+    refreshParticipants();
     event.target.value = '';
 }
 
 function removeSelectedFile(index) {
-    selectedFiles.value = selectedFiles.value.filter((_, fileIndex) => fileIndex !== index);
+    const context = peerContexts.get(selectedTargetId.value);
+    if (!context) return;
+    context.selectedFiles = context.selectedFiles.filter((_, fileIndex) => fileIndex !== index);
+    refreshParticipants();
 }
 
 function clearSelectedFiles() {
-    selectedFiles.value = [];
+    const context = peerContexts.get(selectedTargetId.value);
+    if (!context) return;
+    context.selectedFiles = [];
+    refreshParticipants();
 }
 
 function sendSelectedFiles() {
@@ -1014,25 +1053,28 @@ function sendSelectedFiles() {
         return;
     }
     try {
-        outgoingTargetId.value = context.participant.participantId;
-        context.fileTransfer.offerFiles(selectedFiles.value);
+        context.fileTransfer.offerFiles(context.selectedFiles);
     } catch (error) {
         showError(t('fileTransfer.messages.transferFailed', {message: error?.message || t('common.unknown')}));
     }
 }
 
-function cancelOutgoingTransfer() {
-    peerContexts.get(outgoingTargetId.value)?.fileTransfer.cancelOutgoing();
+function cancelOutgoingTransfer(participantId) {
+    peerContexts.get(participantId)?.fileTransfer.cancelOutgoing();
 }
 
 function rejectIncomingTransfer() {
-    peerContexts.get(incomingTransfer.value?.sourceParticipantId)?.fileTransfer.rejectIncoming();
+    if (incomingActionBusy.value) return;
+    incomingOfferContext.value?.fileTransfer.rejectIncoming();
 }
 
 async function acceptIncomingInBrowser() {
-    const transfer = incomingTransfer.value;
-    const context = peerContexts.get(transfer?.sourceParticipantId);
+    if (incomingActionBusy.value) return;
+    const transfer = incomingOffer.value;
+    const context = incomingOfferContext.value;
     if (!transfer || !context) return;
+    incomingActionBusy.value = true;
+    const transferId = transfer.transferId;
     const targets = [];
     try {
         const createTarget = (file) => prepareDownload({
@@ -1046,29 +1088,49 @@ async function acceptIncomingInBrowser() {
             const oversized = transfer.files.find((file) => file.size > DEFAULT_MAX_BLOB_DOWNLOAD_BYTES);
             if (oversized) throw createBlobSizeLimitError(oversized.size);
         }
-        await context.fileTransfer.acceptIncoming({targets, createTarget});
+        if (!isCurrentIncomingOffer(context, transferId)) {
+            await Promise.allSettled(targets.map((target) => target.abort(new Error('INCOMING_OFFER_CHANGED'))));
+            return;
+        }
+        await context.fileTransfer.acceptIncoming({targets, createTarget, expectedTransferId: transferId});
     } catch (error) {
         await Promise.allSettled(targets.filter((target) => !target.done).map((target) => target.abort(error)));
         if (error?.name === 'AbortError') return;
         showError(t('fileTransfer.messages.transferFailed', {message: error?.message || t('common.unknown')}));
+    } finally {
+        incomingActionBusy.value = false;
     }
 }
 
 async function acceptIncomingToFolder() {
+    if (incomingActionBusy.value) return;
     if (!supportsDirectoryPicker.value) {
         showToast(t('fileTransfer.messages.folderUnavailable'), 'warning');
         return;
     }
+    const context = incomingOfferContext.value;
+    if (!context) return;
+    const transferId = incomingOffer.value?.transferId;
+    incomingActionBusy.value = true;
     try {
         const directoryHandle = await window.showDirectoryPicker({mode: 'readwrite'});
-        await peerContexts.get(incomingTransfer.value?.sourceParticipantId)?.fileTransfer.acceptIncoming({directoryHandle});
+        if (!isCurrentIncomingOffer(context, transferId)) return;
+        await context.fileTransfer.acceptIncoming({directoryHandle, expectedTransferId: transferId});
     } catch (error) {
         if (error?.name === 'AbortError') {
             showToast(t('fileTransfer.messages.folderCancelled'), 'info');
             return;
         }
         showError(t('fileTransfer.messages.transferFailed', {message: error?.message || t('common.unknown')}));
+    } finally {
+        incomingActionBusy.value = false;
     }
+}
+
+function isCurrentIncomingOffer(context, transferId) {
+    return isCurrentPeerContext(context)
+        && context.incomingTransfer?.transferId === transferId
+        && context.incomingTransfer.status === 'offering';
 }
 
 function addReceivedFile(file, participant) {
@@ -1188,6 +1250,14 @@ function transferStatusText(status) {
     return ['offering', 'sending', 'finishing', 'completed', 'rejected', 'cancelled', 'failed', 'receiving'].includes(status)
         ? t(key)
         : t('common.unknown');
+}
+
+function incomingStatusText(status) {
+    return status === 'offering' ? t('fileTransfer.incoming.awaitingDecision') : transferStatusText(status);
+}
+
+function transferPercent(transfer) {
+    return progressPercent(transfer?.sentBytes ?? transfer?.receivedBytes, transfer?.totalBytes);
 }
 
 function progressPercent(current = 0, total = 0) {

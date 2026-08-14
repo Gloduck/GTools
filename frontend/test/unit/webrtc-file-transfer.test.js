@@ -99,6 +99,71 @@ test('场景：发送 transfer.accept 失败时接收状态保持为 offering', 
     assert.equal(target.aborted, true);
 });
 
+test('场景：选择目录期间请求被取消时拒绝旧请求并清理已创建文件', async () => {
+    const control = createChannelPair();
+    const data = createChannelPair();
+    const offerReady = deferred();
+    const createStarted = deferred();
+    const allowCreate = deferred();
+    const removed = [];
+    const directoryHandle = {
+        async getFileHandle(name, options = {}) {
+            if (!options.create) throw new DOMException('Not found', 'NotFoundError');
+            createStarted.resolve();
+            await allowCreate.promise;
+            return {name};
+        },
+        async removeEntry(name) {
+            removed.push(name);
+        },
+    };
+
+    const receiver = new WebRtcFileTransfer({onIncomingOffer: offerReady.resolve});
+    const sender = new WebRtcFileTransfer();
+    receiver.attach({controlChannel: control.right, dataChannel: data.right});
+    sender.attach({controlChannel: control.left, dataChannel: data.left});
+    sender.offerFiles([new File(['content'], 'stale.txt')]);
+    const offer = await withTimeout(offerReady.promise);
+
+    const accepting = receiver.acceptIncoming({directoryHandle, expectedTransferId: offer.transferId});
+    await withTimeout(createStarted.promise);
+    await receiver.cancelIncoming();
+    allowCreate.resolve();
+
+    await assert.rejects(accepting, /INCOMING_OFFER_CHANGED/);
+    assert.deepEqual(removed, ['stale.txt']);
+});
+
+test('场景：接收 writer 清理期间保持忙碌并在清理后释放', async () => {
+    const control = createChannelPair();
+    const data = createChannelPair();
+    const offerReady = deferred();
+    const abortStarted = deferred();
+    const allowAbort = deferred();
+    const target = createTarget();
+    target.abort = async (error) => {
+        target.aborted = true;
+        abortStarted.resolve();
+        await allowAbort.promise;
+        target.rejectCompleted(error);
+    };
+
+    const receiver = new WebRtcFileTransfer({onIncomingOffer: offerReady.resolve});
+    const sender = new WebRtcFileTransfer();
+    receiver.attach({controlChannel: control.right, dataChannel: data.right});
+    sender.attach({controlChannel: control.left, dataChannel: data.left});
+    sender.offerFiles([new File(['content'], 'cancel.txt')]);
+    await withTimeout(offerReady.promise);
+    await receiver.acceptIncoming({targets: [target], createTarget: async () => target});
+
+    const cancelling = receiver.cancelIncoming();
+    await withTimeout(abortStarted.promise);
+    assert.equal(receiver.hasActiveIncoming, true);
+    allowAbort.resolve();
+    await cancelling;
+    assert.equal(receiver.hasActiveIncoming, false);
+});
+
 function createTarget({writes = [], writeError = null} = {}) {
     let resolveCompleted;
     let rejectCompleted;
@@ -110,6 +175,7 @@ function createTarget({writes = [], writeError = null} = {}) {
     return {
         method: 'test-stream',
         completed,
+        rejectCompleted,
         closed: false,
         aborted: false,
         async write(chunk) {
@@ -167,4 +233,14 @@ function withTimeout(promise, timeoutMs = 2000) {
         promise,
         new Promise((_, reject) => setTimeout(() => reject(new Error('Timed out waiting for transfer')), timeoutMs)),
     ]);
+}
+
+function deferred() {
+    let resolve;
+    let reject;
+    const promise = new Promise((resolvePromise, rejectPromise) => {
+        resolve = resolvePromise;
+        reject = rejectPromise;
+    });
+    return {promise, resolve, reject};
 }

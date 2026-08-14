@@ -153,9 +153,10 @@ export class WebRtcFileTransfer {
         return transferId;
     }
 
-    async acceptIncoming({directoryHandle = null, targets = null, createTarget = null} = {}) {
+    async acceptIncoming({directoryHandle = null, targets = null, createTarget = null, expectedTransferId = null} = {}) {
         const incoming = this.#incoming;
         if (!incoming || incoming.status !== 'offering') throw new Error('NO_INCOMING_TRANSFER');
+        if (expectedTransferId && incoming.transferId !== expectedTransferId) throw new Error('INCOMING_OFFER_CHANGED');
 
         let directoryTargets = null;
         try {
@@ -173,18 +174,24 @@ export class WebRtcFileTransfer {
                 incoming.files.forEach((file, index) => this.#assignIncomingTarget(file, targets?.[index] || null));
             }
 
+            if (this.#incoming !== incoming || incoming.status !== 'offering'
+                    || (expectedTransferId && incoming.transferId !== expectedTransferId)) {
+                throw new Error('INCOMING_OFFER_CHANGED');
+            }
             this.#sendControl('transfer.accept', {transferId: incoming.transferId});
         } catch (error) {
-            await abortIncomingWriters(incoming);
             if (directoryHandle && directoryTargets) await removeDirectoryTargets(directoryHandle, directoryTargets);
-            incoming.mode = null;
-            incoming.createTarget = null;
-            incoming.files.forEach((file) => {
-                file.handle = null;
-                file.resolvedName = file.metadata.name;
-                file.writable = null;
-                file.target = null;
-            });
+            if (this.#incoming === incoming && incoming.status === 'offering') {
+                await abortIncomingWriters(incoming);
+                incoming.mode = null;
+                incoming.createTarget = null;
+                incoming.files.forEach((file) => {
+                    file.handle = null;
+                    file.resolvedName = file.metadata.name;
+                    file.writable = null;
+                    file.target = null;
+                });
+            }
             throw error;
         }
 
@@ -516,8 +523,8 @@ export class WebRtcFileTransfer {
 
     async #cancelIncoming(reason, notifyPeer) {
         const incoming = this.#incoming;
-        if (!incoming || isTerminal(incoming.status)) return;
-        incoming.status = 'cancelled';
+        if (!incoming || isTerminal(incoming.status) || ['cancelling', 'failing'].includes(incoming.status)) return;
+        incoming.status = 'cancelling';
         incoming.reason = reason;
         if (notifyPeer && this.ready) {
             try {
@@ -526,6 +533,8 @@ export class WebRtcFileTransfer {
             }
         }
         await abortIncomingWriters(incoming);
+        if (this.#incoming !== incoming) return;
+        incoming.status = 'cancelled';
         this.#notifyIncoming();
         this.#incoming = null;
     }
@@ -550,11 +559,11 @@ export class WebRtcFileTransfer {
 
     async #failIncoming(error, notifyPeer = true) {
         const incoming = this.#incoming;
-        if (!incoming || isTerminal(incoming.status)) {
+        if (!incoming || isTerminal(incoming.status) || ['cancelling', 'failing'].includes(incoming.status)) {
             this.#reportError(error);
             return;
         }
-        incoming.status = 'failed';
+        incoming.status = 'failing';
         incoming.reason = error?.message || 'TRANSFER_FAILED';
         if (notifyPeer && this.ready) {
             try {
@@ -566,6 +575,8 @@ export class WebRtcFileTransfer {
             }
         }
         await abortIncomingWriters(incoming);
+        if (this.#incoming !== incoming) return;
+        incoming.status = 'failed';
         this.#notifyIncoming();
         this.#incoming = null;
         this.#reportError(error);

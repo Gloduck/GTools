@@ -104,6 +104,7 @@ export const fileTransferMessages = {
                 acceptFolder: '保存到文件夹',
                 reject: '拒绝',
                 memoryWarning: '优先使用文件选择器或流式下载；仅在两者不可用时使用 Blob，Blob 回退上限为 {limit}。',
+                awaitingDecision: '等待本机确认',
                 receiving: '正在接收',
                 completed: '接收完成',
                 rejected: '已拒绝文件请求',
@@ -119,7 +120,8 @@ export const fileTransferMessages = {
                 sent: '已发送 {current} / {total}',
                 received: '已接收 {current} / {total}',
                 fileCount: '{completed} / {total} 个文件',
-                target: '发送至 {device}'
+                target: '发送至 {device}',
+                source: '来自 {device}'
             },
             messages: {
                 configFailed: '无法读取 WebRTC 配置',
@@ -251,6 +253,7 @@ export const fileTransferMessages = {
                 acceptFolder: 'Save to folder',
                 reject: 'Reject',
                 memoryWarning: 'The file picker or streaming download is preferred. Blob is used only as a fallback and is limited to {limit}.',
+                awaitingDecision: 'Waiting for local approval',
                 receiving: 'Receiving',
                 completed: 'Receive complete',
                 rejected: 'File request rejected',
@@ -266,7 +269,8 @@ export const fileTransferMessages = {
                 sent: 'Sent {current} / {total}',
                 received: 'Received {current} / {total}',
                 fileCount: '{completed} / {total} files',
-                target: 'Sending to {device}'
+                target: 'Sending to {device}',
+                source: 'From {device}'
             },
             messages: {
                 configFailed: 'Unable to load the WebRTC configuration',

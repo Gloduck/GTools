@@ -201,14 +201,21 @@ test('场景：Service Worker 下载在 started 后流式写入', async () => {
     const worker = new MockDownloadWorker();
     const events = [];
     worker.events = events;
+    const serviceWorker = new EventTarget();
+    const registration = {active: worker};
+    serviceWorker.controller = null;
+    serviceWorker.ready = Promise.resolve(registration);
+    serviceWorker.register = async () => {
+        setTimeout(() => {
+            events.push('controlled');
+            serviceWorker.controller = worker;
+            serviceWorker.dispatchEvent(new Event('controllerchange'));
+        }, 0);
+        return registration;
+    };
     await withGlobals({
         isSecureContext: true,
-        navigator: {
-            serviceWorker: {
-                register: async () => ({active: worker}),
-                ready: Promise.resolve({active: worker}),
-            },
-        },
+        navigator: {serviceWorker},
         location: {origin: 'https://example.test'},
     }, async () => {
         await withDocument((link) => worker.start(link), async () => {
@@ -223,7 +230,7 @@ test('场景：Service Worker 下载在 started 后流式写入', async () => {
             assert.deepEqual([...await worker.bytes], [1, 2, 3]);
         });
     });
-    assert.deepEqual(events, ['started', 'source']);
+    assert.deepEqual(events, ['controlled', 'started', 'source']);
 });
 
 async function withBrowserDownloadGlobals(run) {
@@ -248,13 +255,17 @@ async function withBrowserDownloadGlobals(run) {
 async function withDocument(click, run) {
     const document = {
         body: {
-            appendChild() {
+            appendChild(element) {
+                if (element.tagName === 'IFRAME') click(element);
             },
         },
-        createElement() {
+        createElement(tagName) {
             return {
+                tagName: String(tagName).toUpperCase(),
                 href: '',
+                src: '',
                 download: '',
+                hidden: false,
                 style: {},
                 click() {
                     click(this);

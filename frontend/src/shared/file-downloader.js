@@ -3,7 +3,8 @@ import {createZipStream} from './zip-stream.js';
 const STREAM_DOWNLOAD_PREFIX = '/__stream_download__/';
 const STREAM_DOWNLOAD_CREATE = 'stream-download:create';
 const STREAM_DOWNLOAD_DISPOSE = 'stream-download:dispose';
-const STREAM_DOWNLOAD_TIMEOUT_MS = 60_000;
+const STREAM_DOWNLOAD_TIMEOUT_MS = 10_000;
+const STREAM_DOWNLOAD_CONTROL_TIMEOUT_MS = 5_000;
 const DEFAULT_MAX_BLOB_DOWNLOAD_BYTES = 256 * 1024 * 1024;
 let serviceWorkerRegistrationPromise = null;
 let fallbackDownloadId = 0;
@@ -223,7 +224,7 @@ async function prepareServiceWorkerTarget(worker, {fileName, size, mimeType, sig
         registered = true;
 
         pendingMessage = waitFor('started');
-        triggerDownloadUrl(`${location.origin}${STREAM_DOWNLOAD_PREFIX}${encodeURIComponent(id)}`, fileName);
+        triggerStreamDownloadUrl(`${location.origin}${STREAM_DOWNLOAD_PREFIX}${encodeURIComponent(id)}`);
         await pendingMessage.promise;
         pendingMessage = null;
         started = true;
@@ -441,7 +442,30 @@ async function getDownloadServiceWorker() {
             .catch(() => null);
     }
     const registration = await serviceWorkerRegistrationPromise;
-    return registration?.active || null;
+    if (!registration?.active) return null;
+    if (navigator.serviceWorker.controller) return navigator.serviceWorker.controller;
+    return waitForServiceWorkerController();
+}
+
+function waitForServiceWorkerController() {
+    const serviceWorker = navigator.serviceWorker;
+    if (typeof serviceWorker.addEventListener !== 'function') return Promise.resolve(null);
+    return new Promise((resolve) => {
+        let settled = false;
+        const finish = (controller) => {
+            if (settled) return;
+            settled = true;
+            clearTimeout(timer);
+            serviceWorker.removeEventListener('controllerchange', handleControllerChange);
+            resolve(controller);
+        };
+        const handleControllerChange = () => {
+            if (serviceWorker.controller) finish(serviceWorker.controller);
+        };
+        const timer = setTimeout(() => finish(null), STREAM_DOWNLOAD_CONTROL_TIMEOUT_MS);
+        serviceWorker.addEventListener('controllerchange', handleControllerChange);
+        handleControllerChange();
+    });
 }
 
 function canUseFilePicker() {
@@ -460,6 +484,14 @@ function triggerDownloadUrl(url, fileName) {
     document.body.appendChild(link);
     link.click();
     link.remove();
+}
+
+function triggerStreamDownloadUrl(url) {
+    const frame = document.createElement('iframe');
+    frame.src = url;
+    frame.hidden = true;
+    frame.style.display = 'none';
+    document.body.appendChild(frame);
 }
 
 function triggerBlobDownload(blob, fileName) {

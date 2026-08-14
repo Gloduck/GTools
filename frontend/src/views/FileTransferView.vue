@@ -5,7 +5,7 @@
 
         <main class="flex-grow">
             <div class="container mx-auto px-4 py-8">
-                <section v-if="!sessionActive" class="mx-auto max-w-6xl">
+                <section v-if="!sessionActive" class="mx-auto max-w-screen-2xl">
                     <div class="rounded-xl bg-white p-6 shadow-lg sm:p-8 lg:p-10">
                         <div class="max-w-4xl">
                             <h2 class="text-2xl font-bold text-gray-800 sm:text-3xl">
@@ -76,7 +76,7 @@
                 </section>
 
                 <template v-else>
-                    <section class="mx-auto max-w-6xl rounded-xl bg-white p-5 shadow-lg sm:p-6">
+                    <section class="mx-auto max-w-screen-2xl rounded-xl bg-white p-5 shadow-lg sm:p-6">
                         <div class="grid gap-5 lg:grid-cols-[auto_minmax(0,1fr)_auto] lg:items-center">
                             <div class="min-w-0 rounded-lg bg-gray-50 p-4">
                                 <p class="text-sm font-medium text-gray-500">{{ t('fileTransfer.session.codeLabel') }}</p>
@@ -123,7 +123,7 @@
                         </div>
                     </section>
 
-                    <section class="mx-auto mt-6 max-w-6xl rounded-xl bg-white p-5 shadow-lg sm:p-6">
+                    <section class="mx-auto mt-6 max-w-screen-2xl rounded-xl bg-white p-5 shadow-lg sm:p-6">
                         <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                             <div class="min-w-0">
                                 <h3 class="text-xl font-bold text-gray-800">
@@ -165,7 +165,7 @@
                         </div>
                     </section>
 
-                    <section class="mx-auto mt-6 grid max-w-6xl gap-6 lg:grid-cols-2">
+                    <section class="mx-auto mt-6 grid max-w-screen-2xl gap-6 lg:grid-cols-2">
                         <article class="min-w-0 rounded-xl bg-white p-5 shadow-lg sm:p-6">
                             <div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                                 <div class="min-w-0">
@@ -300,7 +300,7 @@
                         </article>
                     </section>
 
-                    <p class="mx-auto mt-5 max-w-6xl text-center text-xs leading-5 text-gray-500">
+                    <p class="mx-auto mt-5 max-w-screen-2xl text-center text-xs leading-5 text-gray-500">
                         <i class="fas fa-triangle-exclamation mr-1 text-amber-500"></i>
                         {{ t('fileTransfer.messages.networkHint') }}
                     </p>
@@ -902,6 +902,31 @@ function isCurrentPeerContext(context) {
 
 function refreshParticipants() {
     participants.value = [...participants.value];
+}
+
+function getPeerSelectedFiles(participantId) {
+    return peerContexts.get(participantId)?.selectedFiles || [];
+}
+
+function getPeerTransfer(participantId, key) {
+    return peerContexts.get(participantId)?.[key] || null;
+}
+
+function getPeerReceivedFiles(participantId) {
+    if (!participantId) return [];
+    return receivedFiles.value.filter((file) => file.sourceParticipantId === participantId);
+}
+
+function isOutgoingTransferActive(transfer) {
+    return ['offering', 'sending', 'finishing'].includes(transfer?.status);
+}
+
+function findIncomingOfferParticipantId(preferredId = '') {
+    if (peerContexts.get(preferredId)?.incomingTransfer?.status === 'offering') return preferredId;
+    for (const [participantId, context] of peerContexts) {
+        if (context.incomingTransfer?.status === 'offering') return participantId;
+    }
+    return '';
 }
 
 function ensureSelectedTarget() {

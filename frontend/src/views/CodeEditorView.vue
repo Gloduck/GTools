@@ -391,11 +391,6 @@
               <span>{{ tr('settings.aiAgentModel') }}</span>
               <input v-model="settings.ai.agentModels" spellcheck="false" :placeholder="tr('settings.aiAgentModelsPlaceholder')" @change="normalizeAgentModelsInput" />
             </label>
-            <label class="setting-row">
-              <span>{{ tr('settings.aiGlobalPrompt') }}</span>
-              <textarea v-model="settings.ai.globalPrompt" rows="6" spellcheck="false" :maxlength="AI_GLOBAL_PROMPT_MAX_CHARS" :placeholder="tr('settings.aiGlobalPromptPlaceholder')"></textarea>
-              <small class="setting-hint">{{ tr('settings.aiGlobalPromptHint', { count: settings.ai.globalPrompt.length, max: AI_GLOBAL_PROMPT_MAX_CHARS }) }}</small>
-            </label>
             <div class="setting-inline-row">
               <select v-model="agentModelToAdd" :aria-label="tr('settings.aiAgentModelToAdd')">
                 <option value="">{{ tr('settings.aiAgentModelToAdd') }}</option>
@@ -406,6 +401,11 @@
             <datalist id="ai-model-options">
               <option v-for="model in aiModelOptions" :key="model" :value="model"></option>
             </datalist>
+            <label class="setting-row">
+              <span>{{ tr('settings.aiGlobalPrompt') }}</span>
+              <textarea v-model="settings.ai.globalPrompt" rows="6" spellcheck="false" :maxlength="AI_GLOBAL_PROMPT_MAX_CHARS" :placeholder="tr('settings.aiGlobalPromptPlaceholder')"></textarea>
+              <small class="setting-hint">{{ tr('settings.aiGlobalPromptHint', { count: settings.ai.globalPrompt.length, max: AI_GLOBAL_PROMPT_MAX_CHARS }) }}</small>
+            </label>
             <label class="setting-row checkbox-row">
               <input v-model="settings.ai.autoSaveSessions" type="checkbox" />
               <span>{{ tr('settings.aiAutoSaveSessions') }}</span>

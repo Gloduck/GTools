@@ -1,3 +1,5 @@
+importScripts('/stream-download-sw.js');
+
 const CACHE_VERSION = 'pwa-cache-v3';
 const APP_SHELL_CACHE = `${CACHE_VERSION}-shell`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
@@ -26,6 +28,10 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(request.url);
 
   if (request.method !== 'GET' || url.origin !== self.location.origin) {
+    return;
+  }
+
+  if (url.pathname.startsWith('/__stream_download__/')) {
     return;
   }
 

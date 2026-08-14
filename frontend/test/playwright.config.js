@@ -18,6 +18,7 @@ export default defineConfig({
     use: {
         baseURL,
         headless: true,
+        locale: 'zh-CN',
         trace: 'retain-on-failure',
     },
     projects: [{name: 'chromium', use: {...devices['Desktop Chrome']}}],

@@ -42,6 +42,7 @@ export const commonMessages = {
             }
         },
         errors: {
+            DOWNLOAD_BLOB_SIZE_LIMIT_EXCEEDED: '文件过大，当前浏览器只能使用受限的内存下载，请改用文件选择器或流式下载',
             DATA_NOT_FOUND: '未找到数据',
             OPERATION_FAILED: '操作失败',
             INTERNAL_SERVER_ERROR: '服务器内部错误',
@@ -132,6 +133,7 @@ export const commonMessages = {
             }
         },
         errors: {
+            DOWNLOAD_BLOB_SIZE_LIMIT_EXCEEDED: 'The file is too large for the limited in-memory fallback. Use the file picker or streaming download instead.',
             DATA_NOT_FOUND: 'Data not found',
             OPERATION_FAILED: 'Operation failed',
             INTERNAL_SERVER_ERROR: 'Internal server error',

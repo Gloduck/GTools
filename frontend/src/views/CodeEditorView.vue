@@ -624,20 +624,6 @@
       </form>
     </div>
 
-    <div v-if="downloadDialog.visible" class="editor-dialog-backdrop" role="presentation" @click.self="closeDownloadDialog">
-      <section class="editor-dialog download-dialog" role="dialog" aria-modal="true" aria-labelledby="download-dialog-title" @keydown.esc.prevent.stop="closeDownloadDialog" @click.stop>
-        <div class="editor-dialog-header">
-          <span class="codicon codicon-cloud-download" aria-hidden="true"></span>
-          <h2 id="download-dialog-title">{{ tr('download.title') }}</h2>
-        </div>
-        <p class="editor-dialog-message">{{ tr('download.ready', { name: downloadDialog.name }) }}</p>
-        <div class="editor-dialog-actions">
-          <button type="button" @click="closeDownloadDialog">{{ tr('dialog.close') }}</button>
-          <a class="primary" :href="downloadDialog.url" :download="downloadDialog.name" target="_blank" rel="noopener noreferrer">{{ tr('download.action') }}</a>
-        </div>
-      </section>
-    </div>
-
     <div v-if="sshDialog.visible" class="editor-dialog-backdrop" role="presentation" @click.self="closeSshDialog">
       <form class="editor-dialog ssh-dialog" role="dialog" aria-modal="true" aria-labelledby="ssh-dialog-title" @submit.prevent="saveSshDialog" @keydown.esc.prevent.stop="closeSshDialog" @click.stop>
         <div class="editor-dialog-header">
@@ -745,6 +731,7 @@ import {
 import { MarkdownUtils } from "@/shared/markdown-utils.js";
 import { NetworkLimit } from "@/shared/network-limit.js";
 import { enableEditorPwa } from "@/shared/pwa-install.js";
+import { downloadDirectory, downloadFile } from "@/shared/file-downloader.js";
 import { RequestProxy } from "@/shared/request-proxy.js";
 import { AiCredentialStore } from "@/shared/ai-credential-store.js";
 import { currentLocale, setLocale, t, translateErrorMessage } from "@/i18n/index.js";
@@ -755,7 +742,6 @@ import {
   FileOperationPolicy,
   FileSession,
   FileTooLargeError,
-  writeFileTarget,
 } from "@/shared/file-system/index.js";
 
 const STORAGE_KEY = "browser-code-editor-settings";
@@ -1101,7 +1087,6 @@ const dialogSelect = ref(null);
 const dialogOptionInput = ref(null);
 const dialogPrimaryButton = ref(null);
 const dialogState = reactive({ visible: false, mode: "alert", title: "", message: "", value: "", inputLabel: "", placeholder: "", selectOptions: [], optionLabel: "", optionHint: "", optionChecked: false, optionDisabled: false, confirmLabel: "", cancelLabel: "", tone: "default", selectOnFocus: false, closeOnBackdrop: true });
-const downloadDialog = reactive({ visible: false, url: "", name: "" });
 const settings = reactive(loadSettings());
 settings.locale = getCurrentLocale();
 const maxMemoryReadMb = computed({
@@ -1373,7 +1358,6 @@ onBeforeUnmount(() => {
   previewBroadcastChannel = null;
   revokePreviewPageUrl();
   revokePreviewResourceUrls();
-  closeDownloadDialog();
   editor.value?.dispose();
   diffEditor.value?.dispose();
   document.removeEventListener("click", hideAllContextMenus);
@@ -4275,17 +4259,22 @@ async function saveNodeAs(node) {
 
   try {
     if (sourceNode.kind === "file") {
-      if (!canUseSaveAsPicker("showSaveFilePicker")) {
-        const blob = await getNodeExportBlob(sourceNode, { includeUnsaved, workspace });
-        assertCurrentWorkspace(workspace);
-        openDownloadDialog(blob, sourceNode.name);
-        return;
-      }
-      const destination = await window.showSaveFilePicker({ suggestedName: sourceNode.name });
-      assertCurrentWorkspace(workspace);
-      if (await workspace.session.fileSystem.isSameFileTarget(sourceNode.path, destination)) throw new Error(tr("error.saveAsSource"));
-      const source = await openSaveAsRead(sourceNode.path, { includeUnsaved, workspace });
-      await writeFileTarget(destination, source.stream);
+      await downloadFile({
+        fileName: sourceNode.name,
+        mimeType: sourceNode.mimeType || getMimeType(sourceNode.name),
+        validateFileHandle: async (destination) => {
+          assertCurrentWorkspace(workspace);
+          if (await workspace.session.fileSystem.isSameFileTarget(sourceNode.path, destination)) throw new Error(tr("error.saveAsSource"));
+        },
+        openStream: async () => {
+          const source = await openSaveAsRead(sourceNode.path, { includeUnsaved, workspace });
+          return {
+            stream: source.stream,
+            size: source.size,
+            mimeType: source.mimeType || sourceNode.mimeType || getMimeType(sourceNode.name),
+          };
+        },
+      });
       assertCurrentWorkspace(workspace);
       setStatus(tr("status.savedAs", { name: sourceNode.name }), sourceNode.path);
       return;
@@ -4293,9 +4282,10 @@ async function saveNodeAs(node) {
     if (!canUseSaveAsPicker("showDirectoryPicker")) {
       const archiveName = `${sourceNode.name}.zip`;
       setStatus(tr("status.packagingFolder", { name: sourceNode.name }), archiveName);
-      const archive = await createFolderZip(sourceNode, { includeUnsaved, workspace });
+      const entries = createDirectoryDownloadEntries(sourceNode, { includeUnsaved, workspace });
+      await downloadDirectory({name: sourceNode.name, entries, allowDirectoryAccess: false});
       assertCurrentWorkspace(workspace);
-      openDownloadDialog(archive, archiveName);
+      setStatus(tr("status.downloadReady", { name: archiveName }), archiveName);
       return;
     }
     const destinationParent = markRaw(await window.showDirectoryPicker({ mode: "readwrite" }));
@@ -4327,29 +4317,11 @@ async function saveNodeAs(node) {
 }
 
 function canUseSaveAsPicker(method) {
-  let topLevel = false;
-  try {
-    topLevel = window.top === window.self;
-  } catch {
-    topLevel = false;
-  }
-  return window.isSecureContext && topLevel && typeof window[method] === "function" && !/MicroMessenger/i.test(navigator.userAgent || "");
+  return window.isSecureContext && typeof window[method] === "function";
 }
 
 function isPathPendingDelete(path) {
   return Boolean(path && openFiles.get(path)?.deleted);
-}
-
-async function getNodeExportBlob(node, { includeUnsaved = true, workspace = captureWorkspace() } = {}) {
-  assertCurrentWorkspace(workspace);
-  const fileState = openFiles.get(node.path);
-  if (includeUnsaved) {
-    if (fileState?.deleted) throw new Error(`File is marked for deletion: ${node.path}`);
-    if (fileState) await awaitLatestStage(fileState);
-    assertCurrentWorkspace(workspace);
-    return workspace.session.readBlob(node.path, { view: "effective" });
-  }
-  return workspace.session.fileSystem.readBlob(node.path);
 }
 
 async function copyTreeNodes(nodes, destinationFileSystem, destinationPath, { includeUnsaved = true, workspace = captureWorkspace() } = {}) {
@@ -4370,28 +4342,32 @@ async function copyTreeNodes(nodes, destinationFileSystem, destinationPath, { in
   }
 }
 
-async function createFolderZip(node, { includeUnsaved = true, workspace = captureWorkspace() } = {}) {
-  const { zip } = await import("fflate");
-  const archive = Object.create(null);
-  archive[node.name] = await buildZipTree(node.children || [], { includeUnsaved, workspace });
-  const data = await new Promise((resolve, reject) => {
-    zip(archive, { level: 6 }, (error, result) => error ? reject(error) : resolve(result));
-  });
-  return new Blob([data], { type: "application/zip" });
+function createDirectoryDownloadEntries(node, { includeUnsaved = true, workspace = captureWorkspace() } = {}) {
+  const entries = [];
+  appendDirectoryDownloadEntries(node.children || [], "", entries, { includeUnsaved, workspace });
+  return entries;
 }
 
-async function buildZipTree(nodes, { includeUnsaved = true, workspace = captureWorkspace() } = {}) {
-  const entries = Object.create(null);
+function appendDirectoryDownloadEntries(nodes, parentPath, entries, { includeUnsaved, workspace }) {
   for (const node of nodes) {
     assertCurrentWorkspace(workspace);
     if (includeUnsaved && openFiles.get(node.path)?.deleted) continue;
+    const relativePath = parentPath ? `${parentPath}/${node.name}` : node.name;
     if (node.kind === "directory") {
-      entries[node.name] = await buildZipTree(node.children || [], { includeUnsaved, workspace });
+      entries.push({path: relativePath, directory: true});
+      appendDirectoryDownloadEntries(node.children || [], relativePath, entries, { includeUnsaved, workspace });
       continue;
     }
-    entries[node.name] = new Uint8Array(await (await getNodeExportBlob(node, { includeUnsaved, workspace })).arrayBuffer());
+    entries.push({
+      path: relativePath,
+      size: node.size,
+      mimeType: node.mimeType || getMimeType(node.name),
+      openStream: async () => {
+        const source = await openSaveAsRead(node.path, { includeUnsaved, workspace });
+        return source.stream;
+      },
+    });
   }
-  return entries;
 }
 
 async function openSaveAsRead(path, { includeUnsaved = true, workspace = captureWorkspace() } = {}) {
@@ -4401,19 +4377,6 @@ async function openSaveAsRead(path, { includeUnsaved = true, workspace = capture
   if (file) await awaitLatestStage(file);
   assertCurrentWorkspace(workspace);
   return workspace.session.openRead(path, { view: "effective" });
-}
-
-function openDownloadDialog(blob, name) {
-  if (downloadDialog.visible) closeDownloadDialog();
-  const url = URL.createObjectURL(blob);
-  Object.assign(downloadDialog, { visible: true, url, name });
-  setStatus(tr("status.downloadReady", { name }), name);
-}
-
-function closeDownloadDialog() {
-  const url = downloadDialog.url;
-  Object.assign(downloadDialog, { visible: false, url: "", name: "" });
-  if (url) URL.revokeObjectURL(url);
 }
 
 async function fileExists(targetFileSystem, path) {

@@ -140,6 +140,7 @@
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
 import { CommonUtils } from '@/shared/common-utils.js';
 import { CommonComponents } from '@/shared/common-components.js';
+import { downloadFile } from '@/shared/file-downloader.js';
 import { t, translateErrorMessage } from '@/i18n/index.js';
 
 export default {
@@ -318,100 +319,59 @@ export default {
                     speedInterval = setInterval(calculateSpeed, 1000);
 
                     try {
-                        const response = await fetch(proxyUrl, {
-                            method: 'GET',
+                        const initialFileName = getFileNameFromUrl(url);
+                        await downloadFile({
+                            fileName: initialFileName,
                             signal: abortController.signal,
-                            headers: {
-                                'Accept': '*/*'
+                            openStream: async () => {
+                                const response = await fetch(proxyUrl, {
+                                    method: 'GET',
+                                    signal: abortController.signal,
+                                    headers: {
+                                        'Accept': '*/*'
+                                    }
+                                });
+
+                                if (!response.ok) {
+                                    const errorBody = (await response.text()).trim();
+                                    let translatedError = errorBody;
+                                    try {
+                                        translatedError = translateErrorMessage(JSON.parse(errorBody));
+                                    } catch {
+                                        translatedError = translateErrorMessage(errorBody);
+                                    }
+                                    const detail = translatedError ? `: ${translatedError}` : '';
+                                    throw new Error(t('forward.httpError', { status: response.status, detail }));
+                                }
+                                if (!response.body) throw new Error('Streaming response body is unavailable');
+
+                                fileName.value = initialFileName;
+                                downloadStatus.value = 'downloading';
+                                const contentLength = response.headers.get('Content-Length');
+                                const totalBytes = contentLength == null ? null : Number(contentLength);
+                                return {
+                                    stream: response.body,
+                                    size: Number.isFinite(totalBytes) && totalBytes >= 0 ? totalBytes : null,
+                                };
+                            },
+                            onProgress: (loaded, total) => {
+                                downloadedBytes.value = loaded;
+                                if (total) progressPercent.value = Math.round((loaded / total) * 100);
                             }
                         });
 
-                        if (!response.ok) {
-                            const errorBody = (await response.text()).trim();
-                            let translatedError = errorBody;
-                            try {
-                                translatedError = translateErrorMessage(JSON.parse(errorBody));
-                            } catch {
-                                translatedError = translateErrorMessage(errorBody);
-                            }
-                            const detail = translatedError ? `: ${translatedError}` : '';
-                            throw new Error(t('forward.httpError', { status: response.status, detail }));
-                        }
-
-                        // 从响应头获取文件名
-                        let finalFileName = getFileNameFromUrl(url);
-                        const contentDisposition = response.headers.get('Content-Disposition');
-
-                        if (contentDisposition && contentDisposition.includes('filename=')) {
-                            const fileNameMatch = contentDisposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
-                            if (fileNameMatch && fileNameMatch[1]) {
-                                finalFileName = fileNameMatch[1].replace(/['"]/g, '');
-                                try {
-                                    finalFileName = decodeURIComponent(finalFileName);
-                                } catch (e) {
-                                    console.log('无法解码文件名:', e);
-                                }
-                            }
-                        }
-
-                        // 更新UI
-                        fileName.value = finalFileName;
-                        downloadStatus.value = 'downloading';
-
-                        const contentLength = response.headers.get('Content-Length');
-                        const totalBytes = contentLength ? parseInt(contentLength) : null;
-
-                        // 处理响应流
-                        const reader = response.body.getReader();
-                        const chunks = [];
-                        let receivedBytes = 0;
-
-                        while (true) {
-                            const { done, value } = await reader.read();
-
-                            if (done) {
-                                // 下载完成，创建Blob并下载
-                                const blob = new Blob(chunks);
-                                const url = URL.createObjectURL(blob);
-                                const a = document.createElement('a');
-                                a.href = url;
-                                a.download = finalFileName;
-                                document.body.appendChild(a);
-                                a.click();
-                                URL.revokeObjectURL(url);
-                                document.body.removeChild(a);
-
-                                // 更新状态
-                                downloadStatus.value = 'completed';
-                                progressPercent.value = 100;
-                                downloadSpeed.value = '-';
-
-                                // 添加到历史记录
-                                addToHistory(finalFileName, 'success', fileUrl.value);
-                                showToast(t('forward.downloadComplete'), 'success');
-
-                                break;
-                            }
-
-                            chunks.push(value);
-                            receivedBytes += value.length;
-
-                            // 更新进度
-                            if (totalBytes) {
-                                const percent = Math.round((receivedBytes / totalBytes) * 100);
-                                progressPercent.value = percent;
-                            }
-
-                            // 更新已下载大小
-                            downloadedBytes.value = receivedBytes;
-                        }
+                        downloadStatus.value = 'completed';
+                        progressPercent.value = 100;
+                        downloadSpeed.value = '-';
+                        addToHistory(fileName.value, 'success', fileUrl.value);
+                        showToast(t('forward.downloadComplete'), 'success');
                     } catch (error) {
                         if (error.name !== 'AbortError') {
                             console.error('下载错误:', error);
                             downloadStatus.value = 'failed';
-                            statusErrorMessage.value = error.message;
+                            statusErrorMessage.value = translateErrorMessage(error);
                             downloadSpeed.value = '-';
-                            showToast(t('forward.downloadFailed', { message: error.message }), 'error');
+                            showToast(t('forward.downloadFailed', { message: statusErrorMessage.value }), 'error');
 
                             // 添加到历史记录
                             addToHistory(fileName.value, 'failed', fileUrl.value);

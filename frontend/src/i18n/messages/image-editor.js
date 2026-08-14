@@ -44,6 +44,7 @@ export const imageEditorMessages = {
             processedCount: '已处理 {count} 张图片',
             downloadStarted: '开始下载',
             downloadCountStarted: '开始下载 {count} 张图片',
+            downloadFailed: '下载失败: {message}',
             restored: '已还原到原始图片'
         }
     },
@@ -92,6 +93,7 @@ export const imageEditorMessages = {
             processedCount: 'Processed {count} images',
             downloadStarted: 'Download started',
             downloadCountStarted: 'Started downloading {count} images',
+            downloadFailed: 'Download failed: {message}',
             restored: 'Restored the original image'
         }
     }

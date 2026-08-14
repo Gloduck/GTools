@@ -247,7 +247,8 @@ import { ref, watch, nextTick, onUnmounted } from 'vue';
 import { CommonUtils } from '@/shared/common-utils.js';
 import { ImageUtils } from '@/shared/image-utils.js';
 import { CommonComponents } from '@/shared/common-components.js';
-import { t } from '@/i18n/index.js';
+import { downloadDirectory, downloadFile } from '@/shared/file-downloader.js';
+import { t, translateErrorMessage } from '@/i18n/index.js';
 
 let cropperLoadPromise;
 
@@ -593,25 +594,52 @@ export default {
                     };
                 };
 
-                const downloadSingle = (index) => {
-                    const img = images.value[index];
-                    ImageUtils.downloadImage(img.preview, img.name);
-                };
-
-                const downloadCurrentImage = () => {
+                const downloadCurrentImage = async () => {
                     if (selectedImage.value) {
-                        ImageUtils.downloadImage(selectedImage.value.preview, selectedImage.value.name);
+                        const image = selectedImage.value;
+                        try {
+                            await downloadFile({
+                                fileName: image.name,
+                                size: image.file.size,
+                                mimeType: image.file.type,
+                                openStream: () => image.file.stream()
+                            });
+                        } catch (error) {
+                            if (error?.name === 'AbortError') return;
+                            showToast(t('imageEditor.downloadFailed', {message: translateErrorMessage(error)}), 'error');
+                            return;
+                        }
                         showToast(t('imageEditor.downloadStarted'));
                     }
                 };
 
-                const downloadAllImages = () => {
-                    images.value.forEach((img, index) => {
-                        setTimeout(() => {
-                            ImageUtils.downloadImage(img.preview, img.name);
-                        }, index * 300);
-                    });
-                    showToast(t('imageEditor.downloadCountStarted', { count: images.value.length }));
+                const downloadAllImages = async () => {
+                    const names = new Set();
+                    const entries = images.value.map((image) => ({
+                        path: uniqueDownloadName(image.name, names),
+                        size: image.file.size,
+                        mimeType: image.file.type,
+                        openStream: () => image.file.stream()
+                    }));
+                    try {
+                        await downloadDirectory({name: 'images', entries});
+                        showToast(t('imageEditor.downloadCountStarted', { count: images.value.length }));
+                    } catch (error) {
+                        if (error?.name === 'AbortError') return;
+                        showToast(t('imageEditor.downloadFailed', {message: translateErrorMessage(error)}), 'error');
+                    }
+                };
+
+                const uniqueDownloadName = (fileName, names) => {
+                    const dot = fileName.lastIndexOf('.');
+                    const base = dot > 0 ? fileName.slice(0, dot) : fileName;
+                    const extension = dot > 0 ? fileName.slice(dot) : '';
+                    for (let index = 0; ; index += 1) {
+                        const candidate = index === 0 ? fileName : `${base} (${index})${extension}`;
+                        if (names.has(candidate)) continue;
+                        names.add(candidate);
+                        return candidate;
+                    }
                 };
 
                 const restoreImage = async () => {

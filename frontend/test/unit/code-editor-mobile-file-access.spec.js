@@ -2,7 +2,7 @@ import {expect, test} from '@playwright/test';
 
 test.use({viewport: {width: 390, height: 844}, hasTouch: true, isMobile: true});
 
-test('不支持文件保存选择器时准备下载弹窗并在关闭时销毁 URL', async ({page}) => {
+test('不支持文件保存选择器时直接使用 Blob 下载并销毁 URL', async ({page}) => {
     await page.addInitScript(() => {
         Object.defineProperty(globalThis, 'showSaveFilePicker', {configurable: true, value: undefined});
         globalThis.__revokedDownloadUrls = [];
@@ -14,32 +14,21 @@ test('不支持文件保存选择器时准备下载弹窗并在关闭时销毁 U
     });
     await openSeededOpfs(page);
 
-    await startSaveAs(page, 'alpha.txt');
-
-    const dialog = page.getByRole('dialog', {name: '下载文件'});
-    const link = dialog.getByRole('link', {name: '下载文件'});
-    await expect(link).toHaveAttribute('download', 'alpha.txt');
-    await expect(link).toHaveAttribute('href', /^blob:/);
-    const url = await link.getAttribute('href');
     const downloadPromise = page.waitForEvent('download');
-    await link.click();
+    await startSaveAs(page, 'alpha.txt');
     expect((await downloadPromise).suggestedFilename()).toBe('alpha.txt');
-    await expect(dialog).toBeVisible();
-    await dialog.getByRole('button', {name: '关闭'}).click();
-    await expect(dialog).toBeHidden();
-    expect(await page.evaluate((value) => globalThis.__revokedDownloadUrls.includes(value), url)).toBe(true);
+    await expect.poll(() => page.evaluate(() => globalThis.__revokedDownloadUrls.length)).toBeGreaterThan(0);
 });
 
-test('不支持文件夹选择器时准备 ZIP 下载弹窗', async ({page}) => {
+test('不支持文件夹选择器时直接下载 ZIP', async ({page}) => {
     await page.addInitScript(() => {
         Object.defineProperty(globalThis, 'showDirectoryPicker', {configurable: true, value: undefined});
     });
     await openSeededOpfs(page);
 
+    const downloadPromise = page.waitForEvent('download');
     await startSaveAs(page, 'docs');
-
-    const dialog = page.getByRole('dialog', {name: '下载文件'});
-    await expect(dialog.getByRole('link', {name: '下载文件'})).toHaveAttribute('download', 'docs.zip');
+    expect((await downloadPromise).suggestedFilename()).toBe('docs.zip');
 });
 
 test('保存选择器存在但调用失败时显示原有错误提示', async ({page}) => {
@@ -59,11 +48,10 @@ test('保存选择器存在但调用失败时显示原有错误提示', async ({
 
     const dialog = page.getByRole('dialog', {name: '提示'});
     await expect(dialog).toContainText('另存为失败: Unavailable');
-    await expect(page.getByRole('dialog', {name: '下载文件'})).toHaveCount(0);
     expect(await page.evaluate(() => globalThis.__savePickerCalls)).toBe(1);
 });
 
-test('微信暴露保存选择器时仍直接回退到下载弹窗', async ({page}) => {
+test('保存能力判断不根据 userAgent 跳过选择器', async ({page}) => {
     await page.addInitScript(() => {
         Object.defineProperty(navigator, 'userAgent', {
             configurable: true,
@@ -74,7 +62,7 @@ test('微信暴露保存选择器时仍直接回退到下载弹窗', async ({pag
             configurable: true,
             value: async () => {
                 globalThis.__savePickerCalls += 1;
-                throw new Error('Picker should not be called');
+                throw new Error('Picker called');
             },
         });
     });
@@ -82,12 +70,12 @@ test('微信暴露保存选择器时仍直接回退到下载弹窗', async ({pag
 
     await startSaveAs(page, 'alpha.txt');
 
-    const dialog = page.getByRole('dialog', {name: '下载文件'});
-    await expect(dialog.getByRole('link', {name: '下载文件'})).toHaveAttribute('download', 'alpha.txt');
-    expect(await page.evaluate(() => globalThis.__savePickerCalls)).toBe(0);
+    const dialog = page.getByRole('dialog', {name: '提示'});
+    await expect(dialog).toContainText('另存为失败: Picker called');
+    expect(await page.evaluate(() => globalThis.__savePickerCalls)).toBe(1);
 });
 
-test('微信暴露文件夹选择器时文件夹另存为仍准备 ZIP 下载', async ({page}) => {
+test('文件夹能力判断不根据 userAgent 跳过选择器', async ({page}) => {
     await page.addInitScript(() => {
         Object.defineProperty(navigator, 'userAgent', {
             configurable: true,
@@ -106,9 +94,8 @@ test('微信暴露文件夹选择器时文件夹另存为仍准备 ZIP 下载', 
 
     await startSaveAs(page, 'docs');
 
-    const dialog = page.getByRole('dialog', {name: '下载文件'});
-    await expect(dialog.getByRole('link', {name: '下载文件'})).toHaveAttribute('download', 'docs.zip');
-    expect(await page.evaluate(() => globalThis.__directoryPickerCalls)).toBe(0);
+    await expect(page.getByRole('dialog', {name: '下载文件'})).toHaveCount(0);
+    expect(await page.evaluate(() => globalThis.__directoryPickerCalls)).toBe(1);
 });
 
 test('打开文件夹保持原有的不支持提示逻辑', async ({page}) => {

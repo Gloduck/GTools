@@ -153,25 +153,44 @@ export class WebRtcFileTransfer {
         return transferId;
     }
 
-    async acceptIncoming({directoryHandle = null} = {}) {
+    async acceptIncoming({directoryHandle = null, targets = null, createTarget = null} = {}) {
         const incoming = this.#incoming;
         if (!incoming || incoming.status !== 'offering') throw new Error('NO_INCOMING_TRANSFER');
 
-        if (directoryHandle) {
-            incoming.mode = 'directory';
-            const targets = await createDirectoryTargets(directoryHandle, incoming.metadata);
-            incoming.files.forEach((file, index) => {
-                file.handle = targets[index].handle;
-                file.resolvedName = targets[index].name;
+        let directoryTargets = null;
+        try {
+            if (directoryHandle) {
+                incoming.mode = 'directory';
+                directoryTargets = await createDirectoryTargets(directoryHandle, incoming.metadata);
+                incoming.files.forEach((file, index) => {
+                    file.handle = directoryTargets[index].handle;
+                    file.resolvedName = directoryTargets[index].name;
+                });
+            } else {
+                if (typeof createTarget !== 'function') throw new Error('INVALID_DOWNLOAD_TARGET_FACTORY');
+                incoming.mode = 'stream';
+                incoming.createTarget = createTarget;
+                incoming.files.forEach((file, index) => this.#assignIncomingTarget(file, targets?.[index] || null));
+            }
+
+            this.#sendControl('transfer.accept', {transferId: incoming.transferId});
+        } catch (error) {
+            await abortIncomingWriters(incoming);
+            if (directoryHandle && directoryTargets) await removeDirectoryTargets(directoryHandle, directoryTargets);
+            incoming.mode = null;
+            incoming.createTarget = null;
+            incoming.files.forEach((file) => {
+                file.handle = null;
+                file.resolvedName = file.metadata.name;
+                file.writable = null;
+                file.target = null;
             });
-        } else {
-            incoming.mode = 'memory';
+            throw error;
         }
 
         incoming.status = 'receiving';
         incoming.lastAckAt = performance.now();
         this.#notifyIncoming();
-        this.#sendControl('transfer.accept', {transferId: incoming.transferId});
     }
 
     rejectIncoming(reason = 'USER_REJECTED') {
@@ -257,13 +276,14 @@ export class WebRtcFileTransfer {
             completedFiles: 0,
             status: 'offering',
             mode: null,
+            createTarget: null,
             files: metadata.map((file) => ({
                 metadata: file,
                 receivedBytes: 0,
-                chunks: [],
                 handle: null,
                 resolvedName: file.name,
                 writable: null,
+                target: null,
                 completed: false
             })),
             lastAckBytes: 0,
@@ -361,7 +381,8 @@ export class WebRtcFileTransfer {
             if (!file.writable) file.writable = await file.handle.createWritable();
             await file.writable.write({type: 'write', position: frame.offset, data: frame.payload});
         } else {
-            file.chunks.push(frame.payload);
+            await this.#ensureIncomingTarget(incoming, file, frame.fileIndex);
+            await file.writable.write(frame.payload);
         }
 
         file.receivedBytes += frame.payload.byteLength;
@@ -376,10 +397,12 @@ export class WebRtcFileTransfer {
             throw new Error('TRANSFER_FILE_INCOMPLETE');
         }
 
-        if (file.writable) {
-            await file.writable.close();
-            file.writable = null;
-        }
+        if (incoming.mode === 'stream') await this.#ensureIncomingTarget(incoming, file, frame.fileIndex);
+        const target = file.target;
+        if (file.writable) await file.writable.close();
+        if (target?.completed) await target.completed;
+        file.writable = null;
+        file.target = null;
         file.completed = true;
         incoming.completedFiles += 1;
 
@@ -391,15 +414,27 @@ export class WebRtcFileTransfer {
             type: file.metadata.type,
             lastModified: file.metadata.lastModified,
             savedToDisk: incoming.mode === 'directory',
-            blob: null
+            downloadMethod: target?.method || (incoming.mode === 'directory' ? 'directory' : 'stream')
         };
-        if (incoming.mode === 'memory') {
-            received.blob = new Blob(file.chunks, {type: file.metadata.type});
-            file.chunks = [];
-        }
         this.#callbacks.onFileReceived(received);
         this.#notifyReceiveProgress(incoming, true);
         this.#sendAcknowledgement(incoming);
+    }
+
+    async #ensureIncomingTarget(incoming, file, fileIndex) {
+        if (file.writable) return;
+        const target = await incoming.createTarget?.(file.metadata, fileIndex);
+        if (!target) throw new Error('DOWNLOAD_TARGET_UNAVAILABLE');
+        this.#assignIncomingTarget(file, target);
+    }
+
+    #assignIncomingTarget(file, target) {
+        if (!target) return;
+        if (typeof target.write !== 'function' || typeof target.close !== 'function' || typeof target.abort !== 'function') {
+            throw new Error('INVALID_DOWNLOAD_TARGET');
+        }
+        file.target = target;
+        file.writable = target;
     }
 
     async #completeIncomingTransfer(incoming, frame) {
@@ -485,7 +520,10 @@ export class WebRtcFileTransfer {
         incoming.status = 'cancelled';
         incoming.reason = reason;
         if (notifyPeer && this.ready) {
-            this.#sendControl('transfer.cancel', {transferId: incoming.transferId, reason});
+            try {
+                this.#sendControl('transfer.cancel', {transferId: incoming.transferId, reason});
+            } catch {
+            }
         }
         await abortIncomingWriters(incoming);
         this.#notifyIncoming();
@@ -519,10 +557,13 @@ export class WebRtcFileTransfer {
         incoming.status = 'failed';
         incoming.reason = error?.message || 'TRANSFER_FAILED';
         if (notifyPeer && this.ready) {
-            this.#sendControl('transfer.error', {
-                transferId: incoming.transferId,
-                reason: incoming.reason
-            });
+            try {
+                this.#sendControl('transfer.error', {
+                    transferId: incoming.transferId,
+                    reason: incoming.reason
+                });
+            } catch {
+            }
         }
         await abortIncomingWriters(incoming);
         this.#notifyIncoming();
@@ -733,15 +774,24 @@ function waitForBufferedAmountLow(channel) {
 async function createDirectoryTargets(directoryHandle, metadata) {
     const reserved = new Set();
     const targets = [];
-    for (const file of metadata) {
-        const name = await uniqueFileName(directoryHandle, file.name, reserved);
-        reserved.add(name);
-        targets.push({
-            name,
-            handle: await directoryHandle.getFileHandle(name, {create: true})
-        });
+    try {
+        for (const file of metadata) {
+            const name = await uniqueFileName(directoryHandle, file.name, reserved);
+            reserved.add(name);
+            targets.push({
+                name,
+                handle: await directoryHandle.getFileHandle(name, {create: true})
+            });
+        }
+        return targets;
+    } catch (error) {
+        await removeDirectoryTargets(directoryHandle, targets);
+        throw error;
     }
-    return targets;
+}
+
+async function removeDirectoryTargets(directoryHandle, targets) {
+    await Promise.allSettled(targets.map((target) => directoryHandle.removeEntry(target.name)));
 }
 
 async function uniqueFileName(directoryHandle, requestedName, reserved) {
@@ -768,7 +818,6 @@ function splitFileName(fileName) {
 
 async function abortIncomingWriters(incoming) {
     for (const file of incoming.files) {
-        file.chunks = [];
         if (!file.writable) continue;
         try {
             if (typeof file.writable.abort === 'function') await file.writable.abort();
@@ -776,5 +825,6 @@ async function abortIncomingWriters(incoming) {
         } catch {
         }
         file.writable = null;
+        file.target = null;
     }
 }

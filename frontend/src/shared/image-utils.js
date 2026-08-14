@@ -250,13 +250,6 @@ const ImageUtils = {
         });
     },
 
-    downloadImage: (dataUrl, filename = 'image.jpg') => {
-        const link = document.createElement('a');
-        link.download = filename;
-        link.href = dataUrl;
-        link.click();
-    },
-
     createPreview: (file, container, maxWidth = 300) => {
         return new Promise((resolve, reject) => {
             const reader = new FileReader();

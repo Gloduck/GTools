@@ -285,13 +285,9 @@
                                             <div class="mt-1 text-xs text-gray-500">{{ formatFileSize(file.size) }} · {{ file.sourceName }}</div>
                                         </div>
                                     </div>
-                                    <a v-if="file.url" :href="file.url" :download="file.name" class="mt-3 inline-flex items-center gap-2 text-sm font-medium text-primary transition-colors hover:text-secondary">
-                                        <i class="fas fa-download"></i>
-                                        {{ t('fileTransfer.received.download') }}
-                                    </a>
-                                    <span v-else class="mt-3 inline-flex items-center gap-2 text-sm font-medium text-green-700">
+                                    <span class="mt-3 inline-flex items-center gap-2 text-sm font-medium text-green-700">
                                         <i class="fas fa-hard-drive"></i>
-                                        {{ t('fileTransfer.received.saved') }}
+                                        {{ file.savedToDisk ? t('fileTransfer.received.saved') : t('fileTransfer.received.downloaded') }}
                                     </span>
                                 </div>
                             </div>
@@ -327,24 +323,14 @@
                     </div>
                 </div>
 
-                <p v-if="incomingExceedsMemoryLimit" class="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm leading-6 text-red-700">
-                    <i class="fas fa-circle-exclamation mr-1"></i>
-                    {{ t('fileTransfer.incoming.memoryLimitExceeded', {
-                        size: formatFileSize(incomingTransfer?.totalBytes || 0),
-                        limit: formatFileSize(BROWSER_MAX_IN_MEMORY_TRANSFER_BYTES)
-                    }) }}
-                </p>
-                <p v-else class="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-800">
-                    {{ t('fileTransfer.incoming.memoryWarning', { limit: formatFileSize(BROWSER_MAX_IN_MEMORY_TRANSFER_BYTES) }) }}
-                </p>
-                <p v-if="incomingExceedsMemoryLimit && !supportsDirectoryPicker" class="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-xs leading-5 text-red-700">
-                    {{ t('fileTransfer.incoming.largeFileUnavailable') }}
+                <p class="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-800">
+                    {{ t('fileTransfer.incoming.memoryWarning', { limit: formatFileSize(DEFAULT_MAX_BLOB_DOWNLOAD_BYTES) }) }}
                 </p>
 
                 <div class="grid gap-3 sm:grid-cols-2">
-                    <button type="button" class="inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-4 py-3 font-medium text-white transition-colors hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-50" :disabled="incomingExceedsMemoryLimit" @click="acceptIncomingInBrowser">
-                        <i class="fas fa-memory"></i>
-                        {{ incomingExceedsMemoryLimit ? t('fileTransfer.incoming.memoryTooLarge') : t('fileTransfer.incoming.acceptBrowser') }}
+                    <button type="button" class="inline-flex items-center justify-center gap-2 rounded-lg bg-primary px-4 py-3 font-medium text-white transition-colors hover:bg-secondary" @click="acceptIncomingInBrowser">
+                        <i class="fas fa-download"></i>
+                        {{ t('fileTransfer.incoming.acceptBrowser') }}
                     </button>
                     <button type="button" class="inline-flex items-center justify-center gap-2 rounded-lg bg-green-600 px-4 py-3 font-medium text-white transition-colors hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-50" :disabled="!supportsDirectoryPicker" @click="acceptIncomingToFolder">
                         <i class="fas fa-folder-open"></i>
@@ -368,6 +354,7 @@ import {useI18n} from 'vue-i18n';
 import {CommonComponents} from '@/shared/common-components.js';
 import {CommonUtils} from '@/shared/common-utils.js';
 import {formatFileSize} from '@/shared/file-utils.js';
+import {createBlobSizeLimitError, DEFAULT_MAX_BLOB_DOWNLOAD_BYTES, prepareDownload} from '@/shared/file-downloader.js';
 import {translateErrorMessage} from '@/i18n/index.js';
 import {loadWebRtcConfig, WebRtcSignalingClient} from '@/shared/webrtc/signaling-client.js';
 import {WebRtcPeerConnection} from '@/shared/webrtc/peer-connection.js';
@@ -379,7 +366,6 @@ const CommonToast = CommonComponents.Toast;
 const CommonModal = CommonComponents.Modal;
 const {t} = useI18n();
 const BROWSER_DEFAULT_MAX_PARTICIPANTS = 10;
-const BROWSER_MAX_IN_MEMORY_TRANSFER_BYTES = 1024 * 1024 * 1024;
 const DEVICE_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const ACTIVE_TRANSFER_STATUSES = new Set(['offering', 'sending', 'finishing', 'receiving']);
 const RECOVERABLE_PARTICIPANT_CODES = new Set([
@@ -448,7 +434,6 @@ const canSendFiles = computed(() => selectedFiles.value.length > 0 && selectedTa
 const outgoingPercent = computed(() => progressPercent(outgoingTransfer.value?.sentBytes, outgoingTransfer.value?.totalBytes));
 const incomingPercent = computed(() => progressPercent(incomingTransfer.value?.receivedBytes, incomingTransfer.value?.totalBytes));
 const incomingOfferVisible = computed(() => incomingTransfer.value?.status === 'offering');
-const incomingExceedsMemoryLimit = computed(() => (incomingTransfer.value?.totalBytes || 0) > BROWSER_MAX_IN_MEMORY_TRANSFER_BYTES);
 const incomingParticipant = computed(() => participants.value.find((participant) => participant.participantId === incomingTransfer.value?.sourceParticipantId) || null);
 const incomingOfferDescription = computed(() => t('fileTransfer.incoming.description', {
     device: incomingParticipant.value?.displayName || t('common.unknown'),
@@ -877,12 +862,6 @@ function handleIncomingOffer(context, transfer) {
         return;
     }
     updateIncomingTransfer(context, transfer);
-    if (transfer.totalBytes > BROWSER_MAX_IN_MEMORY_TRANSFER_BYTES) {
-        showToast(t('fileTransfer.incoming.memoryLimitExceeded', {
-            size: formatFileSize(transfer.totalBytes),
-            limit: formatFileSize(BROWSER_MAX_IN_MEMORY_TRANSFER_BYTES)
-        }), 'warning');
-    }
 }
 
 function updateIncomingTransfer(context, transfer) {
@@ -1051,16 +1030,26 @@ function rejectIncomingTransfer() {
 }
 
 async function acceptIncomingInBrowser() {
-    if (incomingExceedsMemoryLimit.value) {
-        showToast(t('fileTransfer.incoming.memoryLimitExceeded', {
-            size: formatFileSize(incomingTransfer.value?.totalBytes || 0),
-            limit: formatFileSize(BROWSER_MAX_IN_MEMORY_TRANSFER_BYTES)
-        }), 'warning');
-        return;
-    }
+    const transfer = incomingTransfer.value;
+    const context = peerContexts.get(transfer?.sourceParticipantId);
+    if (!transfer || !context) return;
+    const targets = [];
     try {
-        await peerContexts.get(incomingTransfer.value?.sourceParticipantId)?.fileTransfer.acceptIncoming();
+        const createTarget = (file) => prepareDownload({
+                fileName: file.name,
+                size: file.size,
+                mimeType: file.type,
+                allowFileAccess: transfer.files.length === 1
+            });
+        targets.push(await createTarget(transfer.files[0]));
+        if (targets[0].method === 'blob') {
+            const oversized = transfer.files.find((file) => file.size > DEFAULT_MAX_BLOB_DOWNLOAD_BYTES);
+            if (oversized) throw createBlobSizeLimitError(oversized.size);
+        }
+        await context.fileTransfer.acceptIncoming({targets, createTarget});
     } catch (error) {
+        await Promise.allSettled(targets.filter((target) => !target.done).map((target) => target.abort(error)));
+        if (error?.name === 'AbortError') return;
         showError(t('fileTransfer.messages.transferFailed', {message: error?.message || t('common.unknown')}));
     }
 }
@@ -1087,16 +1076,12 @@ function addReceivedFile(file, participant) {
         ...file,
         id: `${participant.participantId}:${file.transferId}:${file.fileIndex}`,
         sourceParticipantId: participant.participantId,
-        sourceName: participant.displayName,
-        url: file.blob ? URL.createObjectURL(file.blob) : ''
+        sourceName: participant.displayName
     };
     receivedFiles.value = [entry, ...receivedFiles.value];
 }
 
 function clearReceivedFiles() {
-    for (const file of receivedFiles.value) {
-        if (file.url) URL.revokeObjectURL(file.url);
-    }
     receivedFiles.value = [];
 }
 

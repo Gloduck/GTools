@@ -100,13 +100,10 @@ export const fileTransferMessages = {
             incoming: {
                 title: '收到文件请求',
                 description: '{device} 希望发送 {count} 个文件，共 {size}。',
-                acceptBrowser: '在浏览器中接收',
+                acceptBrowser: '在浏览器中下载',
                 acceptFolder: '保存到文件夹',
                 reject: '拒绝',
-                memoryWarning: '浏览器接收模式会暂存在内存中，整批文件超过 {limit} 时必须直接保存到文件夹。',
-                memoryLimitExceeded: '文件总大小为 {size}，已超过浏览器内存接收上限 {limit}，文件内容尚未开始传输。',
-                memoryTooLarge: '文件过大，无法使用内存接收',
-                largeFileUnavailable: '当前浏览器不支持直接保存到文件夹，无法接收这批大文件。请改用 Chrome、Edge 或让发送方拆分文件。',
+                memoryWarning: '优先使用文件选择器或流式下载；仅在两者不可用时使用 Blob，Blob 回退上限为 {limit}。',
                 receiving: '正在接收',
                 completed: '接收完成',
                 rejected: '已拒绝文件请求',
@@ -115,7 +112,7 @@ export const fileTransferMessages = {
             received: {
                 title: '已接收文件',
                 empty: '接收完成的文件会显示在这里',
-                download: '下载文件',
+                downloaded: '已完成浏览器下载',
                 saved: '已写入磁盘'
             },
             progress: {
@@ -250,13 +247,10 @@ export const fileTransferMessages = {
             incoming: {
                 title: 'Incoming file request',
                 description: '{device} wants to send {count} files ({size}).',
-                acceptBrowser: 'Receive in browser',
+                acceptBrowser: 'Download in browser',
                 acceptFolder: 'Save to folder',
                 reject: 'Reject',
-                memoryWarning: 'Browser mode temporarily stores data in memory. Transfers larger than {limit} must be saved directly to a folder.',
-                memoryLimitExceeded: 'The transfer is {size}, exceeding the {limit} in-memory limit. File data has not started transferring.',
-                memoryTooLarge: 'Too large for in-memory receiving',
-                largeFileUnavailable: 'This browser cannot save directly to a folder, so it cannot receive this large transfer. Use Chrome or Edge, or ask the sender to split the files.',
+                memoryWarning: 'The file picker or streaming download is preferred. Blob is used only as a fallback and is limited to {limit}.',
                 receiving: 'Receiving',
                 completed: 'Receive complete',
                 rejected: 'File request rejected',
@@ -265,7 +259,7 @@ export const fileTransferMessages = {
             received: {
                 title: 'Received files',
                 empty: 'Completed files will appear here',
-                download: 'Download file',
+                downloaded: 'Browser download completed',
                 saved: 'Written to disk'
             },
             progress: {

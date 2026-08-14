@@ -5,6 +5,7 @@ import cn.gloduck.api.entity.model.torrent.TorrentFileInfo;
 import cn.gloduck.api.entity.model.torrent.TorrentInfo;
 import cn.gloduck.api.exceptions.ApiError;
 import cn.gloduck.api.exceptions.ApiException;
+import cn.gloduck.api.service.http.HttpClientProvider;
 import cn.gloduck.api.utils.DateUtils;
 import cn.gloduck.api.utils.NetUtils;
 import cn.gloduck.api.utils.Patterns;
@@ -19,8 +20,8 @@ import java.net.http.HttpRequest;
 import java.util.*;
 
 public abstract class AbstractNyaaSiHandler extends AbstractTorrentHandler {
-    public AbstractNyaaSiHandler(TorrentConfig torrentConfig, TorrentConfig.WebConfig config) {
-        super(torrentConfig, config);
+    public AbstractNyaaSiHandler(TorrentConfig torrentConfig, TorrentConfig.WebConfig config, HttpClientProvider httpClientProvider) {
+        super(torrentConfig, config, httpClientProvider);
     }
 
     @Override

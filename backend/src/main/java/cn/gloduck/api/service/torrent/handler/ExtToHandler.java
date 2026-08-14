@@ -5,6 +5,7 @@ import cn.gloduck.api.entity.model.torrent.TorrentFileInfo;
 import cn.gloduck.api.entity.model.torrent.TorrentInfo;
 import cn.gloduck.api.exceptions.ApiError;
 import cn.gloduck.api.exceptions.ApiException;
+import cn.gloduck.api.service.http.HttpClientProvider;
 import cn.gloduck.api.utils.NetUtils;
 import cn.gloduck.api.utils.Patterns;
 import cn.gloduck.api.utils.UnitUtils;
@@ -95,8 +96,8 @@ public class ExtToHandler extends AbstractTorrentHandler {
         return date;
     }
 
-    public ExtToHandler(TorrentConfig torrentConfig, TorrentConfig.WebConfig config) {
-        super(torrentConfig, config);
+    public ExtToHandler(TorrentConfig torrentConfig, TorrentConfig.WebConfig config, HttpClientProvider httpClientProvider) {
+        super(torrentConfig, config, httpClientProvider);
     }
 
     @Override

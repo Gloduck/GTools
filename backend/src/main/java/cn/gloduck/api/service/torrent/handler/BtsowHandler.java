@@ -3,6 +3,7 @@ package cn.gloduck.api.service.torrent.handler;
 import cn.gloduck.api.entity.config.TorrentConfig;
 import cn.gloduck.api.entity.model.torrent.TorrentFileInfo;
 import cn.gloduck.api.entity.model.torrent.TorrentInfo;
+import cn.gloduck.api.service.http.HttpClientProvider;
 import cn.gloduck.common.entity.base.ScrollPageResult;
 import com.fasterxml.jackson.databind.JsonNode;
 
@@ -14,8 +15,8 @@ import java.util.logging.Logger;
 public class BtsowHandler extends AbstractTorrentHandler {
     private static final int DEFAULT_PAGE_SIZE = 100;
 
-    public BtsowHandler(TorrentConfig torrentConfig, TorrentConfig.WebConfig config) {
-        super(torrentConfig, config);
+    public BtsowHandler(TorrentConfig torrentConfig, TorrentConfig.WebConfig config, HttpClientProvider httpClientProvider) {
+        super(torrentConfig, config, httpClientProvider);
     }
 
     @Override

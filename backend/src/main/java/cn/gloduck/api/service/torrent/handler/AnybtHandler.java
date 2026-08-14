@@ -2,6 +2,7 @@ package cn.gloduck.api.service.torrent.handler;
 
 import cn.gloduck.api.entity.config.TorrentConfig;
 import cn.gloduck.api.entity.model.torrent.TorrentInfo;
+import cn.gloduck.api.service.http.HttpClientProvider;
 import cn.gloduck.common.entity.base.ScrollPageResult;
 import cn.gloduck.api.utils.JsonUtils;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -21,8 +22,8 @@ public class AnybtHandler extends AbstractTorrentHandler {
 
     private static final String DETAIL_SQL_TEMPLATE = "select /*+ SET_VAR(full_text_option='{\"highlight\":{ \"fields\":[\"file_name\"]}}') */ file_name,filesize,total_count,_id,category,firstadd_utc_timestamp,_score from library.dht where _id = '%s'";
 
-    public AnybtHandler(TorrentConfig torrentConfig, TorrentConfig.WebConfig config) {
-        super(torrentConfig, config);
+    public AnybtHandler(TorrentConfig torrentConfig, TorrentConfig.WebConfig config, HttpClientProvider httpClientProvider) {
+        super(torrentConfig, config, httpClientProvider);
     }
 
     @Override

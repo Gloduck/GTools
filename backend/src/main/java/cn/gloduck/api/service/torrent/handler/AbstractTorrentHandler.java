@@ -3,7 +3,7 @@ package cn.gloduck.api.service.torrent.handler;
 import cn.gloduck.api.entity.config.TorrentConfig;
 import cn.gloduck.api.exceptions.ApiError;
 import cn.gloduck.api.exceptions.ApiException;
-import cn.gloduck.api.utils.HttpClientUtils;
+import cn.gloduck.api.service.http.HttpClientProvider;
 import cn.gloduck.api.utils.JsonUtils;
 import com.fasterxml.jackson.databind.JsonNode;
 
@@ -20,7 +20,11 @@ public abstract class AbstractTorrentHandler implements TorrentHandler {
 
     private static final String AVAILABLE_CHECK_KEYWORD = "1080p";
 
-    protected final HttpClient httpClient;
+    private final HttpClientProvider httpClientProvider;
+
+    private final String proxy;
+
+    private final boolean trustAllCertificates;
 
     protected final String baseUrl;
 
@@ -52,7 +56,7 @@ public abstract class AbstractTorrentHandler implements TorrentHandler {
     public JsonNode sendJsonRequest(HttpRequest request) {
         String body = null;
         try {
-            HttpResponse<String> response = httpClient.send(request, new StringBodyHandler());
+            HttpResponse<String> response = getHttpClient().send(request, new StringBodyHandler());
             body = response.body();
             if (response.statusCode() != 200) {
                 throw new RuntimeException(String.format("Server response error code: %s, response: %s", response.statusCode(), response.body()));
@@ -67,7 +71,7 @@ public abstract class AbstractTorrentHandler implements TorrentHandler {
     public String sendPlainTextRequest(HttpRequest request) {
         String body = null;
         try {
-            HttpResponse<String> response = httpClient.send(request, new StringBodyHandler());
+            HttpResponse<String> response = getHttpClient().send(request, new StringBodyHandler());
             body = response.body();
             if (response.statusCode() != 200) {
                 throw new RuntimeException(String.format("Server response error code: %s, response: %s", response.statusCode(), response.body()));
@@ -118,17 +122,11 @@ public abstract class AbstractTorrentHandler implements TorrentHandler {
     }
 
 
-    private HttpClient buildClientByConfig(TorrentConfig torrentConfig, TorrentConfig.WebConfig config) {
-        boolean useProxy = Boolean.TRUE.equals(config.useProxy);
-        String proxy = torrentConfig.proxy;
-        boolean bypassCf = Boolean.TRUE.equals(config.bypassCf);
-        // 如果要绕过CF，则应该让CF的绕过服务器来使用代理
-        useProxy = useProxy && !bypassCf;
-        proxy = useProxy ? proxy : null;
-        return HttpClientUtils.buildClient(5, proxy, Boolean.TRUE.equals(config.trustAllCertificates));
+    protected HttpClient getHttpClient() {
+        return httpClientProvider.getClient(5, proxy, trustAllCertificates);
     }
 
-    public AbstractTorrentHandler(TorrentConfig torrentConfig, TorrentConfig.WebConfig config) {
+    public AbstractTorrentHandler(TorrentConfig torrentConfig, TorrentConfig.WebConfig config, HttpClientProvider httpClientProvider) {
         this.baseUrl = config.url;
         this.requestTimeout = Optional.ofNullable(config.requestTimeout).orElse(5);
         String bypassCfApi = null;
@@ -143,7 +141,10 @@ public abstract class AbstractTorrentHandler implements TorrentHandler {
         }
         this.bypassCfApi = bypassCfApi;
         this.bypassCfApiProxy = bypassCfApiProxy;
-        this.httpClient = buildClientByConfig(torrentConfig, config);
+        this.httpClientProvider = httpClientProvider;
+        boolean useProxy = Boolean.TRUE.equals(config.useProxy) && !bypassCf;
+        this.proxy = useProxy ? torrentConfig.proxy : null;
+        this.trustAllCertificates = Boolean.TRUE.equals(config.trustAllCertificates);
     }
 
 }

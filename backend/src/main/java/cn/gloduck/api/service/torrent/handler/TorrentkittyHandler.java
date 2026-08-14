@@ -3,6 +3,7 @@ package cn.gloduck.api.service.torrent.handler;
 import cn.gloduck.api.entity.config.TorrentConfig;
 import cn.gloduck.api.entity.model.torrent.TorrentFileInfo;
 import cn.gloduck.api.entity.model.torrent.TorrentInfo;
+import cn.gloduck.api.service.http.HttpClientProvider;
 import cn.gloduck.api.utils.DateUtils;
 import cn.gloduck.api.utils.StringUtils;
 import cn.gloduck.api.utils.UnitUtils;
@@ -19,8 +20,8 @@ import java.util.*;
 
 public class TorrentkittyHandler extends AbstractTorrentHandler {
 
-    public TorrentkittyHandler(TorrentConfig torrentConfig, TorrentConfig.WebConfig config) {
-        super(torrentConfig, config);
+    public TorrentkittyHandler(TorrentConfig torrentConfig, TorrentConfig.WebConfig config, HttpClientProvider httpClientProvider) {
+        super(torrentConfig, config, httpClientProvider);
     }
 
     @Override

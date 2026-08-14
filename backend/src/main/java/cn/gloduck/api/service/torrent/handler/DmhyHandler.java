@@ -5,6 +5,7 @@ import cn.gloduck.api.entity.model.torrent.TorrentFileInfo;
 import cn.gloduck.api.entity.model.torrent.TorrentInfo;
 import cn.gloduck.api.exceptions.ApiError;
 import cn.gloduck.api.exceptions.ApiException;
+import cn.gloduck.api.service.http.HttpClientProvider;
 import cn.gloduck.api.utils.DateUtils;
 import cn.gloduck.api.utils.Patterns;
 import cn.gloduck.api.utils.StringUtils;
@@ -23,8 +24,8 @@ import java.util.*;
 public class DmhyHandler extends AbstractTorrentHandler {
 
 
-    public DmhyHandler(TorrentConfig torrentConfig, TorrentConfig.WebConfig config) {
-        super(torrentConfig, config);
+    public DmhyHandler(TorrentConfig torrentConfig, TorrentConfig.WebConfig config, HttpClientProvider httpClientProvider) {
+        super(torrentConfig, config, httpClientProvider);
     }
 
     @Override

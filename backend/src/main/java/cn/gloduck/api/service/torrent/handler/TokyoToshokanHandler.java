@@ -4,6 +4,7 @@ import cn.gloduck.api.entity.config.TorrentConfig;
 import cn.gloduck.api.entity.model.torrent.TorrentInfo;
 import cn.gloduck.api.exceptions.ApiError;
 import cn.gloduck.api.exceptions.ApiException;
+import cn.gloduck.api.service.http.HttpClientProvider;
 import cn.gloduck.api.utils.*;
 import cn.gloduck.common.entity.base.ScrollPageResult;
 import org.jsoup.Jsoup;
@@ -22,8 +23,8 @@ public class TokyoToshokanHandler extends AbstractTorrentHandler {
     private static final Pattern CUR_PAGE_INFO_NUMBER_PATTERN = Pattern.compile("Showing results (\\d+) to (\\d+) of (\\d+)");
     private static final Pattern CUR_PAGE_INFO_PATTERN = Pattern.compile("Showing results \\d+ to \\d+ of \\d+");
 
-    public TokyoToshokanHandler(TorrentConfig torrentConfig, TorrentConfig.WebConfig config) {
-        super(torrentConfig, config);
+    public TokyoToshokanHandler(TorrentConfig torrentConfig, TorrentConfig.WebConfig config, HttpClientProvider httpClientProvider) {
+        super(torrentConfig, config, httpClientProvider);
     }
 
     @Override

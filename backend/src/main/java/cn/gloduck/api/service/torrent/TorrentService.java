@@ -5,6 +5,7 @@ import cn.gloduck.api.entity.model.torrent.TorrentHandlerInfo;
 import cn.gloduck.api.entity.model.torrent.TorrentInfo;
 import cn.gloduck.api.exceptions.ApiError;
 import cn.gloduck.api.exceptions.ApiException;
+import cn.gloduck.api.service.http.HttpClientProvider;
 import cn.gloduck.api.service.torrent.handler.*;
 import cn.gloduck.common.entity.base.ScrollPageResult;
 import jakarta.enterprise.context.ApplicationScoped;
@@ -15,7 +16,6 @@ import java.util.*;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
-import java.util.function.BiFunction;
 import java.util.logging.Logger;
 
 @ApplicationScoped
@@ -24,9 +24,11 @@ public class TorrentService {
     private final Map<String, Boolean> handlerStatusMap;
     private final List<TorrentHandler> torrentHandlers;
     private final ScheduledExecutorService scheduledExecutor;
+    private final HttpClientProvider httpClientProvider;
 
-    public TorrentService(TorrentConfig config) {
+    public TorrentService(TorrentConfig config, HttpClientProvider httpClientProvider) {
         this.config = config;
+        this.httpClientProvider = httpClientProvider;
         this.torrentHandlers = new ArrayList<>();
         this.scheduledExecutor = Executors.newSingleThreadScheduledExecutor();
         tryInitHandler(config, config.btsow, BtsowHandler::new);
@@ -43,12 +45,12 @@ public class TorrentService {
         scheduledExecutor.scheduleAtFixedRate(checkHandlerStatusTask(), 0, 30, TimeUnit.MINUTES);
     }
 
-    private void tryInitHandler(TorrentConfig torrentConfig, TorrentConfig.WebConfig config, BiFunction<TorrentConfig, TorrentConfig.WebConfig, TorrentHandler> initializer) {
+    private void tryInitHandler(TorrentConfig torrentConfig, TorrentConfig.WebConfig config, TorrentHandlerInitializer initializer) {
         if (config == null) {
             return;
         }
         checkConfig(torrentConfig, config);
-        TorrentHandler handler = initializer.apply(torrentConfig, config);
+        TorrentHandler handler = initializer.apply(torrentConfig, config, httpClientProvider);
         this.torrentHandlers.add(handler);
     }
 
@@ -169,4 +171,9 @@ public class TorrentService {
     }
 
     private final TorrentConfig config;
+
+    @FunctionalInterface
+    private interface TorrentHandlerInitializer {
+        TorrentHandler apply(TorrentConfig torrentConfig, TorrentConfig.WebConfig config, HttpClientProvider httpClientProvider);
+    }
 }

@@ -5,6 +5,7 @@ import cn.gloduck.api.entity.model.torrent.TorrentFileInfo;
 import cn.gloduck.api.entity.model.torrent.TorrentInfo;
 import cn.gloduck.api.exceptions.ApiError;
 import cn.gloduck.api.exceptions.ApiException;
+import cn.gloduck.api.service.http.HttpClientProvider;
 import cn.gloduck.api.utils.NetUtils;
 import cn.gloduck.api.utils.Patterns;
 import cn.gloduck.api.utils.StringUtils;
@@ -63,14 +64,14 @@ public class BtDiggHandler extends AbstractTorrentHandler {
         return date;
     }
 
-    public BtDiggHandler(TorrentConfig torrentConfig, TorrentConfig.WebConfig config) {
-        super(torrentConfig, config);
+    public BtDiggHandler(TorrentConfig torrentConfig, TorrentConfig.WebConfig config, HttpClientProvider httpClientProvider) {
+        super(torrentConfig, config, httpClientProvider);
     }
 
     public String sendPlainTextGetRequest(String requestUrl, int depth) {
         String body = null;
         try {
-            HttpResponse<String> response = httpClient.send(requestBuilder(requestUrl).GET().build(), new StringBodyHandler());
+            HttpResponse<String> response = getHttpClient().send(requestBuilder(requestUrl).GET().build(), new StringBodyHandler());
             if (response.statusCode() == 200) {
                 body = response.body();
             } else if (response.statusCode() == 302 || response.statusCode() == 301) {

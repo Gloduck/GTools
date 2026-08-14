@@ -1,4 +1,4 @@
-const MARKDOWN_STYLE = `<style data-gtools-markdown>
+const MARKDOWN_STYLE = `<style data-markdown-renderer>
 .markdown-rendered { color: inherit; font: inherit; line-height: 1.55; overflow-wrap: anywhere; word-break: normal; }
 .markdown-rendered > * { margin: 0 0 0.75em; }
 .markdown-rendered > *:last-child { margin-bottom: 0; }

@@ -12,7 +12,7 @@ import { codeEditorMessages } from './messages/code-editor.js';
 import { fileTransferMessages } from './messages/file-transfer.js';
 
 const DEFAULT_LOCALE = 'zh-CN';
-const STORAGE_KEY = 'gtools-locale';
+const STORAGE_KEY = 'ui-locale';
 const CODE_EDITOR_STORAGE_KEY = 'browser-code-editor-settings';
 const SUPPORTED_LOCALES = ['zh-CN', 'en-US'];
 

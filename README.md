@@ -200,11 +200,11 @@ node --test frontend/test/unit/*.test.js
 
 GitHub file-system integration tests can be enabled through command-line arguments or these environment variables:
 
-- `GTOOLS_GITHUB_INTEGRATION`
-- `GTOOLS_GITHUB_TOKEN`
-- `GTOOLS_GITHUB_REPO`
-- `GTOOLS_GITHUB_BRANCH`
-- `GTOOLS_GITHUB_ROOT`
+- `GITHUB_TEST_INTEGRATION`
+- `GITHUB_TEST_TOKEN`
+- `GITHUB_TEST_REPO`
+- `GITHUB_TEST_BRANCH`
+- `GITHUB_TEST_ROOT`
 
 ## Code Editor
 

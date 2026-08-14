@@ -1,7 +1,7 @@
 import {CommonUtils} from '../common-utils.js';
 
-const CONTROL_CHANNEL = 'gtools-control';
-const DATA_CHANNEL = 'gtools-data';
+const CONTROL_CHANNEL = 'file-transfer-control';
+const DATA_CHANNEL = 'file-transfer-data';
 const ICE_GATHERING_TIMEOUT_MS = 10_000;
 
 export class WebRtcPeerConnection {

@@ -37,16 +37,16 @@ import {
 
 const testArguments = loadTestArguments();
 const githubTestConfig = Object.freeze({
-    token: getTestArgument(testArguments, 'github-token', {environment: 'GTOOLS_GITHUB_TOKEN'}),
-    repo: getTestArgument(testArguments, 'github-repo', {environment: 'GTOOLS_GITHUB_REPO'}),
-    branch: getTestArgument(testArguments, 'github-branch', {environment: 'GTOOLS_GITHUB_BRANCH'}),
+    token: getTestArgument(testArguments, 'github-token', {environment: 'GITHUB_TEST_TOKEN'}),
+    repo: getTestArgument(testArguments, 'github-repo', {environment: 'GITHUB_TEST_REPO'}),
+    branch: getTestArgument(testArguments, 'github-branch', {environment: 'GITHUB_TEST_BRANCH'}),
     rootPath: getTestArgument(testArguments, 'github-root', {
-        environment: 'GTOOLS_GITHUB_ROOT',
-        defaultValue: '.gtools-integration',
+        environment: 'GITHUB_TEST_ROOT',
+        defaultValue: '.browser-tools-integration',
     }),
 });
 const githubIntegrationEnabled = isTestArgumentEnabled(testArguments, 'github-integration', {
-    environment: 'GTOOLS_GITHUB_INTEGRATION',
+    environment: 'GITHUB_TEST_INTEGRATION',
 }) || Boolean(githubTestConfig.token && githubTestConfig.repo && githubTestConfig.branch);
 
 test('场景：规范化根目录相对路径并拒绝越过根目录', () => {
@@ -922,7 +922,7 @@ test('场景：真实 GithubProvider 完成文本读写、冲突刷新和清理'
         const initialText = `created:${runId}\n`;
         const created = await fileSystem.writeText(filePath, initialText, {
             expectedVersion: null,
-            message: `GTools test create ${runId}`,
+            message: `File system test create ${runId}`,
         });
         assert.ok(created.version);
         assert.equal(await fileSystem.readText(filePath), initialText);
@@ -935,7 +935,7 @@ test('场景：真实 GithubProvider 完成文本读写、冲突刷新和清理'
         const updatedText = `updated:${runId}\n`;
         const updated = await fileSystem.writeText(filePath, updatedText, {
             expectedVersion: created.version,
-            message: `GTools test update ${runId}`,
+            message: `File system test update ${runId}`,
         });
         assert.notEqual(updated.version, created.version);
 
@@ -944,17 +944,17 @@ test('场景：真实 GithubProvider 完成文本读写、冲突刷新和清理'
         await session.stageText(filePath, `local:${runId}\n`);
         const external = await fileSystem.writeText(filePath, `external:${runId}\n`, {
             expectedVersion: updated.version,
-            message: `GTools test external update ${runId}`,
+            message: `File system test external update ${runId}`,
         });
         await assert.rejects(session.commit(filePath), FileConflictError);
         await session.refreshChangeBase(filePath);
         assert.equal(session.getChange(filePath).baseVersion, external.version);
 
-        const retried = await session.commit(filePath, {message: `GTools test retry ${runId}`});
+        const retried = await session.commit(filePath, {message: `File system test retry ${runId}`});
         assert.equal(await fileSystem.readText(filePath), `local:${runId}\n`);
         await fileSystem.remove(filePath, {
             expectedVersion: retried.version,
-            message: `GTools test delete ${runId}`,
+            message: `File system test delete ${runId}`,
         });
         await assert.rejects(fileSystem.stat(filePath), {code: 'FILE_NOT_FOUND'});
     } finally {
@@ -978,17 +978,17 @@ test('场景：真实 GithubProvider 完成二进制 copy、move 和目录列表
     try {
         const created = await fileSystem.writeBlob(sourcePath, new Blob([bytes], {type: 'application/octet-stream'}), {
             expectedVersion: null,
-            message: `GTools binary create ${runId}`,
+            message: `File system binary create ${runId}`,
         });
         assert.deepEqual(new Uint8Array(await (await fileSystem.readBlob(sourcePath)).arrayBuffer()), bytes);
 
         const copied = await fileSystem.copyFile(sourcePath, copyPath, {
             sourceExpectedVersion: created.version,
-            message: `GTools binary copy ${runId}`,
+            message: `File system binary copy ${runId}`,
         });
         await fileSystem.rename(copyPath, movedPath, {
             sourceExpectedVersion: copied.version,
-            message: `GTools binary move ${runId}`,
+            message: `File system binary move ${runId}`,
         });
         assert.deepEqual(new Uint8Array(await (await fileSystem.readBlob(movedPath)).arrayBuffer()), bytes);
         assert.deepEqual((await fileSystem.list(directory)).map((entry) => entry.name).sort(), ['moved.bin', 'source.bin']);
@@ -1257,7 +1257,7 @@ async function removeGithubFileIfPresent(fileSystem, path) {
         try {
             await fileSystem.remove(path, {
                 expectedVersion: entry.version,
-                message: `GTools test cleanup ${path}`,
+                message: `File system test cleanup ${path}`,
             });
             return;
         } catch (error) {

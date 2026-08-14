@@ -10,7 +10,7 @@ export const fileTransferMessages = {
             hero: {
                 eyebrow: 'WEBRTC DATA CHANNEL',
                 title: '让文件直接抵达另一台设备',
-                description: '后端只交换连接信息，文件内容通过加密的点对点通道传输，不经过 GTools 服务器。',
+                description: '后端只交换连接信息，文件内容通过加密的点对点通道传输，不经过应用服务器。',
                 direct: '端到端直传',
                 encrypted: 'DTLS 加密',
                 temporary: '临时会话'
@@ -159,7 +159,7 @@ export const fileTransferMessages = {
             hero: {
                 eyebrow: 'WEBRTC DATA CHANNEL',
                 title: 'Send files straight to another device',
-                description: 'The server only exchanges connection metadata. File contents travel through an encrypted peer-to-peer channel and never pass through GTools.',
+                description: 'The server only exchanges connection metadata. File contents travel through an encrypted peer-to-peer channel and never pass through the application server.',
                 direct: 'Direct transfer',
                 encrypted: 'DTLS encrypted',
                 temporary: 'Temporary session'

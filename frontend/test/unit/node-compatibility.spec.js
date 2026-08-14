@@ -56,7 +56,7 @@ test('同一文件读写脚本在本地 Node 和浏览器内存文件系统结�
         'fs.writeFileSync("output/result.txt", output);',
         'module.exports = {output, size: fs.statSync("output/result.txt").size};',
     ].join('\n');
-    const directory = await mkdtemp(join(tmpdir(), 'gtools-node-compat-'));
+    const directory = await mkdtemp(join(tmpdir(), 'node-compat-'));
     try {
         await writeFile(join(directory, 'input.txt'), 'hello');
         await writeFile(join(directory, 'data.bin'), new Uint8Array([1, 2, 255]));
@@ -126,7 +126,7 @@ test('受支持的对称加密算法与本地 Node 产生相同密文和认证�
 });
 
 async function runNativeCommonJs(code, {input = null, cwd} = {}) {
-    const directory = cwd || await mkdtemp(join(tmpdir(), 'gtools-native-script-'));
+    const directory = cwd || await mkdtemp(join(tmpdir(), 'native-script-'));
     const temporaryDirectory = !cwd;
     const scriptPath = join(directory, 'runtime-script.cjs');
     await writeFile(scriptPath, [

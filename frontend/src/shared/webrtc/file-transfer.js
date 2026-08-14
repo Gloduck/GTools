@@ -1,4 +1,4 @@
-const PROTOCOL = 'gtools-file-transfer';
+const PROTOCOL = 'browser-file-transfer';
 const PROTOCOL_VERSION = 1;
 const FRAME_MAGIC = 0x47544631;
 const FRAME_HEADER_BYTES = 37;

@@ -26,16 +26,16 @@ test('场景：测试参数支持等号、独立值和布尔开关', () => {
 });
 
 test('场景：测试参数优先于环境变量并支持默认值', () => {
-    const original = process.env.GTOOLS_TEST_ARGUMENT;
-    process.env.GTOOLS_TEST_ARGUMENT = 'environment';
+    const original = process.env.FRONTEND_TEST_ARGUMENT;
+    process.env.FRONTEND_TEST_ARGUMENT = 'environment';
     try {
         const values = {name: 'argument'};
-        assert.equal(getTestArgument(values, 'name', {environment: 'GTOOLS_TEST_ARGUMENT'}), 'argument');
-        assert.equal(getTestArgument({}, 'name', {environment: 'GTOOLS_TEST_ARGUMENT'}), 'environment');
+        assert.equal(getTestArgument(values, 'name', {environment: 'FRONTEND_TEST_ARGUMENT'}), 'argument');
+        assert.equal(getTestArgument({}, 'name', {environment: 'FRONTEND_TEST_ARGUMENT'}), 'environment');
         assert.equal(getTestArgument({}, 'missing', {defaultValue: 'fallback'}), 'fallback');
     } finally {
-        if (original === undefined) delete process.env.GTOOLS_TEST_ARGUMENT;
-        else process.env.GTOOLS_TEST_ARGUMENT = original;
+        if (original === undefined) delete process.env.FRONTEND_TEST_ARGUMENT;
+        else process.env.FRONTEND_TEST_ARGUMENT = original;
     }
 });
 
@@ -73,18 +73,18 @@ test('场景：测试参数文件支持 JSON 和 KEY=VALUE 格式', () => {
 });
 
 test('场景：命令行参数覆盖指定文件中的测试参数', () => {
-    const directory = mkdtempSync(join(tmpdir(), 'gtools-test-arguments-'));
+    const directory = mkdtempSync(join(tmpdir(), 'frontend-test-arguments-'));
     try {
         writeFileSync(join(directory, 'parameters.env'), [
             'github-token=file-token',
-            'GTOOLS_GITHUB_REPO=owner/repo',
+            'GITHUB_TEST_REPO=owner/repo',
         ].join('\n'));
         const values = loadTestArguments([
             '--test-parameters-file=parameters.env',
             '--github-token=argument-token',
         ], {cwd: directory});
         assert.equal(getTestArgument(values, 'github-token'), 'argument-token');
-        assert.equal(getTestArgument(values, 'github-repo', {environment: 'GTOOLS_GITHUB_REPO'}), 'owner/repo');
+        assert.equal(getTestArgument(values, 'github-repo', {environment: 'GITHUB_TEST_REPO'}), 'owner/repo');
     } finally {
         rmSync(directory, {recursive: true, force: true});
     }

@@ -200,11 +200,11 @@ node --test frontend/test/unit/*.test.js
 
 GitHub 文件系统集成测试可通过命令行参数或以下环境变量启用：
 
-- `GTOOLS_GITHUB_INTEGRATION`
-- `GTOOLS_GITHUB_TOKEN`
-- `GTOOLS_GITHUB_REPO`
-- `GTOOLS_GITHUB_BRANCH`
-- `GTOOLS_GITHUB_ROOT`
+- `GITHUB_TEST_INTEGRATION`
+- `GITHUB_TEST_TOKEN`
+- `GITHUB_TEST_REPO`
+- `GITHUB_TEST_BRANCH`
+- `GITHUB_TEST_ROOT`
 
 ## 代码编辑器
 

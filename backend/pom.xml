@@ -15,7 +15,6 @@
         <quarkus.platform.version>3.15.3</quarkus.platform.version>
         <compiler-plugin.version>3.13.0</compiler-plugin.version>
         <resources-plugin.version>3.3.1</resources-plugin.version>
-        <surefire-plugin.version>3.3.1</surefire-plugin.version>
         <graalvm.nativeimage.version>23.1.2</graalvm.nativeimage.version>
         <jsch.version>2.28.3</jsch.version>
         <quarkus.native.additional-build-args>--features=cn.gloduck.api.NativeReflectionRegistration\,cn.gloduck.api.JschNativeRegistration</quarkus.native.additional-build-args>
@@ -98,7 +97,6 @@
                         <goals>
                             <goal>build</goal>
                             <goal>generate-code</goal>
-                            <goal>generate-code-tests</goal>
                         </goals>
                     </execution>
                 </executions>
@@ -117,10 +115,6 @@
                 <configuration>
                     <encoding>${project.encoding}</encoding>
                 </configuration>
-            </plugin>
-            <plugin>
-                <artifactId>maven-surefire-plugin</artifactId>
-                <version>${surefire-plugin.version}</version>
             </plugin>
         </plugins>
     </build>

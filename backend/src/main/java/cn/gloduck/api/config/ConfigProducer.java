@@ -6,6 +6,7 @@ import cn.gloduck.api.entity.config.ProxyRequestConfig;
 import cn.gloduck.api.entity.config.ServerConfig;
 import cn.gloduck.api.entity.config.SshConfig;
 import cn.gloduck.api.entity.config.TorrentConfig;
+import cn.gloduck.api.entity.config.WebRtcConfig;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -45,6 +46,12 @@ public class ConfigProducer {
     @Produces
     public SshConfig sshConfig() {
         return convert(rootNode().path("ssh"), SshConfig.class);
+    }
+
+    /** 从配置文件的 webrtc 节点创建 WebRTC 配置对象。 */
+    @Produces
+    public WebRtcConfig webRtcConfig() {
+        return convert(rootNode().path("webrtc"), WebRtcConfig.class);
     }
 
     private JsonNode rootNode() {

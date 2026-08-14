@@ -118,5 +118,31 @@
     "securityKey": "",
     "maxConnections": 10,
     "heartbeatTimeoutSeconds": 60
+  },
+  "webrtc": {
+    "participantIdleTimeoutMs": 30000,
+    "emptySessionTimeoutMs": 30000,
+    "sessionIdleTimeoutMs": 120000,
+    "cleanupIntervalMs": 10000,
+    "closedSessionRetentionMs": 30000,
+    "maxSessions": 100,
+    "maxParticipants": 2,
+    "maxPendingEventsPerParticipant": 128,
+    "maxPendingEventBytesPerParticipant": 1048576,
+    "maxOutgoingEventsPerSync": 32,
+    "maxEventPayloadBytes": 262144,
+    "maxMetadataBytes": 16384,
+    "iceServers": [
+      {
+        "urls": [
+          "stun:stun.miwifi.com:3478",
+          "stun:stun.chat.bilibili.com:3478",
+          "stun:stun.cloudflare.com:3478",
+          "stun:stun.l.google.com:19302"
+        ],
+        "username": null,
+        "credential": null
+      }
+    ]
   }
 }

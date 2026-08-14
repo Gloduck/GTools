@@ -391,6 +391,11 @@
               <span>{{ tr('settings.aiAgentModel') }}</span>
               <input v-model="settings.ai.agentModels" spellcheck="false" :placeholder="tr('settings.aiAgentModelsPlaceholder')" @change="normalizeAgentModelsInput" />
             </label>
+            <label class="setting-row">
+              <span>{{ tr('settings.aiGlobalPrompt') }}</span>
+              <textarea v-model="settings.ai.globalPrompt" rows="6" spellcheck="false" :maxlength="AI_GLOBAL_PROMPT_MAX_CHARS" :placeholder="tr('settings.aiGlobalPromptPlaceholder')"></textarea>
+              <small class="setting-hint">{{ tr('settings.aiGlobalPromptHint', { count: settings.ai.globalPrompt.length, max: AI_GLOBAL_PROMPT_MAX_CHARS }) }}</small>
+            </label>
             <div class="setting-inline-row">
               <select v-model="agentModelToAdd" :aria-label="tr('settings.aiAgentModelToAdd')">
                 <option value="">{{ tr('settings.aiAgentModelToAdd') }}</option>
@@ -762,7 +767,7 @@ const LEGACY_AI_COMPLETE_SHORTCUT = "Ctrl+Shift+Enter";
 const LEGACY_FOLD_ALL_SHORTCUT = "Ctrl+K Ctrl+0";
 const LEGACY_UNFOLD_ALL_SHORTCUT = "Ctrl+K Ctrl+J";
 const vscodeShortcuts = { save: "Ctrl+S", format: "Shift+Alt+F", commandPalette: "Ctrl+P", search: "Ctrl+Shift+F", findReferences: "Shift+F12", preview: "Ctrl+Shift+V", toggleSidebar: "Ctrl+B", fold: "Ctrl+Shift+[", unfold: "Ctrl+Shift+]", foldAll: "Ctrl+Alt+[", unfoldAll: "Ctrl+Alt+]", aiComplete: "Ctrl+Alt+Enter" };
-const defaultAiSettings = { apiKey: "", baseUrl: "https://api.openai.com/v1", npmRegistryUrl: "", completionModel: "gpt-5.4-mini", imageModel: "gpt-image-1", agentModels: "gpt-5.5,gpt-5.4-mini", reasoningEffort: "default", autoSaveSessions: false };
+const defaultAiSettings = { apiKey: "", baseUrl: "https://api.openai.com/v1", npmRegistryUrl: "", completionModel: "gpt-5.4-mini", imageModel: "gpt-image-1", agentModels: "gpt-5.5,gpt-5.4-mini", globalPrompt: "", reasoningEffort: "default", autoSaveSessions: false };
 const defaultBackendSettings = { enabled: false, baseUrl: getCurrentBackendBaseUrl() };
 const DEFAULT_SSH_WHITELIST_TEMPLATE = [
   "pwd", "ls", "cat", "less", "more", "head", "tail", "grep", "egrep", "fgrep", "awk", "sed", "sort", "uniq", "wc", "cut", "tr", "tee", "xargs", "find", "stat", "file", "readlink", "realpath", "basename", "dirname", "tree",
@@ -861,6 +866,7 @@ const AI_ATTACHMENT_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/web
 const PREVIEW_INLINE_IMAGE_MAX_FILE_SIZE = 8 * 1024 * 1024;
 const AI_AGENTS_FILE_NAME = "AGENTS.md";
 const AI_AGENTS_MAX_CHARS = 30000;
+const AI_GLOBAL_PROMPT_MAX_CHARS = 4000;
 const AI_AGENT_MAX_TOOL_CALL_ROUNDS = 25;
 const AI_TOOL_OUTPUT_MIN_CHARS = 1000;
 const AI_TOOL_OUTPUT_DEFAULT_MAX_CHARS = 5000;
@@ -5991,6 +5997,8 @@ function getAgentInstructions() {
     "Resolve references like 'the file you created' from Recent chat and AI-touched files before using the current editor file. If multiple files match, ask a short clarification instead of editing or deleting the current file by default.",
     "Prefer small, targeted edits. Explain changed files briefly; do not paste whole modified files in chat.",
   ];
+  const globalPrompt = String(settings.ai.globalPrompt || "").trim();
+  if (globalPrompt) instructions.push(globalPrompt);
   const agentsMd = getRootAgentsMdContent();
   if (agentsMd) instructions.push(formatAgentsMdInstructions(agentsMd));
   return instructions.join(" ");
@@ -6838,6 +6846,7 @@ function normalizeSettings(value = {}) {
   if (!aiReasoningEfforts.includes(ai.reasoningEffort)) ai.reasoningEffort = defaultAiSettings.reasoningEffort;
   ai.autoSaveSessions = Boolean(ai.autoSaveSessions);
   ai.npmRegistryUrl = String(ai.npmRegistryUrl || "").trim().replace(/\/+$/, "");
+  ai.globalPrompt = String(ai.globalPrompt || "").slice(0, AI_GLOBAL_PROMPT_MAX_CHARS);
   backend.enabled = Boolean(backend.enabled);
   backend.baseUrl = normalizeBackendBaseUrlValue(backend.baseUrl) || defaultBackendSettings.baseUrl;
   if (!sshTerminalThemes[ssh.terminalTheme]) ssh.terminalTheme = defaultSshSettings.terminalTheme;

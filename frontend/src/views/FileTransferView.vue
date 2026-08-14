@@ -841,7 +841,7 @@ async function connectPeerContext(context, participant, reconnect = false) {
 
 function shouldReconnectPeer(context) {
     return ['failed', 'disconnected', 'closed'].includes(context.peerStatus)
-        || context.channelStatus === 'closed';
+        || (context.peerStatus === 'connected' && context.channelStatus === 'closed');
 }
 
 function removePeerContext(participantId) {

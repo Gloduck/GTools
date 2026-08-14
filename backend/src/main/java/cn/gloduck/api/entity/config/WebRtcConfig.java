@@ -4,7 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 public class WebRtcConfig {
-    /** 参与者多久未操作后被判定离线，单位为毫秒。 */
+    /** 普通参与者多久未操作后被判定离线，单位为毫秒；房主由会话空闲超时控制。 */
     public Long participantIdleTimeoutMs = 30_000L;
 
     /** 无参与者会话的保留时间，单位为毫秒。 */
@@ -23,7 +23,7 @@ public class WebRtcConfig {
     public Integer maxSessions = 100;
 
     /** 单个会话允许加入的最大参与者数量。 */
-    public Integer maxParticipants = 2;
+    public Integer maxParticipants = 10;
 
     /** 单个参与者允许积压的最大信令事件数量。 */
     public Integer maxPendingEventsPerParticipant = 128;

@@ -1196,16 +1196,18 @@ public class WebRtcSignalingService {
                     List<WebRtcParticipantState> timedOut = new ArrayList<>();
                     WebRtcParticipantState timedOutOwner = null;
                     for (WebRtcParticipantState participant : session.participants.values()) {
-                        if (now - participant.lastActivityAt >= config.participantIdleTimeoutMs) {
+                        long idleTime = now - participant.lastActivityAt;
+                        if (OWNER.equals(participant.role)) {
+                            // 房主使用更长的会话空闲窗口，允许移动设备短暂息屏后恢复原身份。
+                            if (idleTime >= config.sessionIdleTimeoutMs) timedOutOwner = participant;
+                        } else if (idleTime >= config.participantIdleTimeoutMs) {
                             timedOut.add(participant);
-                            if (OWNER.equals(participant.role)) {
-                                timedOutOwner = participant;
-                            }
                         }
                     }
 
                     if (timedOutOwner != null) {
                         closeSessionLocked(session, "PARTICIPANT_TIMEOUT", timedOutOwner.participantId, now);
+                        removeParticipantLocked(session, timedOutOwner, null, now, false);
                         for (WebRtcParticipantState participant : timedOut) {
                             removeParticipantLocked(session, participant, null, now, false);
                         }
@@ -1246,7 +1248,7 @@ public class WebRtcSignalingService {
         config.cleanupIntervalMs = positive(config.cleanupIntervalMs, 10_000L);
         config.closedSessionRetentionMs = positive(config.closedSessionRetentionMs, 30_000L);
         config.maxSessions = positive(config.maxSessions, 100);
-        config.maxParticipants = Math.max(2, positive(config.maxParticipants, 2));
+        config.maxParticipants = Math.max(2, positive(config.maxParticipants, 10));
         config.maxPendingEventsPerParticipant = positive(config.maxPendingEventsPerParticipant, 128);
         config.maxPendingEventBytesPerParticipant = positive(config.maxPendingEventBytesPerParticipant, 1_048_576);
         config.maxOutgoingEventsPerSync = positive(config.maxOutgoingEventsPerSync, 32);

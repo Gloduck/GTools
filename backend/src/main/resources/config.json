@@ -126,7 +126,7 @@
     "cleanupIntervalMs": 10000,
     "closedSessionRetentionMs": 30000,
     "maxSessions": 100,
-    "maxParticipants": 2,
+    "maxParticipants": 10,
     "maxPendingEventsPerParticipant": 128,
     "maxPendingEventBytesPerParticipant": 1048576,
     "maxOutgoingEventsPerSync": 32,

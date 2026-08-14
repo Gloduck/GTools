@@ -10,7 +10,7 @@ public class WebRtcConfigResponse {
     /** 当前后端支持的信令协议版本。 */
     public Integer protocolVersion;
 
-    /** 参与者无操作超时时间，单位为毫秒。 */
+    /** 普通参与者无操作超时时间，单位为毫秒。 */
     public Long participantIdleTimeoutMs;
 
     /** 会话无操作超时时间，单位为毫秒。 */

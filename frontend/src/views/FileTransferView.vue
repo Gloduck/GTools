@@ -225,7 +225,7 @@
                                     <span class="font-semibold text-blue-800">{{ transferStatusText(selectedOutgoingTransfer.status) }}</span>
                                     <span class="font-mono text-blue-700">{{ transferPercent(selectedOutgoingTransfer) }}%</span>
                                 </div>
-                                <p class="mt-2 truncate text-xs text-blue-700">{{ t('fileTransfer.progress.target', { device: selectedOutgoingTransfer.participantName || t('common.unknown') }) }}</p>
+                                <p class="mt-2 truncate text-xs text-blue-700">{{ t('fileTransfer.progress.target', { device: selectedOutgoingTransfer.targetName || t('common.unknown') }) }}</p>
                                 <div class="mt-3 h-2 overflow-hidden rounded-full bg-blue-100">
                                     <div class="h-full rounded-full bg-primary transition-[width] duration-200" :style="{ width: `${transferPercent(selectedOutgoingTransfer)}%` }"></div>
                                 </div>
@@ -233,7 +233,7 @@
                                     <span>{{ t('fileTransfer.progress.sent', { current: formatFileSize(selectedOutgoingTransfer.sentBytes), total: formatFileSize(selectedOutgoingTransfer.totalBytes) }) }}</span>
                                     <span>{{ t('fileTransfer.progress.fileCount', { completed: selectedOutgoingTransfer.completedFiles, total: selectedOutgoingTransfer.files.length }) }}</span>
                                 </div>
-                                <button v-if="isOutgoingTransferActive(selectedOutgoingTransfer)" type="button" class="mt-3 rounded-lg bg-white px-3 py-2 text-xs font-medium text-blue-700 transition-colors hover:bg-blue-100" @click="cancelOutgoingTransfer(selectedOutgoingTransfer.participantId)">
+                                <button v-if="isOutgoingTransferActive(selectedOutgoingTransfer)" type="button" class="mt-3 rounded-lg bg-white px-3 py-2 text-xs font-medium text-blue-700 transition-colors hover:bg-blue-100" @click="cancelOutgoingTransfer(selectedOutgoingTransfer.targetParticipantId)">
                                     {{ t('fileTransfer.files.cancel') }}
                                 </button>
                             </div>
@@ -266,7 +266,7 @@
                                     <span class="font-semibold text-green-800">{{ incomingStatusText(selectedIncomingTransfer.status) }}</span>
                                     <span class="font-mono text-green-700">{{ transferPercent(selectedIncomingTransfer) }}%</span>
                                 </div>
-                                <p class="mt-2 truncate text-xs text-green-700">{{ t('fileTransfer.progress.source', { device: selectedIncomingTransfer.participantName || t('common.unknown') }) }}</p>
+                                <p class="mt-2 truncate text-xs text-green-700">{{ t('fileTransfer.progress.source', { device: selectedIncomingTransfer.sourceName || t('common.unknown') }) }}</p>
                                 <div class="mt-3 h-2 overflow-hidden rounded-full bg-green-100">
                                     <div class="h-full rounded-full bg-green-500 transition-[width] duration-200" :style="{ width: `${transferPercent(selectedIncomingTransfer)}%` }"></div>
                                 </div>
@@ -390,6 +390,7 @@ const sessionCode = ref('');
 const joinCode = ref('');
 const isOwner = ref(false);
 const participants = shallowRef([]);
+const peerStateVersion = ref(0);
 const selectedTargetId = ref('');
 const incomingOfferParticipantId = ref('');
 const incomingActionBusy = ref(false);
@@ -901,14 +902,17 @@ function isCurrentPeerContext(context) {
 }
 
 function refreshParticipants() {
+    peerStateVersion.value += 1;
     participants.value = [...participants.value];
 }
 
 function getPeerSelectedFiles(participantId) {
+    peerStateVersion.value;
     return peerContexts.get(participantId)?.selectedFiles || [];
 }
 
 function getPeerTransfer(participantId, key) {
+    peerStateVersion.value;
     return peerContexts.get(participantId)?.[key] || null;
 }
 
@@ -922,6 +926,7 @@ function isOutgoingTransferActive(transfer) {
 }
 
 function findIncomingOfferParticipantId(preferredId = '') {
+    peerStateVersion.value;
     if (peerContexts.get(preferredId)?.incomingTransfer?.status === 'offering') return preferredId;
     for (const [participantId, context] of peerContexts) {
         if (context.incomingTransfer?.status === 'offering') return participantId;

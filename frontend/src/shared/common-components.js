@@ -44,20 +44,20 @@ const CommonComponents = {
             <header class="bg-white shadow-md py-3">
                 <div class="container mx-auto px-4">
                     <div class="flex items-center justify-between gap-3">
-                        <div class="flex items-center cursor-pointer" 
+                        <div class="flex min-w-0 flex-1 items-center cursor-pointer"
                              :class="{ 'hover:text-primary transition-colors': link }"
                              @click="handleHeaderClick">
-                             <i v-if="icon" :class="[icon, 'text-2xl mr-2 text-primary']"></i>
-                             <h1 class="text-[clamp(1.2rem,2vw,1.8rem)] font-bold text-dark">
+                             <i v-if="icon" :class="[icon, 'shrink-0 text-2xl mr-2 text-primary']"></i>
+                             <h1 class="min-w-0 truncate text-[clamp(1.2rem,2vw,1.8rem)] font-bold text-dark">
                                  <span class="text-primary">{{ displayTitle }}</span>
                              </h1>
                         </div>
                         <div class="flex min-w-0 items-center gap-3">
-                            <p v-if="displayDescription" class="hidden text-gray-600 text-sm sm:block">
+                            <p v-if="displayDescription" class="hidden min-w-0 truncate text-gray-600 text-sm sm:block">
                                 {{ displayDescription }}
                             </p>
                             <button type="button"
-                                    class="relative flex h-8 w-20 items-center rounded-full border border-gray-200 bg-gray-100 p-0.5 text-[11px] font-semibold outline-none transition-colors hover:border-primary focus-visible:ring-2 focus-visible:ring-primary/30"
+                                    class="relative flex h-8 w-20 shrink-0 items-center overflow-hidden rounded-full border border-gray-200 bg-gray-100 p-0.5 text-[11px] font-semibold outline-none transition-colors hover:border-primary focus-visible:ring-2 focus-visible:ring-primary/30"
                                     :title="t('common.language')"
                                     :aria-label="t('common.language')"
                                     :aria-pressed="currentLocale === 'en-US'"

@@ -9,7 +9,6 @@ import io.vertx.ext.web.handler.FileSystemAccess;
 import io.vertx.ext.web.handler.StaticHandler;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.event.Observes;
-import jakarta.inject.Inject;
 
 import java.nio.file.Path;
 
@@ -17,8 +16,11 @@ import java.nio.file.Path;
 public class ExternalFrontendRoute {
     private static final String INTERNAL_FRONTEND_ROOT = "META-INF/resources/";
 
-    @Inject
-    ServerConfig serverConfig;
+    private final ServerConfig serverConfig;
+
+    public ExternalFrontendRoute(ServerConfig serverConfig) {
+        this.serverConfig = serverConfig;
+    }
 
     void register(@Observes Router router) {
         if (serverConfig.frontendPath == null || serverConfig.frontendPath.isBlank()) {

@@ -26,6 +26,7 @@ import java.util.logging.Logger;
 public class SshWebSocketController {
     private static final Logger LOGGER = Logger.getLogger(SshWebSocketController.class.getName());
 
+    // Jakarta WebSocket 通过无参构造创建端点实例，因此这里保留 CDI 字段注入。
     @Inject
     SshService sshService;
 

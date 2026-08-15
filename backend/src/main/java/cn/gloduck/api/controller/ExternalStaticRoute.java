@@ -8,14 +8,16 @@ import io.vertx.ext.web.handler.FileSystemAccess;
 import io.vertx.ext.web.handler.StaticHandler;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.event.Observes;
-import jakarta.inject.Inject;
 
 import java.nio.file.Path;
 
 @ApplicationScoped
 public class ExternalStaticRoute {
-    @Inject
-    ServerConfig serverConfig;
+    private final ServerConfig serverConfig;
+
+    public ExternalStaticRoute(ServerConfig serverConfig) {
+        this.serverConfig = serverConfig;
+    }
 
     void register(@Observes Router router) {
         if (serverConfig.staticRoutes == null) {

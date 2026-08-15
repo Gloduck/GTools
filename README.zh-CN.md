@@ -177,6 +177,7 @@ bash script/remote-manage.sh status
 
 - `port`：HTTP 服务端口
 - `frontendPath`：内嵌前端不存在时使用的外部前端目录，默认 `frontend`
+- `staticRoutes`：外部静态文件的 URL 路由与目录映射列表
 - `maxBodySize`：请求体大小限制
 - `log`：日志级别、文件路径和单文件大小
 - `jrebel`：JRebel 许可证响应参数
@@ -196,6 +197,25 @@ bash script/remote-manage.sh status
   }
 }
 ```
+
+外部静态文件示例：
+
+```json
+{
+  "staticRoutes": [
+    {
+      "route": "/static/*",
+      "path": "static"
+    },
+    {
+      "route": "/downloads/*",
+      "path": "/srv/GTools/downloads"
+    }
+  ]
+}
+```
+
+`route` 必须以 `/` 开头并以 `/*` 结尾。相对 `path` 基于 JAR 或 Native 可执行文件所在目录解析，绝对路径直接使用。多个配置按声明顺序注册；同一路由配置多个目录时，前一个目录没有对应文件会继续尝试后一个目录。
 
 ## 测试
 

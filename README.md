@@ -177,6 +177,7 @@ Main configuration sections:
 
 - `port`: HTTP port
 - `frontendPath`: external frontend directory used when embedded resources are unavailable; defaults to `frontend`
+- `staticRoutes`: URL route and directory mappings for external static files
 - `maxBodySize`: request body limit
 - `log`: log level, output file, and maximum file size
 - `jrebel`: JRebel license response settings
@@ -196,6 +197,25 @@ Logging example:
   }
 }
 ```
+
+External static-file example:
+
+```json
+{
+  "staticRoutes": [
+    {
+      "route": "/static/*",
+      "path": "static"
+    },
+    {
+      "route": "/downloads/*",
+      "path": "/srv/GTools/downloads"
+    }
+  ]
+}
+```
+
+`route` must start with `/` and end with `/*`. Relative `path` values are resolved against the directory containing the JAR or Native executable; absolute paths are used as-is. Mappings are registered in declaration order, and multiple directories using the same route act as fallbacks when an earlier directory does not contain the requested file.
 
 ## Tests
 

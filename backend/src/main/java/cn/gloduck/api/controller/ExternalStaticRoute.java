@@ -1,29 +1,53 @@
 package cn.gloduck.api.controller;
 
+import cn.gloduck.api.entity.config.ServerConfig;
+import cn.gloduck.api.entity.config.StaticRouteConfig;
 import cn.gloduck.api.utils.FileUtils;
 import io.vertx.ext.web.Router;
 import io.vertx.ext.web.handler.FileSystemAccess;
 import io.vertx.ext.web.handler.StaticHandler;
 import jakarta.enterprise.context.ApplicationScoped;
 import jakarta.enterprise.event.Observes;
+import jakarta.inject.Inject;
 
 import java.nio.file.Path;
 
 @ApplicationScoped
 public class ExternalStaticRoute {
-    private static final String STATIC_ROUTE = "/static/*";
-    private static final String STATIC_DIR_NAME = "static";
+    @Inject
+    ServerConfig serverConfig;
 
     void register(@Observes Router router) {
-        Path staticDir = FileUtils.applicationDirectory(ExternalStaticRoute.class)
-                .resolve(STATIC_DIR_NAME)
-                .toAbsolutePath()
-                .normalize();
+        if (serverConfig.staticRoutes == null) {
+            return;
+        }
+
+        Path applicationDir = FileUtils.applicationDirectory(ExternalStaticRoute.class);
+        for (StaticRouteConfig config : serverConfig.staticRoutes) {
+            registerRoute(router, applicationDir, config);
+        }
+    }
+
+    private void registerRoute(Router router, Path applicationDir, StaticRouteConfig config) {
+        if (config == null || config.route == null || config.route.isBlank()
+                || config.path == null || config.path.isBlank()) {
+            throw new IllegalArgumentException("staticRoutes entries require non-empty route and path values");
+        }
+        if (!config.route.startsWith("/") || !config.route.endsWith("/*")) {
+            throw new IllegalArgumentException("static route must start with '/' and end with '/*': " + config.route);
+        }
+
+        Path staticDir = Path.of(config.path);
+        if (!staticDir.isAbsolute()) {
+            staticDir = applicationDir.resolve(staticDir);
+        }
+        staticDir = staticDir.toAbsolutePath().normalize();
 
         StaticHandler handler = StaticHandler.create(FileSystemAccess.ROOT, staticDir.toString())
-                .setDirectoryListing(false);
+                .setDirectoryListing(false)
+                .setIncludeHidden(false);
 
-        router.get(STATIC_ROUTE).handler(handler);
-        router.head(STATIC_ROUTE).handler(handler);
+        router.get(config.route).handler(handler);
+        router.head(config.route).handler(handler);
     }
 }

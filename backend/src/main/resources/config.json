@@ -1,6 +1,12 @@
 {
   "port": 2226,
   "frontendPath": "frontend",
+  "staticRoutes": [
+    {
+      "route": "/static/*",
+      "path": "static"
+    }
+  ],
   "maxBodySize": "100M",
   "log": {
     "level": "INFO",

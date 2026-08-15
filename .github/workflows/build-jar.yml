@@ -19,6 +19,13 @@ on:
         description: Build windows-arm64 package
         type: boolean
         default: true
+      package_mode:
+        description: Package frontend and backend together or separately
+        type: choice
+        options:
+          - bundled
+          - separate
+        default: bundled
 
 jobs:
   prepare-matrix:
@@ -110,11 +117,13 @@ jobs:
           cache: 'maven'
 
       - name: Build jar package
-        run: bash script/build.sh clean buildJar
+        env:
+          PACKAGE_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.package_mode || 'bundled' }}
+        run: bash script/build.sh clean buildJar --mode "${PACKAGE_MODE}"
 
       - name: Upload jar artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: GTools-jar-${{ matrix.platform }}
-          path: target/GTools.tar.gz
+          name: GTools-jar-${{ matrix.platform }}-${{ github.event_name == 'workflow_dispatch' && inputs.package_mode || 'bundled' }}
+          path: target/*.tar.gz
           if-no-files-found: error

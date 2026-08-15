@@ -96,15 +96,29 @@ target/GTools
 ```bash
 bash script/build.sh clean buildJar
 bash script/build.sh clean buildNative
+bash script/build.sh clean buildFrontend
+bash script/build.sh clean buildJar --mode separate
+bash script/build.sh clean buildNative --mode separate
 bash script/build.sh clean
 ```
 
-发布脚本是构建完整应用的推荐方式。它会先构建前端，将静态资源复制到后端，再打包后端，并在根目录 `target/` 生成：
+默认的 `bundled` 模式会先构建前端，将静态资源复制到后端，再打包完整应用，并在根目录 `target/` 生成：
 
 - `GTools.jar` 或 `GTools`
 - `GTools.tar.gz`
 - `config.json`
 - `manage.sh`
+
+`--mode separate` 不会将静态资源嵌入后端，并生成：
+
+- `target/backend/` 和 `GTools-backend.tar.gz`
+- `target/frontend/` 和 `GTools-frontend.tar.gz`
+
+`buildFrontend` 仅构建前端，同样输出 `target/frontend/` 和 `GTools-frontend.tar.gz`，不会检查或构建 Java 后端。
+
+GitHub Actions 中的 JAR 和 Native workflow 可在手动触发时选择 `bundled` 或 `separate`；仅构建前端可手动运行 `Build Frontend Package` workflow。
+
+分离部署时，后端优先提供内嵌静态资源；内嵌资源不存在时，再从 `frontendPath` 指向的外部目录提供前端文件。默认值为相对后端程序目录的 `frontend`，也就是 `GTools.jar` 或 Native 可执行文件同级目录下的 `frontend/`，因此无需额外配置 Nginx 即可继续使用同源 `/api` 和 `/api/ssh/ws`。
 
 ## 服务管理
 
@@ -133,6 +147,7 @@ remotePort=22
 remoteUser=root
 remotePassword=
 remoteDeployPath=/opt/GTools
+remoteFrontendDeployPath=
 ```
 
 常用命令：
@@ -140,13 +155,16 @@ remoteDeployPath=/opt/GTools
 ```bash
 bash script/remote-manage.sh push
 bash script/remote-manage.sh push --includeConfig
+bash script/remote-manage.sh push --mode separate
+bash script/remote-manage.sh push --mode backend
+bash script/remote-manage.sh push --mode frontend
 bash script/remote-manage.sh start
 bash script/remote-manage.sh restart
 bash script/remote-manage.sh stop
 bash script/remote-manage.sh status
 ```
 
-`push` 默认不会上传 `config.json`，使用 `--includeConfig` 后才会覆盖远程配置。密码登录依赖 `sshpass`，否则使用 SSH 密钥或本机 SSH 配置。
+`push` 默认为一体模式。`--mode separate` 会将后端文件推送到 `remoteDeployPath`，并将 `GTools-frontend.tar.gz` 上传、解压到 `remoteFrontendDeployPath`；也可用 `backend` 或 `frontend` 单独推送。`remoteFrontendDeployPath` 未配置时默认为 `${remoteDeployPath}/frontend`，例如后端程序为 `/opt/GTools/GTools.jar` 时前端目录为 `/opt/GTools/frontend`；需要其他位置时可通过 `.env` 或 `--remoteFrontendDeployPath` 覆盖，并同步修改后端的 `frontendPath`。前端会先在临时目录完成解压，再替换现有目录。推送后端时默认不会上传 `config.json`，使用 `--includeConfig` 后才会覆盖远程配置。密码登录依赖 `sshpass`，否则使用 SSH 密钥或本机 SSH 配置，远程主机还需提供 `tar`。
 
 ## 配置
 
@@ -158,6 +176,7 @@ bash script/remote-manage.sh status
 主要配置节点：
 
 - `port`：HTTP 服务端口
+- `frontendPath`：内嵌前端不存在时使用的外部前端目录，默认 `frontend`
 - `maxBodySize`：请求体大小限制
 - `log`：日志级别、文件路径和单文件大小
 - `jrebel`：JRebel 许可证响应参数

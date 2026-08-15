@@ -96,15 +96,29 @@ target/GTools
 ```bash
 bash script/build.sh clean buildJar
 bash script/build.sh clean buildNative
+bash script/build.sh clean buildFrontend
+bash script/build.sh clean buildJar --mode separate
+bash script/build.sh clean buildNative --mode separate
 bash script/build.sh clean
 ```
 
-The release script is the supported way to build a complete application. It builds the frontend, copies it into the backend resources, packages the backend, and writes these files under the root `target/` directory:
+The default `bundled` mode builds the frontend, copies it into the backend resources, packages the complete application, and writes these files under the root `target/` directory:
 
 - `GTools.jar` or `GTools`
 - `GTools.tar.gz`
 - `config.json`
 - `manage.sh`
+
+`--mode separate` leaves the static resources out of the backend and generates:
+
+- `target/backend/` and `GTools-backend.tar.gz`
+- `target/frontend/` and `GTools-frontend.tar.gz`
+
+`buildFrontend` builds only the frontend and writes the same `target/frontend/` directory and `GTools-frontend.tar.gz` archive without checking or building the Java backend.
+
+When manually dispatched, the JAR and Native GitHub Actions workflows accept `bundled` or `separate`; run the `Build Frontend Package` workflow to build only the frontend.
+
+For a separate deployment, the backend serves embedded static resources first and falls back to the external directory configured by `frontendPath` only when an embedded resource is unavailable. The default is `frontend`, the `frontend/` directory beside `GTools.jar` or the Native executable, so same-origin `/api` and `/api/ssh/ws` access works without an additional Nginx proxy.
 
 ## Service Management
 
@@ -133,6 +147,7 @@ remotePort=22
 remoteUser=root
 remotePassword=
 remoteDeployPath=/opt/GTools
+remoteFrontendDeployPath=
 ```
 
 Common commands:
@@ -140,13 +155,16 @@ Common commands:
 ```bash
 bash script/remote-manage.sh push
 bash script/remote-manage.sh push --includeConfig
+bash script/remote-manage.sh push --mode separate
+bash script/remote-manage.sh push --mode backend
+bash script/remote-manage.sh push --mode frontend
 bash script/remote-manage.sh start
 bash script/remote-manage.sh restart
 bash script/remote-manage.sh stop
 bash script/remote-manage.sh status
 ```
 
-`push` does not upload `config.json` unless `--includeConfig` is supplied. Password authentication requires `sshpass`; otherwise SSH keys or the local SSH configuration are used.
+`push` defaults to bundled mode. `--mode separate` pushes the backend files to `remoteDeployPath`, then uploads and extracts `GTools-frontend.tar.gz` into `remoteFrontendDeployPath`; use `backend` or `frontend` to push only one side. If `remoteFrontendDeployPath` is empty, it defaults to `${remoteDeployPath}/frontend`, so `/opt/GTools/GTools.jar` uses `/opt/GTools/frontend`; set it in `.env` or pass `--remoteFrontendDeployPath` to override the default, and update the backend `frontendPath` to match. The frontend is extracted into a temporary directory before replacing the existing deployment. Backend pushes do not upload `config.json` unless `--includeConfig` is supplied. Password authentication requires `sshpass`; otherwise SSH keys or the local SSH configuration are used, and the remote host must provide `tar`.
 
 ## Configuration
 
@@ -158,6 +176,7 @@ The default configuration is stored in `backend/src/main/resources/config.json`.
 Main configuration sections:
 
 - `port`: HTTP port
+- `frontendPath`: external frontend directory used when embedded resources are unavailable; defaults to `frontend`
 - `maxBodySize`: request body limit
 - `log`: log level, output file, and maximum file size
 - `jrebel`: JRebel license response settings

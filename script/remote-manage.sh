@@ -13,8 +13,10 @@ REMOTE_PORT=""
 REMOTE_USER=""
 REMOTE_PASSWORD=""
 REMOTE_DEPLOY_PATH=""
+REMOTE_FRONTEND_DEPLOY_PATH=""
 SSH_TARGET=""
 INCLUDE_CONFIG="false"
+PUSH_MODE="bundled"
 
 usage() {
   cat <<'EOF'
@@ -26,11 +28,16 @@ Options:
   --remoteUser <value>
   --remotePassword <value>
   --remoteDeployPath <value>
-  --includeConfig        Include target/config.json when pushing
+  --remoteFrontendDeployPath <value>  Override the frontend directory
+  --mode <bundled|separate|backend|frontend>
+  --includeConfig        Include backend config.json when pushing
   -h, --help
 
 Examples:
   ./script/remote-manage.sh push
+  ./script/remote-manage.sh push --mode separate
+  ./script/remote-manage.sh push --mode backend
+  ./script/remote-manage.sh push --mode frontend
   ./script/remote-manage.sh start --remoteAddress 127.0.0.1 --remoteDeployPath /opt/GTools
   ./script/remote-manage.sh restart --remoteAddress 127.0.0.1 --remoteUser root --remotePassword secret --remoteDeployPath /opt/GTools
 EOF
@@ -56,6 +63,20 @@ trim_value() {
   printf '%s' "${value}"
 }
 
+parent_path() {
+  local path="${1%/}"
+  local parent
+  [[ -n "${path}" ]] || path="/"
+
+  if [[ "${path}" == */* ]]; then
+    parent="${path%/*}"
+    [[ -n "${parent}" ]] || parent="/"
+  else
+    parent="."
+  fi
+  printf '%s' "${parent}"
+}
+
 load_env_defaults() {
   if [[ -f "${ENV_FILE}" ]]; then
     set -a
@@ -69,12 +90,14 @@ load_env_defaults() {
   REMOTE_USER="${REMOTE_USER:-${remoteUser:-${REMOTE_USER:-}}}"
   REMOTE_PASSWORD="${REMOTE_PASSWORD:-${remotePassword:-${REMOTE_PASSWORD:-}}}"
   REMOTE_DEPLOY_PATH="${REMOTE_DEPLOY_PATH:-${remoteDeployPath:-${REMOTE_DEPLOY_PATH:-}}}"
+  REMOTE_FRONTEND_DEPLOY_PATH="${REMOTE_FRONTEND_DEPLOY_PATH:-${remoteFrontendDeployPath:-${REMOTE_FRONTEND_DEPLOY_PATH:-}}}"
 
   REMOTE_ADDRESS="$(trim_value "${REMOTE_ADDRESS}")"
   REMOTE_PORT="$(trim_value "${REMOTE_PORT}")"
   REMOTE_USER="$(trim_value "${REMOTE_USER}")"
   REMOTE_PASSWORD="$(trim_value "${REMOTE_PASSWORD}")"
   REMOTE_DEPLOY_PATH="$(trim_value "${REMOTE_DEPLOY_PATH}")"
+  REMOTE_FRONTEND_DEPLOY_PATH="$(trim_value "${REMOTE_FRONTEND_DEPLOY_PATH}")"
 }
 
 parse_args() {
@@ -110,6 +133,20 @@ parse_args() {
         REMOTE_DEPLOY_PATH="$2"
         shift 2
         ;;
+      --remoteFrontendDeployPath)
+        [[ $# -ge 2 ]] || fail "--remoteFrontendDeployPath requires a value"
+        REMOTE_FRONTEND_DEPLOY_PATH="$2"
+        shift 2
+        ;;
+      --mode)
+        [[ $# -ge 2 ]] || fail "--mode requires a value"
+        PUSH_MODE="$2"
+        shift 2
+        ;;
+      --mode=*)
+        PUSH_MODE="${1#*=}"
+        shift
+        ;;
       --includeConfig)
         INCLUDE_CONFIG="true"
         shift
@@ -128,12 +165,39 @@ parse_args() {
   if [[ "${INCLUDE_CONFIG}" == "true" && "${ACTION}" != "push" ]]; then
     fail "--includeConfig can only be used with push"
   fi
+  if [[ "${ACTION}" != "push" && "${PUSH_MODE}" != "bundled" ]]; then
+    fail "--mode can only be used with push"
+  fi
+
+  case "${PUSH_MODE}" in
+    bundled|separate|backend|frontend)
+      ;;
+    *)
+      fail "unsupported push mode: ${PUSH_MODE}; expected bundled, separate, backend, or frontend"
+      ;;
+  esac
 }
 
 validate_remote_config() {
   [[ -n "${REMOTE_ADDRESS}" ]] || fail "missing remoteAddress, set it in .env or pass --remoteAddress"
-  [[ -n "${REMOTE_DEPLOY_PATH}" ]] || fail "missing remoteDeployPath, set it in .env or pass --remoteDeployPath"
   [[ -n "${REMOTE_PORT}" ]] || REMOTE_PORT="22"
+
+  if [[ "${ACTION}" != "push" || "${PUSH_MODE}" == "bundled" || "${PUSH_MODE}" == "backend" || "${PUSH_MODE}" == "separate" ]]; then
+    [[ -n "${REMOTE_DEPLOY_PATH}" ]] || fail "missing remoteDeployPath, set it in .env or pass --remoteDeployPath"
+  fi
+  if [[ "${ACTION}" == "push" && ( "${PUSH_MODE}" == "frontend" || "${PUSH_MODE}" == "separate" ) ]]; then
+    if [[ -z "${REMOTE_FRONTEND_DEPLOY_PATH}" ]]; then
+      [[ -n "${REMOTE_DEPLOY_PATH}" ]] || fail "missing remoteDeployPath; it is required to derive the default frontend path"
+      if [[ "${REMOTE_DEPLOY_PATH}" == "/" ]]; then
+        REMOTE_FRONTEND_DEPLOY_PATH="/frontend"
+      else
+        REMOTE_FRONTEND_DEPLOY_PATH="${REMOTE_DEPLOY_PATH%/}/frontend"
+      fi
+    fi
+    REMOTE_FRONTEND_DEPLOY_PATH="${REMOTE_FRONTEND_DEPLOY_PATH%/}"
+    [[ -n "${REMOTE_FRONTEND_DEPLOY_PATH}" && "${REMOTE_FRONTEND_DEPLOY_PATH}" != "/" ]] \
+      || fail "remoteFrontendDeployPath must not be the filesystem root"
+  fi
 
   if [[ -n "${REMOTE_USER}" ]]; then
     SSH_TARGET="${REMOTE_USER}@${REMOTE_ADDRESS}"
@@ -185,32 +249,74 @@ require_remote_tools() {
   fi
 }
 
-collect_local_push_files() {
-  [[ -d "${TARGET_DIR}" ]] || fail "target directory not found: ${TARGET_DIR}; run script/build.sh first"
+collect_local_push_items() {
+  local source_dir="$1"
+  local layout="$2"
 
-  local files=()
+  [[ -d "${source_dir}" ]] || fail "build output directory not found: ${source_dir}; run script/build.sh with the matching mode first"
+
+  local items=()
   local item
-  shopt -s nullglob
-  for item in "${TARGET_DIR}"/*; do
+  shopt -s nullglob dotglob
+  for item in "${source_dir}"/*; do
     [[ -e "${item}" ]] || continue
-    [[ -f "${item}" ]] || continue
+    [[ "${layout}" != "bundled" || -f "${item}" ]] || continue
     [[ "${item}" == *.tar.gz ]] && continue
     [[ "${INCLUDE_CONFIG}" != "true" && "$(basename "${item}")" == "config.json" ]] && continue
-    files+=("${item}")
+    items+=("${item}")
   done
-  shopt -u nullglob
+  shopt -u nullglob dotglob
 
-  [[ ${#files[@]} -gt 0 ]] || fail "no deployable files found in ${TARGET_DIR}; run script/build.sh first"
-  LOCAL_PUSH_FILES=("${files[@]}")
+  [[ ${#items[@]} -gt 0 ]] || fail "no deployable files found in ${source_dir}; run script/build.sh with the matching mode first"
+  LOCAL_PUSH_ITEMS=("${items[@]}")
+}
+
+push_directory() {
+  local source_dir="$1"
+  local remote_dir="$2"
+  local layout="$3"
+  local label="$4"
+
+  collect_local_push_items "${source_dir}" "${layout}"
+
+  printf '==> Pushing %s output to remote host\n' "${label}"
+  ssh_remote "mkdir -p '${remote_dir}'"
+  scp_remote -r "${LOCAL_PUSH_ITEMS[@]}" "${SSH_TARGET}:${remote_dir}/"
+  printf '==> %s push completed\n' "${label}"
+}
+
+push_frontend_archive() {
+  local archive_file="${TARGET_DIR}/GTools-frontend.tar.gz"
+  local remote_archive="${REMOTE_FRONTEND_DEPLOY_PATH}.tar.gz"
+  local remote_temp_dir="${REMOTE_FRONTEND_DEPLOY_PATH}.new"
+  local remote_parent
+  remote_parent="$(parent_path "${REMOTE_FRONTEND_DEPLOY_PATH}")"
+
+  [[ -f "${archive_file}" ]] || fail "frontend archive not found: ${archive_file}; run script/build.sh buildFrontend or use --mode separate"
+
+  printf '==> Uploading frontend archive to remote host\n'
+  ssh_remote "mkdir -p '${remote_parent}'"
+  scp_remote "${archive_file}" "${SSH_TARGET}:${remote_archive}"
+  ssh_remote "rm -rf '${remote_temp_dir}' && mkdir -p '${remote_temp_dir}' && tar -xzf '${remote_archive}' -C '${remote_temp_dir}' && rm -rf '${REMOTE_FRONTEND_DEPLOY_PATH}' && mv '${remote_temp_dir}' '${REMOTE_FRONTEND_DEPLOY_PATH}' && rm -f '${remote_archive}'"
+  printf '==> Frontend archive extracted to %s\n' "${REMOTE_FRONTEND_DEPLOY_PATH}"
 }
 
 push_files() {
-  collect_local_push_files
-
-  printf '==> Pushing build output to remote host\n'
-  ssh_remote "mkdir -p '${REMOTE_DEPLOY_PATH}'"
-  scp_remote "${LOCAL_PUSH_FILES[@]}" "${SSH_TARGET}:${REMOTE_DEPLOY_PATH}/"
-  printf '==> Push completed\n'
+  case "${PUSH_MODE}" in
+    bundled)
+      push_directory "${TARGET_DIR}" "${REMOTE_DEPLOY_PATH}" "bundled" "bundled"
+      ;;
+    backend)
+      push_directory "${TARGET_DIR}/backend" "${REMOTE_DEPLOY_PATH}" "separate" "backend"
+      ;;
+    frontend)
+      push_frontend_archive
+      ;;
+    separate)
+      push_directory "${TARGET_DIR}/backend" "${REMOTE_DEPLOY_PATH}" "separate" "backend"
+      push_frontend_archive
+      ;;
+  esac
 }
 
 run_remote_manage() {

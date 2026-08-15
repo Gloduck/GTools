@@ -19,6 +19,13 @@ on:
         description: Build windows-arm64 package
         type: boolean
         default: true
+      package_mode:
+        description: Package frontend and backend together or separately
+        type: choice
+        options:
+          - bundled
+          - separate
+        default: bundled
 
 jobs:
   prepare-matrix:
@@ -134,11 +141,13 @@ jobs:
           fi
 
       - name: Build native package
-        run: bash script/build.sh clean buildNative
+        env:
+          PACKAGE_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.package_mode || 'bundled' }}
+        run: bash script/build.sh clean buildNative --mode "${PACKAGE_MODE}"
 
       - name: Upload native artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: GTools-native-${{ matrix.platform }}
-          path: target/GTools.tar.gz
+          name: GTools-native-${{ matrix.platform }}-${{ github.event_name == 'workflow_dispatch' && inputs.package_mode || 'bundled' }}
+          path: target/*.tar.gz
           if-no-files-found: error

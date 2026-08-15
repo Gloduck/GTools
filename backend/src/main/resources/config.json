@@ -1,5 +1,6 @@
 {
   "port": 2226,
+  "frontendPath": "frontend",
   "maxBodySize": "100M",
   "log": {
     "level": "INFO",

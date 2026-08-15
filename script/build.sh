@@ -15,6 +15,7 @@ INCLUDE_DIR="${PROJECT_ROOT}/include"
 
 APP_NAME="GTools"
 NATIVE_FILE_EXTENSION=""
+BACKEND_FRONT_BACKUP_DIR=""
 
 case "$(uname -s 2>/dev/null || printf '')" in
   MINGW*|MSYS*|CYGWIN*)
@@ -24,18 +25,26 @@ esac
 
 SHOULD_CLEAN="false"
 BUILD_TARGET=""
+PACKAGE_MODE="bundled"
 ARCHIVE_FILE="${ROOT_TARGET_DIR}/${APP_NAME}.tar.gz"
+BACKEND_OUTPUT_DIR="${ROOT_TARGET_DIR}/backend"
+FRONTEND_OUTPUT_DIR="${ROOT_TARGET_DIR}/frontend"
+BACKEND_ARCHIVE_FILE="${ROOT_TARGET_DIR}/${APP_NAME}-backend.tar.gz"
+FRONTEND_ARCHIVE_FILE="${ROOT_TARGET_DIR}/${APP_NAME}-frontend.tar.gz"
 OUTPUT_CONFIG_FILE="${ROOT_TARGET_DIR}/config.json"
 OUTPUT_JAR_FILE="${ROOT_TARGET_DIR}/${APP_NAME}.jar"
 OUTPUT_NATIVE_FILE="${ROOT_TARGET_DIR}/${APP_NAME}${NATIVE_FILE_EXTENSION}"
 
 usage() {
   cat <<'EOF'
-Usage: ./build.sh [clean] [buildJar|buildNative]
+Usage: ./build.sh [clean] [buildFrontend|buildJar|buildNative] [--mode bundled|separate]
 
 Examples:
+  ./build.sh buildFrontend
   ./build.sh buildJar
   ./build.sh buildNative
+  ./build.sh clean buildJar --mode separate
+  ./build.sh clean buildNative --mode separate
   ./build.sh clean
   ./build.sh clean buildJar
   ./build.sh buildNative clean
@@ -90,9 +99,23 @@ parse_args() {
         BUILD_TARGET="jar"
         shift
         ;;
+      buildFrontend)
+        [[ -z "${BUILD_TARGET}" ]] || fail "build target already set: ${BUILD_TARGET}"
+        BUILD_TARGET="frontend"
+        shift
+        ;;
       buildNative)
         [[ -z "${BUILD_TARGET}" ]] || fail "build target already set: ${BUILD_TARGET}"
         BUILD_TARGET="native"
+        shift
+        ;;
+      --mode)
+        [[ $# -ge 2 ]] || fail "--mode requires a value: bundled or separate"
+        PACKAGE_MODE="$2"
+        shift 2
+        ;;
+      --mode=*)
+        PACKAGE_MODE="${1#*=}"
         shift
         ;;
       -h|--help)
@@ -106,14 +129,21 @@ parse_args() {
   done
 
   if [[ "${SHOULD_CLEAN}" != "true" && -z "${BUILD_TARGET}" ]]; then
-    fail "at least one action is required: clean, buildJar, buildNative"
+    fail "at least one action is required: clean, buildFrontend, buildJar, buildNative"
   fi
+
+  case "${PACKAGE_MODE}" in
+    bundled|separate)
+      ;;
+    *)
+      fail "unsupported package mode: ${PACKAGE_MODE}; expected bundled or separate"
+      ;;
+  esac
 }
 
 clean_artifacts() {
   printf '==> Cleaning build directories\n'
   rm -rf "${FRONTEND_DIST_DIR}"
-  rm -rf "${BACKEND_FRONT_DIR}"
   rm -rf "${BACKEND_TARGET_DIR}"
   rm -rf "${ROOT_TARGET_DIR}"
 }
@@ -124,6 +154,10 @@ prepare_output_dir() {
   rm -f "${OUTPUT_JAR_FILE}"
   rm -f "${OUTPUT_NATIVE_FILE}"
   rm -f "${OUTPUT_CONFIG_FILE}"
+  rm -f "${BACKEND_ARCHIVE_FILE}"
+  rm -f "${FRONTEND_ARCHIVE_FILE}"
+  rm -rf "${BACKEND_OUTPUT_DIR}"
+  rm -rf "${FRONTEND_OUTPUT_DIR}"
 }
 
 copy_frontend_dist() {
@@ -132,11 +166,27 @@ copy_frontend_dist() {
   cp -R "${FRONTEND_DIST_DIR}/." "${BACKEND_FRONT_DIR}/"
 }
 
+hide_backend_frontend() {
+  [[ -d "${BACKEND_FRONT_DIR}" ]] || return 0
+
+  BACKEND_FRONT_BACKUP_DIR="$(mktemp -d)"
+  mv "${BACKEND_FRONT_DIR}" "${BACKEND_FRONT_BACKUP_DIR}/resources"
+}
+
+restore_backend_frontend() {
+  [[ -n "${BACKEND_FRONT_BACKUP_DIR}" ]] || return 0
+
+  rm -rf "${BACKEND_FRONT_DIR}"
+  mkdir -p "$(dirname "${BACKEND_FRONT_DIR}")"
+  mv "${BACKEND_FRONT_BACKUP_DIR}/resources" "${BACKEND_FRONT_DIR}"
+  rm -rf "${BACKEND_FRONT_BACKUP_DIR}"
+  BACKEND_FRONT_BACKUP_DIR=""
+}
+
 build_frontend() {
   printf '==> Building frontend\n'
   npm run build --prefix "${FRONTEND_DIR}"
   [[ -d "${FRONTEND_DIST_DIR}" ]] || fail "frontend build output not found: ${FRONTEND_DIST_DIR}"
-  copy_frontend_dist
 }
 
 build_backend_jar() {
@@ -153,52 +203,101 @@ build_backend_native() {
   [[ -f "${JAVA_ARTIFACT}" ]] || fail "native artifact not found: ${JAVA_ARTIFACT}"
 }
 
-assemble_artifacts() {
-  printf '==> Assembling release package\n'
+copy_backend_artifacts() {
+  local output_dir="$1"
+
+  mkdir -p "${output_dir}"
   case "${BUILD_TARGET}" in
     jar)
-      cp "${JAVA_ARTIFACT}" "${OUTPUT_JAR_FILE}"
-      PACKAGE_ARTIFACT="$(basename "${OUTPUT_JAR_FILE}")"
+      cp "${JAVA_ARTIFACT}" "${output_dir}/${APP_NAME}.jar"
+      PACKAGE_ARTIFACT="${APP_NAME}.jar"
       ;;
     native)
-      cp "${JAVA_ARTIFACT}" "${OUTPUT_NATIVE_FILE}"
-      PACKAGE_ARTIFACT="$(basename "${OUTPUT_NATIVE_FILE}")"
+      cp "${JAVA_ARTIFACT}" "${output_dir}/${APP_NAME}${NATIVE_FILE_EXTENSION}"
+      PACKAGE_ARTIFACT="${APP_NAME}${NATIVE_FILE_EXTENSION}"
       ;;
     *)
       fail "unsupported build target: ${BUILD_TARGET}"
       ;;
   esac
-  cp "${CONFIG_FILE}" "${OUTPUT_CONFIG_FILE}"
-  cp -R "${INCLUDE_DIR}/." "${ROOT_TARGET_DIR}/"
+  cp "${CONFIG_FILE}" "${output_dir}/config.json"
+  cp -R "${INCLUDE_DIR}/." "${output_dir}/"
+}
+
+archive_backend_artifacts() {
+  local output_dir="$1"
+  local archive_file="$2"
+
   mapfile -t INCLUDE_ARTIFACTS < <(find "${INCLUDE_DIR}" -mindepth 1 -maxdepth 1 -exec basename {} \; | sort)
   (
-    cd "${ROOT_TARGET_DIR}"
-    archive_items=("${PACKAGE_ARTIFACT}" "$(basename "${OUTPUT_CONFIG_FILE}")")
+    cd "${output_dir}"
+    archive_items=("${PACKAGE_ARTIFACT}" "config.json")
     for include_artifact in "${INCLUDE_ARTIFACTS[@]}"; do
       archive_items+=("${include_artifact}")
     done
-    tar -czf "${ARCHIVE_FILE}" "${archive_items[@]}"
+    tar -czf "${archive_file}" "${archive_items[@]}"
   )
+}
+
+assemble_frontend_artifacts() {
+  mkdir -p "${FRONTEND_OUTPUT_DIR}"
+  cp -R "${FRONTEND_DIST_DIR}/." "${FRONTEND_OUTPUT_DIR}/"
+  tar -czf "${FRONTEND_ARCHIVE_FILE}" -C "${FRONTEND_OUTPUT_DIR}" .
+}
+
+assemble_artifacts() {
+  printf '==> Assembling release package (%s)\n' "${PACKAGE_MODE}"
+
+  case "${PACKAGE_MODE}" in
+    bundled)
+      copy_backend_artifacts "${ROOT_TARGET_DIR}"
+      archive_backend_artifacts "${ROOT_TARGET_DIR}" "${ARCHIVE_FILE}"
+      ;;
+    separate)
+      copy_backend_artifacts "${BACKEND_OUTPUT_DIR}"
+      archive_backend_artifacts "${BACKEND_OUTPUT_DIR}" "${BACKEND_ARCHIVE_FILE}"
+      assemble_frontend_artifacts
+      ;;
+  esac
 }
 
 run_build() {
   [[ -d "${FRONTEND_DIR}" ]] || fail "frontend directory not found: ${FRONTEND_DIR}"
+
+  require_command node
+  require_command npm
+  require_command tar
+
+  prepare_output_dir
+  build_frontend
+
+  if [[ "${BUILD_TARGET}" == "frontend" ]]; then
+    printf '==> Assembling frontend release package\n'
+    assemble_frontend_artifacts
+    printf '==> Done\n'
+    printf 'Build target: frontend\n'
+    printf 'Output directory: %s\n' "${FRONTEND_OUTPUT_DIR}"
+    printf 'Frontend archive: %s\n' "${FRONTEND_ARCHIVE_FILE}"
+    return
+  fi
+
   [[ -d "${BACKEND_DIR}" ]] || fail "backend directory not found: ${BACKEND_DIR}"
   [[ -d "${INCLUDE_DIR}" ]] || fail "include directory not found: ${INCLUDE_DIR}"
   [[ -f "${CONFIG_FILE}" ]] || fail "config file not found: ${CONFIG_FILE}"
 
-  require_command node
-  require_command npm
   require_command java
   require_command mvn
-  require_command tar
 
   if [[ "${BUILD_TARGET}" == "native" ]]; then
     check_native_toolchain
   fi
 
-  prepare_output_dir
-  build_frontend
+  if [[ "${PACKAGE_MODE}" == "bundled" ]]; then
+    copy_frontend_dist
+  else
+    hide_backend_frontend
+    trap restore_backend_frontend EXIT
+  fi
 
   case "${BUILD_TARGET}" in
     jar)
@@ -213,11 +312,19 @@ run_build() {
   esac
 
   assemble_artifacts
+  restore_backend_frontend
+  trap - EXIT
 
   printf '==> Done\n'
   printf 'Build target: %s\n' "${BUILD_TARGET}"
+  printf 'Package mode: %s\n' "${PACKAGE_MODE}"
   printf 'Output directory: %s\n' "${ROOT_TARGET_DIR}"
-  printf 'Archive file: %s\n' "${ARCHIVE_FILE}"
+  if [[ "${PACKAGE_MODE}" == "bundled" ]]; then
+    printf 'Archive file: %s\n' "${ARCHIVE_FILE}"
+  else
+    printf 'Backend archive: %s\n' "${BACKEND_ARCHIVE_FILE}"
+    printf 'Frontend archive: %s\n' "${FRONTEND_ARCHIVE_FILE}"
+  fi
 }
 
 main() {

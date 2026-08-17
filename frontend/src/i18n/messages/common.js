@@ -23,6 +23,7 @@ export const commonMessages = {
             retry: '重试',
             loading: '加载中...',
             processing: '处理中...',
+            demoNotice: '当前为演示站，部分依赖后端的功能使用模拟数据或不可用。',
             unknown: '未知',
             none: '无',
             yes: '是',
@@ -87,7 +88,8 @@ export const commonMessages = {
             PROXY_HOST_REQUIRED: '缺少代理主机',
             PROXY_TARGET_INVALID: '代理目标无效',
             PROXY_REDIRECT_BODY_UNSUPPORTED: '代理无法在重定向后安全地重放请求体',
-            PROXY_REQUEST_FAILED: '代理请求失败'
+            PROXY_REQUEST_FAILED: '代理请求失败',
+            DEMO_FEATURE_UNAVAILABLE: '演示站不提供此功能'
         }
     },
     'en-US': {
@@ -114,6 +116,7 @@ export const commonMessages = {
             retry: 'Retry',
             loading: 'Loading...',
             processing: 'Processing...',
+            demoNotice: 'This is a demo site. Some backend-dependent features use sample data or are unavailable.',
             unknown: 'Unknown',
             none: 'None',
             yes: 'Yes',
@@ -178,7 +181,8 @@ export const commonMessages = {
             PROXY_HOST_REQUIRED: 'Proxy host is required',
             PROXY_TARGET_INVALID: 'Invalid proxy target',
             PROXY_REDIRECT_BODY_UNSUPPORTED: 'The proxy cannot safely replay the request body after a redirect',
-            PROXY_REQUEST_FAILED: 'Proxy request failed'
+            PROXY_REQUEST_FAILED: 'Proxy request failed',
+            DEMO_FEATURE_UNAVAILABLE: 'This feature is unavailable on the demo site'
         }
     }
 };

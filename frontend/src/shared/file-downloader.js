@@ -1,6 +1,7 @@
 import {createZipStream} from './zip-stream.js';
 
-const STREAM_DOWNLOAD_PREFIX = '/__stream_download__/';
+const BASE_PATH = import.meta.env?.BASE_URL || '/';
+const STREAM_DOWNLOAD_PREFIX = `${BASE_PATH}__stream_download__/`;
 const STREAM_DOWNLOAD_CREATE = 'stream-download:create';
 const STREAM_DOWNLOAD_DISPOSE = 'stream-download:dispose';
 const STREAM_DOWNLOAD_TIMEOUT_MS = 10_000;
@@ -437,7 +438,10 @@ function normalizeEntryPath(value, directory) {
 async function getDownloadServiceWorker() {
     if (import.meta.env?.DEV || !globalThis.isSecureContext || !globalThis.navigator?.serviceWorker || typeof TransformStream !== 'function') return null;
     if (!serviceWorkerRegistrationPromise) {
-        serviceWorkerRegistrationPromise = navigator.serviceWorker.register('/sw.js')
+        serviceWorkerRegistrationPromise = navigator.serviceWorker.register(
+            new URL('sw.js', new URL(BASE_PATH, location.origin)),
+            {scope: BASE_PATH},
+        )
             .then(() => navigator.serviceWorker.ready)
             .catch(() => null);
     }

@@ -4,6 +4,8 @@ English | [简体中文](README.zh-CN.md)
 
 GTools is a self-hosted collection of browser-based utilities. The backend uses Quarkus, the frontend uses Vue 3, CSV files provide lightweight storage, and both standard JAR and GraalVM Native Image builds are supported.
 
+**Live Demo:** [https://gloduck.github.io/GTools/](https://gloduck.github.io/GTools/)
+
 ## Features
 
 - JRebel activation URL generator

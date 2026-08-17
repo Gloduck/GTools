@@ -1,4 +1,4 @@
-import { createRouter, createWebHistory } from 'vue-router';
+import { createRouter, createWebHashHistory, createWebHistory } from 'vue-router';
 import { watch } from 'vue';
 import IndexView from '@/views/IndexView.vue';
 import { pageDefinitions } from '@/shared/page-config.js';
@@ -25,8 +25,12 @@ const routes = pageDefinitions.flatMap(({ id, paths, titleKey, icon, descKey }) 
   }))
 );
 
+const createHistory = import.meta.env.VITE_ROUTER_MODE === 'hash'
+  ? createWebHashHistory
+  : createWebHistory;
+
 const router = createRouter({
-  history: createWebHistory(import.meta.env.BASE_URL),
+  history: createHistory(import.meta.env.BASE_URL),
   routes
 });
 

@@ -4,6 +4,8 @@
 
 GTools 是一个自托管的浏览器工具集合。后端基于 Quarkus，前端基于 Vue 3，使用 CSV 文件作为轻量数据存储，并支持普通 JAR 与 GraalVM Native Image 构建。
 
+**在线预览：** [https://gloduck.github.io/GTools/](https://gloduck.github.io/GTools/)
+
 ## 功能
 
 - JRebel 激活链接生成

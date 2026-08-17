@@ -2,6 +2,8 @@ let serviceWorkerRegistered = false;
 let activeEditorPwaCount = 0;
 let currentManifestUrl = '';
 const DEFAULT_THEME_COLOR = '#000000';
+const BASE_PATH = import.meta.env?.BASE_URL || '/';
+const HASH_ROUTER = import.meta.env?.VITE_ROUTER_MODE === 'hash';
 
 export function enableEditorPwa(options = {}) {
   activeEditorPwaCount += 1;
@@ -56,13 +58,14 @@ function getPwaMetaTags(options) {
 function createManifestUrl(options) {
   revokeCurrentManifestUrl();
   const name = options.name || document.title;
+  const baseUrl = new URL(BASE_PATH, window.location.origin);
   const manifest = {
     name,
     short_name: options.shortName || name,
     description: options.description || name,
     lang: options.lang || 'zh-CN',
-    start_url: new URL(options.startUrl || window.location.pathname, window.location.origin).toString(),
-    scope: new URL(options.scope || '/', window.location.origin).toString(),
+    start_url: resolveManifestStartUrl(options.startUrl || window.location.pathname, baseUrl),
+    scope: HASH_ROUTER ? baseUrl.toString() : resolveBaseRelativeUrl(options.scope || '/', baseUrl),
     display: 'standalone',
     display_override: ['window-controls-overlay', 'standalone', 'minimal-ui'],
     orientation: 'any',
@@ -71,7 +74,7 @@ function createManifestUrl(options) {
     categories: options.categories || ['productivity', 'developer', 'utilities']
   };
   if (options.icon) {
-    const icon = new URL(options.icon, window.location.origin).toString();
+    const icon = resolveBaseRelativeUrl(options.icon, baseUrl);
     manifest.icons = [
       { src: icon, sizes: 'any', type: 'image/svg+xml', purpose: 'any' },
       { src: icon, sizes: 'any', type: 'image/svg+xml', purpose: 'maskable' }
@@ -79,6 +82,17 @@ function createManifestUrl(options) {
   }
   currentManifestUrl = URL.createObjectURL(new Blob([JSON.stringify(manifest)], { type: 'application/manifest+json' }));
   return currentManifestUrl;
+}
+
+function resolveManifestStartUrl(path, baseUrl) {
+  const routePath = `/${String(path || '').replace(/^\/+/, '')}`;
+  return HASH_ROUTER
+    ? `${baseUrl.toString()}#${routePath}`
+    : resolveBaseRelativeUrl(routePath, baseUrl);
+}
+
+function resolveBaseRelativeUrl(path, baseUrl) {
+  return new URL(String(path || '').replace(/^\/+/, ''), baseUrl).toString();
 }
 
 function revokeCurrentManifestUrl() {
@@ -94,7 +108,9 @@ function registerServiceWorker() {
   }
 
   const register = () => {
-    navigator.serviceWorker.register('/sw.js').catch((error) => {
+    navigator.serviceWorker.register(new URL('sw.js', new URL(BASE_PATH, location.origin)), {
+      scope: BASE_PATH
+    }).catch((error) => {
       console.warn('Service worker registration failed:', error);
     });
   };

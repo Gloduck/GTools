@@ -1,9 +1,12 @@
-importScripts('/stream-download-sw.js');
+const BASE_URL = new URL('./', self.location.href);
+const BASE_PATH = BASE_URL.pathname;
+
+importScripts(new URL('stream-download-sw.js', BASE_URL).href);
 
 const CACHE_VERSION = 'pwa-cache-v3';
 const APP_SHELL_CACHE = `${CACHE_VERSION}-shell`;
 const RUNTIME_CACHE = `${CACHE_VERSION}-runtime`;
-const APP_SHELL_URLS = ['/'];
+const APP_SHELL_URLS = [BASE_PATH];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -31,7 +34,7 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  if (url.pathname.startsWith('/__stream_download__/')) {
+  if (url.pathname.startsWith(`${BASE_PATH}__stream_download__/`)) {
     return;
   }
 
@@ -52,7 +55,7 @@ async function handleNavigationRequest(request) {
     cache.put(request, response.clone());
     return response;
   } catch {
-    return (await caches.match(request)) || caches.match('/') || Response.error();
+    return (await caches.match(request)) || caches.match(BASE_PATH) || Response.error();
   }
 }
 
@@ -71,5 +74,5 @@ async function handleStaticAssetRequest(request) {
 }
 
 function isStaticAsset(url) {
-  return url.pathname.startsWith('/assets/') || /\.(?:css|js|ico|svg|webmanifest|woff2?)$/i.test(url.pathname);
+  return url.pathname.startsWith(`${BASE_PATH}assets/`) || /\.(?:css|js|ico|svg|webmanifest|woff2?)$/i.test(url.pathname);
 }

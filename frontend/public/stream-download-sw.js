@@ -1,5 +1,6 @@
 (() => {
-    const DOWNLOAD_PREFIX = '/__stream_download__/';
+    const BASE_PATH = new URL('./', self.location.href).pathname;
+    const DOWNLOAD_PREFIX = `${BASE_PATH}__stream_download__/`;
     const CREATE_MESSAGE = 'stream-download:create';
     const DISPOSE_MESSAGE = 'stream-download:dispose';
     const ENTRY_LIFETIME_MS = 60_000;

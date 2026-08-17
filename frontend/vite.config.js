@@ -7,6 +7,7 @@ export default defineConfig(() => {
   const backendProxyTarget = process.env.VITE_BACKEND_PROXY_TARGET;
 
   return {
+    base: process.env.VITE_BASE_PATH || '/',
     plugins: [
       vue(),
       viteStaticCopy({

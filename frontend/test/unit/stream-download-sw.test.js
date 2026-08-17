@@ -51,10 +51,28 @@ test('场景：下载 Worker dispose 会删除并取消尚未取走的流', asyn
     assert.equal(worker.fetch('https://example.test/__stream_download__/dispose-id').status, 404);
 });
 
-async function createWorkerHarness() {
+test('场景：下载 Worker 根据脚本目录匹配子路径下载地址', async () => {
+    const worker = await createWorkerHarness('/preview/');
+    worker.message({
+        data: {
+            type: 'stream-download:create',
+            id: 'nested-id',
+            stream: new Blob(['nested']).stream(),
+        },
+        ports: [{postMessage() {}, close() {}}],
+    });
+
+    assert.equal(worker.fetch('https://example.test/__stream_download__/nested-id'), null);
+    assert.equal(await worker.fetch('https://example.test/preview/__stream_download__/nested-id').text(), 'nested');
+});
+
+async function createWorkerHarness(basePath = '/') {
     const listeners = new Map();
     const self = {
-        location: {origin: 'https://example.test'},
+        location: {
+            origin: 'https://example.test',
+            href: `https://example.test${basePath}stream-download-sw.js`,
+        },
         addEventListener(type, listener) {
             listeners.set(type, listener);
         },

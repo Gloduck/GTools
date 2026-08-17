@@ -11,10 +11,21 @@ GTools is a self-hosted collection of browser-based utilities. The backend uses 
 - GitHub repository search
 - Image resize, compression, and crop tools
 - Forwarded file downloads
+- Encrypted peer-to-peer file transfer over WebRTC
 - Online clipboard
 - Markdown editor
 - Browser code editor with AI, SSH, SFTP, file-system, and PWA capabilities
 - Chinese and English interfaces
+
+## Tool Preview
+
+| | |
+| --- | --- |
+| **JRebel Activation Tool**<br><img src="https://i.postimg.cc/W3mGjwxT/jrebel.png" alt="JRebel activation tool" width="460"> | **Torrent Search**<br><img src="https://i.postimg.cc/qRcs0xWT/torrent.png" alt="Aggregated torrent search" width="460"> |
+| **GitHub Repository Search**<br><img src="https://i.postimg.cc/j56HK4BT/github.png" alt="GitHub repository search" width="460"> | **Image Editor**<br><img src="https://i.postimg.cc/QtgQsJvs/image-editor.png" alt="Image editor" width="460"> |
+| **Forwarded Download**<br><img src="https://i.postimg.cc/7613Dnjq/forward-download.png" alt="Forwarded file download" width="460"> | **Peer-to-Peer File Transfer**<br><img src="https://i.postimg.cc/j56HK4Bd/peer-to-peer-transfer.png" alt="Peer-to-peer file transfer" width="460"> |
+| **Online Clipboard**<br><img src="https://i.postimg.cc/B65TsBRv/online-clipboard.png" alt="Online clipboard" width="460"> | **Markdown Editor**<br><img src="https://i.postimg.cc/k4NQ9vLn/markdown-editor.png" alt="Markdown editor" width="460"> |
+| **Code Editor**<br><img src="https://i.postimg.cc/26dQm7g6/code-editor.png" alt="Browser code editor" width="460"> | |
 
 ## Technology
 

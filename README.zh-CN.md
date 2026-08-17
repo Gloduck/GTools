@@ -11,10 +11,21 @@ GTools 是一个自托管的浏览器工具集合。后端基于 Quarkus，前�
 - GitHub 仓库搜索
 - 图片缩放、压缩和裁剪
 - 转发下载
+- 基于 WebRTC 加密通道的点对点文件传输
 - 网络剪贴板
 - Markdown 编辑器
 - 浏览器代码编辑器，包含 AI、SSH、SFTP、文件系统和 PWA 能力
 - 中文和英文界面切换
+
+## 工具预览
+
+| | |
+| --- | --- |
+| **JRebel 激活工具**<br><img src="https://i.postimg.cc/1t1GLj7x/jrebel.png" alt="JRebel 激活工具" width="460"> | **磁力聚合搜索**<br><img src="https://i.postimg.cc/Hx0wH9RN/torrent.png" alt="磁力聚合搜索" width="460"> |
+| **GitHub 仓库搜索**<br><img src="https://i.postimg.cc/FRbymV8q/github.png" alt="GitHub 仓库搜索" width="460"> | **图片编辑器**<br><img src="https://i.postimg.cc/RF179Ly2/image-editor.png" alt="图片编辑器" width="460"> |
+| **转发下载**<br><img src="https://i.postimg.cc/Jn3Nm5vv/forward-download.png" alt="转发下载" width="460"> | **点对点文件传输**<br><img src="https://i.postimg.cc/TwjVGJBX/peer-to-peer-transfer.png" alt="点对点文件传输" width="460"> |
+| **网络剪贴板**<br><img src="https://i.postimg.cc/4dv6ZQjR/online-clipboard.png" alt="网络剪贴板" width="460"> | **Markdown 编辑器**<br><img src="https://i.postimg.cc/PxbWhQ0G/markdown-editor.png" alt="Markdown 编辑器" width="460"> |
+| **代码编辑器**<br><img src="https://i.postimg.cc/7613Dnj8/code-editor.png" alt="浏览器代码编辑器" width="460"> | |
 
 ## 技术栈
 

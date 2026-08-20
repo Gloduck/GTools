@@ -883,7 +883,7 @@ const AI_JAVASCRIPT_FAILURE_RECOVERY_HINT = "Inspect the structured error and co
 const AI_JAVASCRIPT_MAX_RESULT_COLLECTION_ITEMS = 100;
 const AI_JAVASCRIPT_MAX_RESULT_DEPTH = 5;
 const SSH_OUTPUT_MAX_CHARS = 120000;
-const SSH_COMMAND_OUTPUT_WAIT_MS = 1000;
+const SSH_COMMAND_DEFAULT_WAIT_SECONDS = 1;
 const SSH_CONNECT_TIMEOUT_MS = 15000;
 const WORKSPACE_FILE_ACTION_LIMIT = 1000;
 const WORKSPACE_REFERENCE_FILE_LIMIT = 2000;
@@ -6377,7 +6377,8 @@ function getAiAllToolDefinitions() {
       command: { type: "string" },
       commands: { type: "array", items: { type: "string" }, description: "Required list of main commands used by command, excluding arguments. Include every command in chains, pipes, and substitutions." },
       high_risk: { type: "boolean", description: "Required AI-assessed risk flag." },
-      reason: { type: "string", description: "Required explanation of why this SSH command is needed." }
+      reason: { type: "string", description: "Required explanation of why this SSH command is needed." },
+      wait_seconds: { type: "integer", minimum: 1, description: `How many whole seconds to wait for command output before returning. Defaults to ${SSH_COMMAND_DEFAULT_WAIT_SECONDS}. This does not terminate the remote command; use read_ssh_output to inspect later output.` }
     }, required: ["connection", "command", "commands", "high_risk", "reason"] } },
     { type: "function", name: "sftp_upload_file", requirements: ["backend", "ssh_exposed", "workspace"], description: aiToolDescription("Submit one SFTP upload task and return its task_id.", "local_path is a workspace-relative source file path only; remote_path is the destination file path on the SSH server. Missing remote parent directories are created automatically.", "Do not pass absolute local paths, URLs, or SSH server paths as local_path. Upload returns after task submission; only briefly wait or poll completion for likely-small files such as text files or roughly under 1MB. For larger or unknown-size files, report that the task was submitted unless the user explicitly asks to wait or a next step truly depends on completion."), parameters: { type: "object", properties: { connection: { type: "string", description: "SSH setting id, name, or host." }, local_path: { type: "string", description: "Workspace-relative source file path only, for example 'dist/app.zip' or 'src/main.js'." }, remote_path: { type: "string", description: "Destination file path on the SSH server. Missing parent directories are created automatically." }, use_unsaved: { type: "boolean", description: "Upload unsaved dirty editor content when available. Defaults to true." } }, required: ["connection", "local_path", "remote_path"] } },
     { type: "function", name: "sftp_download_file", requirements: ["backend", "ssh_exposed", "workspace"], description: aiToolDescription("Submit one SFTP download task and return its task_id.", "remote_path is the source file path on the SSH server; local_path is a workspace-relative destination path. Parent directories are created automatically.", "Do not pass absolute local paths, URLs, or SSH server paths as local_path. Download returns after task submission; only briefly wait or poll completion for likely-small files such as text files or roughly under 1MB. For larger or unknown-size files, report that the task was submitted unless the user explicitly asks to wait or a next step truly depends on completion."), parameters: { type: "object", properties: { connection: { type: "string", description: "SSH setting id, name, or host." }, remote_path: { type: "string", description: "Source file path on the SSH server." }, local_path: { type: "string", description: "Workspace-relative destination file path only, for example 'downloads/app.zip'." } }, required: ["connection", "remote_path", "local_path"] } },
@@ -8282,12 +8283,13 @@ function aiToolSftpCancelTask({ task_id: taskId } = {}) {
   return { ...formatSftpTaskForTool(task, cancelled ? "SFTP task cancelled" : "SFTP task was not cancelled"), cancelled };
 }
 
-async function aiToolExecuteSshCommand({ connection, command, commands, high_risk: highRisk, reason } = {}, signal) {
+async function aiToolExecuteSshCommand({ connection, command, commands, high_risk: highRisk, reason, wait_seconds: waitSeconds } = {}, signal) {
   const config = getAiExposedSshConfig(connection);
   const session = getActiveSshSessionForConfig(config);
   const normalizedCommand = String(command || "").trim();
   const mainCommands = normalizeAiSshCommandList(commands);
   const normalizedReason = String(reason || "").trim();
+  const normalizedWaitSeconds = normalizeAiSshCommandWaitSeconds(waitSeconds);
   if (!normalizedCommand) throw new Error("command is required");
   if (!mainCommands.length) throw new Error(tr("ssh.error.commandListRequired"));
   if (typeof highRisk !== "boolean") throw new Error("high_risk is required");
@@ -8298,9 +8300,9 @@ async function aiToolExecuteSshCommand({ connection, command, commands, high_ris
   session.aiCommandCaptures.add(capture);
   try {
     sendSshCommand(session, normalizedCommand);
-    await delay(SSH_COMMAND_OUTPUT_WAIT_MS);
+    await delay(normalizedWaitSeconds * 1000, signal);
     const clipped = clipAiToolTailText(sanitizeAiTerminalOutput(capture.output));
-    return { summary: tr("ssh.toolExecutedCommand", { command: normalizedCommand, reason: normalizedReason }), connection: formatAiSshConnection(config, session), command: normalizedCommand, commands: mainCommands, high_risk: highRisk, reason: normalizedReason, output_chars: clipped.text_chars, returned_chars: clipped.returned_chars, truncated: clipped.truncated, output: clipped.text };
+    return { summary: tr("ssh.toolExecutedCommand", { command: normalizedCommand, reason: normalizedReason }), connection: formatAiSshConnection(config, session), command: normalizedCommand, commands: mainCommands, high_risk: highRisk, reason: normalizedReason, wait_seconds: normalizedWaitSeconds, output_chars: clipped.text_chars, returned_chars: clipped.returned_chars, truncated: clipped.truncated, output: clipped.text };
   } finally {
     session.aiCommandCaptures.delete(capture);
   }
@@ -8341,14 +8343,33 @@ function normalizeAiSshCommandList(commands) {
   return uniqueStrings(commands.map(normalizeMainCommandName)).filter(Boolean);
 }
 
+function normalizeAiSshCommandWaitSeconds(value) {
+  if (value === undefined || value === null || value === "") return SSH_COMMAND_DEFAULT_WAIT_SECONDS;
+  const seconds = Number(value);
+  if (!Number.isSafeInteger(seconds) || seconds <= 0) throw new Error("wait_seconds must be a positive integer");
+  return seconds;
+}
+
 function normalizeMainCommandName(command) {
   const value = String(command || "").trim();
   if (!value || /\s/.test(value)) return "";
   return value;
 }
 
-function delay(ms) {
-  return new Promise((resolve) => window.setTimeout(resolve, ms));
+function delay(ms, signal) {
+  if (!signal) return new Promise((resolve) => window.setTimeout(resolve, ms));
+  throwIfAiAborted(signal);
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      signal.removeEventListener("abort", abort);
+      resolve();
+    }, ms);
+    const abort = () => {
+      window.clearTimeout(timer);
+      reject(createAiAbortError());
+    };
+    signal.addEventListener("abort", abort, { once: true });
+  });
 }
 
 function aiToolGetCurrentFile() {

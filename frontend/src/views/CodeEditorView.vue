@@ -238,26 +238,26 @@
               </label>
             </div>
           </form>
-        <div v-if="activeAiSession?.questionDialog?.visible" class="ai-question-dialog-backdrop" role="presentation">
-          <form class="ai-question-dialog" role="dialog" aria-modal="true" aria-labelledby="ai-question-dialog-title" @submit.prevent="submitAiQuestion(activeAiSession)" @keydown.esc.prevent.stop="cancelAiQuestion(activeAiSession)" @click.stop>
+        <div v-if="activeAiSession?.interactionDialog?.visible" class="ai-interaction-dialog-backdrop" role="presentation">
+          <form class="ai-interaction-dialog" role="dialog" aria-modal="true" aria-labelledby="ai-interaction-dialog-title" @submit.prevent="submitAiInteraction(activeAiSession)" @keydown.esc.prevent.stop="cancelAiInteraction(activeAiSession)" @click.stop>
             <div class="editor-dialog-header">
-              <span class="codicon codicon-question" aria-hidden="true"></span>
-              <h2 id="ai-question-dialog-title">{{ tr('ai.askUser.title') }}</h2>
+              <span class="codicon" :class="activeAiSession.interactionDialog.mode === 'confirm' ? 'codicon-warning' : 'codicon-question'" aria-hidden="true"></span>
+              <h2 id="ai-interaction-dialog-title">{{ activeAiSession.interactionDialog.title }}</h2>
             </div>
-            <p class="editor-dialog-message">{{ activeAiSession.questionDialog.question }}</p>
-            <div class="editor-dialog-question-options">
-              <button v-for="option in activeAiSession.questionDialog.options" :key="option.label" type="button" class="editor-dialog-choice" :class="{ selected: activeAiSession.questionDialog.selectedOption?.label === option.label }" @click="selectAiQuestionOption(activeAiSession, option)">
+            <p class="editor-dialog-message">{{ activeAiSession.interactionDialog.message }}</p>
+            <div v-if="activeAiSession.interactionDialog.mode === 'question'" class="editor-dialog-question-options">
+              <button v-for="option in activeAiSession.interactionDialog.options" :key="option.label" type="button" class="editor-dialog-choice" :class="{ selected: activeAiSession.interactionDialog.selectedOption?.label === option.label }" @click="selectAiInteractionOption(activeAiSession, option)">
                 <strong>{{ option.label }}</strong>
                 <small v-if="option.description">{{ option.description }}</small>
               </button>
             </div>
-            <label class="editor-dialog-input-row">
+            <label v-if="activeAiSession.interactionDialog.mode === 'question'" class="editor-dialog-input-row">
               <span>{{ tr('ai.askUser.customAnswerLabel') }}</span>
-              <textarea ref="aiQuestionInput" v-model="activeAiSession.questionDialog.customValue" rows="3" :placeholder="tr('ai.askUser.customAnswerPlaceholder')" autocomplete="off" spellcheck="false" @input="activeAiSession.questionDialog.selectedOption = null" @keydown="handleAiQuestionKeydown($event, activeAiSession)"></textarea>
+              <textarea ref="aiInteractionInput" v-model="activeAiSession.interactionDialog.customValue" rows="3" :placeholder="tr('ai.askUser.customAnswerPlaceholder')" autocomplete="off" spellcheck="false" @input="activeAiSession.interactionDialog.selectedOption = null" @keydown="handleAiQuestionKeydown($event, activeAiSession)"></textarea>
             </label>
             <div class="editor-dialog-actions">
-              <button type="button" @click="cancelAiQuestion(activeAiSession)">{{ tr('ai.askUser.cancel') }}</button>
-              <button type="submit" class="primary" :disabled="!activeAiSession.questionDialog.selectedOption && !activeAiSession.questionDialog.customValue.trim()">{{ tr('ai.askUser.submit') }}</button>
+              <button type="button" @click="cancelAiInteraction(activeAiSession)">{{ activeAiSession.interactionDialog.cancelLabel }}</button>
+              <button ref="aiInteractionPrimaryButton" type="submit" class="primary" :class="{ danger: activeAiSession.interactionDialog.tone === 'danger' }" :disabled="activeAiSession.interactionDialog.mode === 'question' && !activeAiSession.interactionDialog.selectedOption && !activeAiSession.interactionDialog.customValue.trim()">{{ activeAiSession.interactionDialog.confirmLabel }}</button>
             </div>
           </form>
         </div>
@@ -1141,12 +1141,13 @@ const aiSessions = reactive([]);
 const aiSessionDraft = reactive(createAiSessionDraft());
 const activeAiSessionId = ref("");
 const activeAiSession = computed(() => aiSessions.find((session) => session.id === activeAiSessionId.value) || null);
-const aiQuestionRequests = new Map();
+const aiInteractionRequests = new Map();
 const aiMessages = computed(() => activeAiSession.value?.messages || []);
 const aiAttachments = computed(() => activeAiSession.value?.pendingAttachments || aiSessionDraft.pendingAttachments);
 const aiSessionTitleInput = ref(null);
 const aiAttachmentInput = ref(null);
-const aiQuestionInput = ref(null);
+const aiInteractionInput = ref(null);
+const aiInteractionPrimaryButton = ref(null);
 const aiHistorySearchInput = ref(null);
 const aiSessionTitleEditing = ref(false);
 const aiSessionMenuVisible = ref(false);
@@ -1288,7 +1289,7 @@ watch(activeAiSessionId, () => {
   aiSessionMenuVisible.value = false;
   nextTick(() => {
     scrollAiMessagesToBottom(true);
-    focusActiveAiQuestion();
+    focusActiveAiInteraction();
   });
 });
 watch(aiSessions, handleAiSessionsChanged, { deep: true, flush: "sync" });
@@ -5099,8 +5100,8 @@ function resetAiSessionDraft(options = {}) {
   Object.assign(aiSessionDraft, createAiSessionDraft(options));
 }
 
-function createAiQuestionDialog() {
-  return { visible: false, question: "", options: [], customValue: "", selectedOption: null };
+function createAiInteractionDialog() {
+  return { visible: false, mode: "question", title: "", message: "", options: [], customValue: "", selectedOption: null, confirmLabel: "", cancelLabel: "", tone: "default" };
 }
 
 function createAiSession(options = {}) {
@@ -5122,7 +5123,7 @@ function createAiSession(options = {}) {
     abortController: null,
     titleBusy: false,
     titleAbortController: null,
-    questionDialog: createAiQuestionDialog(),
+    interactionDialog: createAiInteractionDialog(),
     contextUsage: null,
     createdAt: Number(options.createdAt) || now,
     updatedAt: Number(options.updatedAt) || now,
@@ -5171,7 +5172,7 @@ function normalizeStoredAiSession(value, index) {
     abortController: null,
     titleBusy: false,
     titleAbortController: null,
-    questionDialog: createAiQuestionDialog(),
+    interactionDialog: createAiInteractionDialog(),
     contextUsage: null,
     createdAt: normalizeAiSessionTimestamp(value.createdAt),
     updatedAt: normalizeAiSessionTimestamp(value.updatedAt || value.createdAt),
@@ -5252,49 +5253,67 @@ function getActiveAiSession() {
   throw new Error("No active AI session");
 }
 
-function showAiUserQuestion(session, question, options, signal) {
-  const dialog = session?.questionDialog;
-  if (!dialog) throw new Error("AI session question state is unavailable");
-  if (dialog.visible || aiQuestionRequests.has(session.id)) throw new Error("This AI session is already waiting for a user answer");
+function showAiInteraction(session, interaction, signal) {
+  const dialog = session?.interactionDialog;
+  if (!dialog) throw new Error("AI session interaction state is unavailable");
+  if (dialog.visible || aiInteractionRequests.has(session.id)) throw new Error("This AI session is already waiting for a user interaction");
   return new Promise((resolve) => {
-    const abortHandler = () => settleAiQuestion(session, null);
-    aiQuestionRequests.set(session.id, { resolve, signal, abortHandler });
-    Object.assign(dialog, { visible: true, question, options, customValue: "", selectedOption: null });
+    const abortHandler = () => settleAiInteraction(session, null);
+    aiInteractionRequests.set(session.id, { resolve, signal, abortHandler });
+    Object.assign(dialog, { ...createAiInteractionDialog(), ...interaction, visible: true });
     signal?.addEventListener("abort", abortHandler, { once: true });
-    if (activeAiSessionId.value === session.id) nextTick(focusActiveAiQuestion);
+    if (activeAiSessionId.value === session.id) nextTick(focusActiveAiInteraction);
   });
 }
 
-function focusActiveAiQuestion() {
-  if (activeAiSession.value?.questionDialog?.visible) aiQuestionInput.value?.focus();
+function showAiUserQuestion(session, question, options, signal) {
+  return showAiInteraction(session, {
+    mode: "question",
+    title: tr("ai.askUser.title"),
+    message: question,
+    options,
+    confirmLabel: tr("ai.askUser.submit"),
+    cancelLabel: tr("ai.askUser.cancel"),
+  }, signal);
 }
 
-function selectAiQuestionOption(session, option) {
-  const dialog = session?.questionDialog;
+function focusActiveAiInteraction() {
+  const dialog = activeAiSession.value?.interactionDialog;
+  if (!dialog?.visible) return;
+  if (dialog.mode === "question") aiInteractionInput.value?.focus();
+  else aiInteractionPrimaryButton.value?.focus();
+}
+
+function selectAiInteractionOption(session, option) {
+  const dialog = session?.interactionDialog;
   if (!dialog?.visible) return;
   dialog.selectedOption = option;
   dialog.customValue = "";
 }
 
-function submitAiQuestion(session) {
-  const dialog = session?.questionDialog;
+function submitAiInteraction(session) {
+  const dialog = session?.interactionDialog;
   if (!dialog?.visible) return;
+  if (dialog.mode === "confirm") {
+    settleAiInteraction(session, true);
+    return;
+  }
   const value = dialog.selectedOption?.label || dialog.customValue.trim();
   if (!value) return;
-  settleAiQuestion(session, { value, selectedOption: dialog.selectedOption });
+  settleAiInteraction(session, { value, selectedOption: dialog.selectedOption });
 }
 
-function cancelAiQuestion(session) {
-  settleAiQuestion(session, null);
+function cancelAiInteraction(session) {
+  settleAiInteraction(session, null);
 }
 
-function settleAiQuestion(session, result) {
-  const dialog = session?.questionDialog;
-  const request = session ? aiQuestionRequests.get(session.id) : null;
+function settleAiInteraction(session, result) {
+  const dialog = session?.interactionDialog;
+  const request = session ? aiInteractionRequests.get(session.id) : null;
   if (!dialog?.visible || !request) return;
-  aiQuestionRequests.delete(session.id);
+  aiInteractionRequests.delete(session.id);
   request.signal?.removeEventListener("abort", request.abortHandler);
-  Object.assign(dialog, createAiQuestionDialog());
+  Object.assign(dialog, createAiInteractionDialog());
   request.resolve(result);
 }
 
@@ -5388,7 +5407,7 @@ function formatAiHistoryTime(timestamp) {
 }
 
 function formatAiSessionState(session) {
-  if (session.questionDialog?.visible) return tr("ai.askUser.waiting");
+  if (session.interactionDialog?.visible) return tr(session.interactionDialog.mode === "confirm" ? "ai.interaction.waitingApproval" : "ai.askUser.waiting");
   if (session.busy || session.titleBusy) return tr("ai.running");
   return session.saved ? tr("ai.savedSession") : tr("ai.temporarySession");
 }
@@ -5583,7 +5602,7 @@ function handleAiPromptKeydown(event) {
 function handleAiQuestionKeydown(event, session) {
   if (!isAiTextareaSubmitEvent(event)) return;
   event.preventDefault();
-  submitAiQuestion(session);
+  submitAiInteraction(session);
 }
 
 function isAiTextareaSubmitEvent(event) {
@@ -6618,7 +6637,7 @@ async function runAiToolCall(call, args = {}, session = getActiveAiSession(), si
       case "sftp_download_file": return okTool(await aiToolSftpDownloadFile(args));
       case "sftp_list_tasks": return okTool(aiToolSftpListTasks(args));
       case "sftp_cancel_task": return okTool(aiToolSftpCancelTask(args));
-      case "execute_ssh_command": return okTool(await aiToolExecuteSshCommand(args, signal));
+      case "execute_ssh_command": return okTool(await aiToolExecuteSshCommand(args, signal, session));
       case "ask_user": return okTool(await aiToolAskUser(args, signal, session));
       case "get_current_file": return okTool(aiToolGetCurrentFile());
       case "replace_in_file": return okTool(await aiToolReplaceInFile(args, session));
@@ -8412,9 +8431,9 @@ function aiToolSftpCancelTask({ task_id: taskId } = {}) {
   return { ...formatSftpTaskForTool(task, cancelled ? "SFTP task cancelled" : "SFTP task was not cancelled"), cancelled };
 }
 
-async function aiToolExecuteSshCommand({ connection, command, commands, high_risk: highRisk, reason, wait_seconds: waitSeconds } = {}, signal) {
+async function aiToolExecuteSshCommand({ connection, command, commands, high_risk: highRisk, reason, wait_seconds: waitSeconds } = {}, signal, session = getActiveAiSession()) {
   const config = getAiExposedSshConfig(connection);
-  const session = getActiveSshSessionForConfig(config);
+  const sshSession = getActiveSshSessionForConfig(config);
   const normalizedCommand = String(command || "").trim();
   const mainCommands = normalizeAiSshCommandList(commands);
   const normalizedReason = String(reason || "").trim();
@@ -8423,17 +8442,17 @@ async function aiToolExecuteSshCommand({ connection, command, commands, high_ris
   if (!mainCommands.length) throw new Error(tr("ssh.error.commandListRequired"));
   if (typeof highRisk !== "boolean") throw new Error("high_risk is required");
   if (!normalizedReason) throw new Error(tr("ssh.error.commandReasonRequired"));
-  await authorizeAiSshCommand(config, normalizedCommand, mainCommands, highRisk, normalizedReason);
+  await authorizeAiSshCommand(config, normalizedCommand, mainCommands, highRisk, normalizedReason, session, signal);
   throwIfAiAborted(signal);
   const capture = { output: "" };
-  session.aiCommandCaptures.add(capture);
+  sshSession.aiCommandCaptures.add(capture);
   try {
-    sendSshCommand(session, normalizedCommand);
+    sendSshCommand(sshSession, normalizedCommand);
     await delay(normalizedWaitSeconds * 1000, signal);
     const clipped = clipAiToolTailText(sanitizeAiTerminalOutput(capture.output));
-    return { summary: tr("ssh.toolExecutedCommand", { command: normalizedCommand, reason: normalizedReason }), connection: formatAiSshConnection(config, session), command: normalizedCommand, commands: mainCommands, high_risk: highRisk, reason: normalizedReason, wait_seconds: normalizedWaitSeconds, output_chars: clipped.text_chars, returned_chars: clipped.returned_chars, truncated: clipped.truncated, output: clipped.text };
+    return { summary: tr("ssh.toolExecutedCommand", { command: normalizedCommand, reason: normalizedReason }), connection: formatAiSshConnection(config, sshSession), command: normalizedCommand, commands: mainCommands, high_risk: highRisk, reason: normalizedReason, wait_seconds: normalizedWaitSeconds, output_chars: clipped.text_chars, returned_chars: clipped.returned_chars, truncated: clipped.truncated, output: clipped.text };
   } finally {
-    session.aiCommandCaptures.delete(capture);
+    sshSession.aiCommandCaptures.delete(capture);
   }
 }
 
@@ -8454,11 +8473,19 @@ function formatAiSshConnection(config, session) {
   return { id: config.id, name: config.name, host: config.host, port: config.port || 22, username: config.username, active: Boolean(session?.connected), whitelist: config.whitelist || [] };
 }
 
-async function authorizeAiSshCommand(config, command, mainCommands, highRisk, reason) {
+async function authorizeAiSshCommand(config, command, mainCommands, highRisk, reason, session, signal) {
   const whitelisted = areSshMainCommandsWhitelisted(config, mainCommands);
   if (!highRisk && whitelisted) return;
   const messageKey = highRisk ? "ssh.confirmHighRiskCommand" : "ssh.confirmUnauthorizedCommand";
-  const approved = await showConfirm(tr(messageKey, { name: config.name || config.host, command, commands: mainCommands.join(", "), reason }), { title: tr("ssh.run"), tone: "danger", closeOnBackdrop: false });
+  const approved = await showAiInteraction(session, {
+    mode: "confirm",
+    title: tr("ssh.run"),
+    message: tr(messageKey, { name: config.name || config.host, command, commands: mainCommands.join(", "), reason }),
+    confirmLabel: tr("ssh.run"),
+    cancelLabel: tr("dialog.cancel"),
+    tone: "danger",
+  }, signal);
+  if (signal?.aborted) throw createAiAbortError();
   if (!approved) throw new Error(tr("ssh.error.commandRejected"));
 }
 
@@ -9152,9 +9179,9 @@ function getTreeIconClass(node, collapsed = false) {
 .code-editor-view .editor-dialog-option-copy { display: grid; min-width: 0; gap: 3px; }
 .code-editor-view .editor-dialog-option-copy strong { color: var(--text); font-size: 13px; font-weight: 600; }
 .code-editor-view .editor-dialog-option-copy small { color: var(--muted); font-size: 11px; line-height: 1.45; }
-.code-editor-view .ai-question-dialog-backdrop { position: absolute; z-index: 12; inset: 0; display: grid; place-items: center; min-height: 0; padding: 12px; background: rgb(0 0 0 / 42%); backdrop-filter: blur(2px); }
-.code-editor-view .ai-question-dialog { display: grid; gap: 14px; width: min(520px, 100%); max-height: 100%; overflow: auto; padding: 18px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); color: var(--text); box-shadow: 0 16px 44px var(--shadow); }
-.code-editor-view .ai-question-dialog h2 { min-width: 0; margin: 0; font-size: 15px; font-weight: 700; }
+.code-editor-view .ai-interaction-dialog-backdrop { position: absolute; z-index: 12; inset: 0; display: grid; place-items: center; min-height: 0; padding: 12px; background: rgb(0 0 0 / 42%); backdrop-filter: blur(2px); }
+.code-editor-view .ai-interaction-dialog { display: grid; gap: 14px; width: min(520px, 100%); max-height: 100%; overflow: auto; padding: 18px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); color: var(--text); box-shadow: 0 16px 44px var(--shadow); }
+.code-editor-view .ai-interaction-dialog h2 { min-width: 0; margin: 0; font-size: 15px; font-weight: 700; }
 .code-editor-view .editor-dialog-question-options { display: grid; gap: 7px; }
 .code-editor-view .editor-dialog-choice { display: grid; gap: 3px; width: 100%; padding: 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel-soft); color: var(--text); text-align: left; }
 .code-editor-view .editor-dialog-choice:hover,

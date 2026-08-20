@@ -238,6 +238,29 @@
               </label>
             </div>
           </form>
+        <div v-if="activeAiSession?.questionDialog?.visible" class="ai-question-dialog-backdrop" role="presentation">
+          <form class="ai-question-dialog" role="dialog" aria-modal="true" aria-labelledby="ai-question-dialog-title" @submit.prevent="submitAiQuestion(activeAiSession)" @keydown.esc.prevent.stop="cancelAiQuestion(activeAiSession)" @click.stop>
+            <div class="editor-dialog-header">
+              <span class="codicon codicon-question" aria-hidden="true"></span>
+              <h2 id="ai-question-dialog-title">{{ tr('ai.askUser.title') }}</h2>
+            </div>
+            <p class="editor-dialog-message">{{ activeAiSession.questionDialog.question }}</p>
+            <div class="editor-dialog-question-options">
+              <button v-for="option in activeAiSession.questionDialog.options" :key="option.label" type="button" class="editor-dialog-choice" :class="{ selected: activeAiSession.questionDialog.selectedOption?.label === option.label }" @click="selectAiQuestionOption(activeAiSession, option)">
+                <strong>{{ option.label }}</strong>
+                <small v-if="option.description">{{ option.description }}</small>
+              </button>
+            </div>
+            <label class="editor-dialog-input-row">
+              <span>{{ tr('ai.askUser.customAnswerLabel') }}</span>
+              <textarea ref="aiQuestionInput" v-model="activeAiSession.questionDialog.customValue" rows="3" :placeholder="tr('ai.askUser.customAnswerPlaceholder')" autocomplete="off" spellcheck="false" @input="activeAiSession.questionDialog.selectedOption = null" @keydown="handleAiQuestionKeydown($event, activeAiSession)"></textarea>
+            </label>
+            <div class="editor-dialog-actions">
+              <button type="button" @click="cancelAiQuestion(activeAiSession)">{{ tr('ai.askUser.cancel') }}</button>
+              <button type="submit" class="primary" :disabled="!activeAiSession.questionDialog.selectedOption && !activeAiSession.questionDialog.customValue.trim()">{{ tr('ai.askUser.submit') }}</button>
+            </div>
+          </form>
+        </div>
         </div>
         <aside v-if="aiHistoryVisible" class="ai-history-drawer" :aria-label="tr('ai.sessions')" @click.stop @keydown.esc.prevent.stop="closeAiHistory">
           <header class="ai-history-header">
@@ -1118,10 +1141,12 @@ const aiSessions = reactive([]);
 const aiSessionDraft = reactive(createAiSessionDraft());
 const activeAiSessionId = ref("");
 const activeAiSession = computed(() => aiSessions.find((session) => session.id === activeAiSessionId.value) || null);
+const aiQuestionRequests = new Map();
 const aiMessages = computed(() => activeAiSession.value?.messages || []);
 const aiAttachments = computed(() => activeAiSession.value?.pendingAttachments || aiSessionDraft.pendingAttachments);
 const aiSessionTitleInput = ref(null);
 const aiAttachmentInput = ref(null);
+const aiQuestionInput = ref(null);
 const aiHistorySearchInput = ref(null);
 const aiSessionTitleEditing = ref(false);
 const aiSessionMenuVisible = ref(false);
@@ -1261,7 +1286,10 @@ watch(activeSshTerminalId, () => { nextTick(attachActiveSshTerminal); });
 watch(activeAiSessionId, () => {
   aiSessionTitleEditing.value = false;
   aiSessionMenuVisible.value = false;
-  nextTick(() => scrollAiMessagesToBottom(true));
+  nextTick(() => {
+    scrollAiMessagesToBottom(true);
+    focusActiveAiQuestion();
+  });
 });
 watch(aiSessions, handleAiSessionsChanged, { deep: true, flush: "sync" });
 watch(searchMatchCase, () => { if (searchSearched.value && searchQuery.value.trim()) runGlobalSearch(); });
@@ -5071,6 +5099,10 @@ function resetAiSessionDraft(options = {}) {
   Object.assign(aiSessionDraft, createAiSessionDraft(options));
 }
 
+function createAiQuestionDialog() {
+  return { visible: false, question: "", options: [], customValue: "", selectedOption: null };
+}
+
 function createAiSession(options = {}) {
   aiSessionSerial += 1;
   const reasoningEffort = options.reasoningEffort || settings.ai.reasoningEffort;
@@ -5090,6 +5122,7 @@ function createAiSession(options = {}) {
     abortController: null,
     titleBusy: false,
     titleAbortController: null,
+    questionDialog: createAiQuestionDialog(),
     contextUsage: null,
     createdAt: Number(options.createdAt) || now,
     updatedAt: Number(options.updatedAt) || now,
@@ -5138,6 +5171,7 @@ function normalizeStoredAiSession(value, index) {
     abortController: null,
     titleBusy: false,
     titleAbortController: null,
+    questionDialog: createAiQuestionDialog(),
     contextUsage: null,
     createdAt: normalizeAiSessionTimestamp(value.createdAt),
     updatedAt: normalizeAiSessionTimestamp(value.updatedAt || value.createdAt),
@@ -5216,6 +5250,52 @@ function serializeAiSessionContent(session) {
 function getActiveAiSession() {
   if (activeAiSession.value) return activeAiSession.value;
   throw new Error("No active AI session");
+}
+
+function showAiUserQuestion(session, question, options, signal) {
+  const dialog = session?.questionDialog;
+  if (!dialog) throw new Error("AI session question state is unavailable");
+  if (dialog.visible || aiQuestionRequests.has(session.id)) throw new Error("This AI session is already waiting for a user answer");
+  return new Promise((resolve) => {
+    const abortHandler = () => settleAiQuestion(session, null);
+    aiQuestionRequests.set(session.id, { resolve, signal, abortHandler });
+    Object.assign(dialog, { visible: true, question, options, customValue: "", selectedOption: null });
+    signal?.addEventListener("abort", abortHandler, { once: true });
+    if (activeAiSessionId.value === session.id) nextTick(focusActiveAiQuestion);
+  });
+}
+
+function focusActiveAiQuestion() {
+  if (activeAiSession.value?.questionDialog?.visible) aiQuestionInput.value?.focus();
+}
+
+function selectAiQuestionOption(session, option) {
+  const dialog = session?.questionDialog;
+  if (!dialog?.visible) return;
+  dialog.selectedOption = option;
+  dialog.customValue = "";
+}
+
+function submitAiQuestion(session) {
+  const dialog = session?.questionDialog;
+  if (!dialog?.visible) return;
+  const value = dialog.selectedOption?.label || dialog.customValue.trim();
+  if (!value) return;
+  settleAiQuestion(session, { value, selectedOption: dialog.selectedOption });
+}
+
+function cancelAiQuestion(session) {
+  settleAiQuestion(session, null);
+}
+
+function settleAiQuestion(session, result) {
+  const dialog = session?.questionDialog;
+  const request = session ? aiQuestionRequests.get(session.id) : null;
+  if (!dialog?.visible || !request) return;
+  aiQuestionRequests.delete(session.id);
+  request.signal?.removeEventListener("abort", request.abortHandler);
+  Object.assign(dialog, createAiQuestionDialog());
+  request.resolve(result);
 }
 
 function createAiSessionAndActivate() {
@@ -5308,6 +5388,7 @@ function formatAiHistoryTime(timestamp) {
 }
 
 function formatAiSessionState(session) {
+  if (session.questionDialog?.visible) return tr("ai.askUser.waiting");
   if (session.busy || session.titleBusy) return tr("ai.running");
   return session.saved ? tr("ai.savedSession") : tr("ai.temporarySession");
 }
@@ -5494,9 +5575,19 @@ function scrollAiMessagesToBottom(force = false) {
 }
 
 function handleAiPromptKeydown(event) {
-  if (event.key !== "Enter" || event.shiftKey || event.ctrlKey || event.metaKey || event.altKey || event.isComposing) return;
+  if (!isAiTextareaSubmitEvent(event)) return;
   event.preventDefault();
   sendAiPrompt();
+}
+
+function handleAiQuestionKeydown(event, session) {
+  if (!isAiTextareaSubmitEvent(event)) return;
+  event.preventDefault();
+  submitAiQuestion(session);
+}
+
+function isAiTextareaSubmitEvent(event) {
+  return event.key === "Enter" && !event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey && !event.isComposing;
 }
 
 async function handleAiAttachmentSelection(event) {
@@ -5995,6 +6086,7 @@ function getAgentInstructions() {
     "Choose an execution environment from the user's requested target and keep that boundary throughout the task. A failure in one environment does not grant permission to move execution to another environment. Remote-host tools are only for tasks that explicitly target a configured remote host or inherently depend on that host's state.",
     "Never claim something changed unless you have confirmed it through the available context.",
     "Resolve references like 'the file you created' from Recent chat and AI-touched files before using the current editor file. If multiple files match, ask a short clarification instead of editing or deleting the current file by default.",
+    "Use ask_user when the task requires a user decision, preference, or clarification that cannot be safely inferred. Offer concise useful options and let the user provide a custom answer.",
     "Prefer small, targeted edits. Explain changed files briefly; do not paste whole modified files in chat.",
   ];
   const globalPrompt = String(settings.ai.globalPrompt || "").trim();
@@ -6339,6 +6431,10 @@ function getAiAllToolDefinitions() {
     { type: "function", name: "delete_file", requirements: ["workspace"], description: aiToolDescription("Mark a workspace file for deletion in memory.", "Existing disk files are deleted only when the user saves the deletion. Unsaved new files are removed immediately from memory.", "Be careful resolving ambiguous references before deleting. Do not claim the file was deleted unless this tool reports success."), parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } },
     { type: "function", name: "open_file", requirements: ["workspace"], description: aiToolDescription("Open a workspace file in the editor.", "Use this when the user wants a file displayed or when visual editor context is useful."), parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } },
     { type: "function", name: "show_diff", requirements: ["workspace"], description: aiToolDescription("Show the diff for an in-memory changed file.", "Use this for files changed, created, or marked for deletion in the editor session."), parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } },
+    { type: "function", name: "ask_user", requirements: [], description: aiToolDescription("Ask the user a question and wait for their answer.", "Use this when the task needs a decision, preference, clarification, or confirmation that cannot be safely inferred. Provide concise suggested options when useful; the user can select one or enter a custom answer."), parameters: { type: "object", properties: {
+      question: { type: "string", description: "The question shown to the user." },
+      options: { type: "array", minItems: 1, maxItems: 5, items: { type: "object", properties: { label: { type: "string", description: "Short option text." }, description: { type: "string", description: "Optional explanation of this option." } }, required: ["label"] }, description: "Suggested options. The user can always enter a custom answer instead." }
+    }, required: ["question", "options"] } },
     { type: "function", name: "request_proxy", requirements: ["backend"], description: aiToolDescription(
       "Fetch an external HTTP/HTTPS URL through the configured backend request proxy to avoid browser CORS limits.",
       "Declare credential Keys through credentials, then use ${KEY}, ${KEY|urlencode}, ${KEY|json}, or ${KEY|base64} in the URL, header values, or body. Missing Keys are empty strings. Use $${KEY} for a literal placeholder.",
@@ -6523,6 +6619,7 @@ async function runAiToolCall(call, args = {}, session = getActiveAiSession(), si
       case "sftp_list_tasks": return okTool(aiToolSftpListTasks(args));
       case "sftp_cancel_task": return okTool(aiToolSftpCancelTask(args));
       case "execute_ssh_command": return okTool(await aiToolExecuteSshCommand(args, signal));
+      case "ask_user": return okTool(await aiToolAskUser(args, signal, session));
       case "get_current_file": return okTool(aiToolGetCurrentFile());
       case "replace_in_file": return okTool(await aiToolReplaceInFile(args, session));
       case "replace_in_files": return okTool(await aiToolReplaceInFiles(args, session));
@@ -8257,6 +8354,38 @@ function aiToolReadSshOutput({ connection, max_chars: maxChars } = {}) {
   return { summary: `Read ${clipped.returned_chars}/${clipped.text_chars} SSH output chars from ${config.name || config.host}`, connection: formatAiSshConnection(config, session), output_chars: clipped.text_chars, returned_chars: clipped.returned_chars, truncated: clipped.truncated, output: clipped.text };
 }
 
+async function aiToolAskUser({ question, options } = {}, signal, session = getActiveAiSession()) {
+  throwIfAiAborted(signal);
+  const normalizedQuestion = String(question || "").trim();
+  if (!normalizedQuestion) throw new Error("question is required");
+  const normalizedOptions = normalizeAiUserQuestionOptions(options);
+  if (!normalizedOptions.length) throw new Error("options must contain at least one labeled option");
+  const result = await showAiUserQuestion(session, normalizedQuestion, normalizedOptions, signal);
+  if (result === null) {
+    if (signal?.aborted) throw createAiAbortError();
+    return { summary: tr("ai.askUser.cancelled"), question: normalizedQuestion, cancelled: true };
+  }
+  return {
+    summary: tr("ai.askUser.answered"),
+    question: normalizedQuestion,
+    answer: result.value,
+    selected_option: result.selectedOption,
+    custom: !result.selectedOption,
+  };
+}
+
+function normalizeAiUserQuestionOptions(options) {
+  if (!Array.isArray(options)) return [];
+  const seen = new Set();
+  return options.map((option) => {
+    const source = option && typeof option === "object" ? option : { label: option };
+    const label = String(source.label || "").trim();
+    if (!label || seen.has(label)) return null;
+    seen.add(label);
+    return { label, description: String(source.description || "").trim() };
+  }).filter(Boolean).slice(0, 5);
+}
+
 async function aiToolSftpUploadFile({ connection, local_path: localPath, remote_path: remotePath, use_unsaved: useUnsaved = true } = {}) {
   const config = getAiExposedSshConfig(connection);
   return submitSftpUpload(config, { localPath, remotePath, useUnsaved });
@@ -8884,7 +9013,7 @@ function getTreeIconClass(node, collapsed = false) {
 .code-editor-view .ai-history-item-main small .codicon { margin-right: 3px; font-size: 10px; }
 .code-editor-view .ai-history-delete { width: 28px; height: 28px; margin-right: 8px; padding: 0; border-color: transparent; background: transparent; color: var(--muted); }
 .code-editor-view .ai-history-delete:hover:not(:disabled) { border-color: var(--border); background: var(--panel-soft); color: #ffb3b3; }
-.code-editor-view .ai-chat { display: grid; grid-template-rows: minmax(0, 1fr) auto; min-height: 0; flex: 1; }
+.code-editor-view .ai-chat { position: relative; display: grid; grid-template-rows: minmax(0, 1fr) auto; min-height: 0; flex: 1; }
 .code-editor-view .ai-chat-messages { display: grid; align-content: start; gap: 10px; min-height: 0; overflow: hidden auto; overflow-anchor: none; padding: 0 12px 12px; }
 .code-editor-view .ai-message { display: grid; min-width: 0; gap: 5px; padding: 9px 10px; border: 1px solid var(--border); border-radius: 7px; background: var(--panel-soft); }
 .code-editor-view .ai-message strong { color: var(--accent-strong); font-size: 12px; }
@@ -9023,6 +9152,18 @@ function getTreeIconClass(node, collapsed = false) {
 .code-editor-view .editor-dialog-option-copy { display: grid; min-width: 0; gap: 3px; }
 .code-editor-view .editor-dialog-option-copy strong { color: var(--text); font-size: 13px; font-weight: 600; }
 .code-editor-view .editor-dialog-option-copy small { color: var(--muted); font-size: 11px; line-height: 1.45; }
+.code-editor-view .ai-question-dialog-backdrop { position: absolute; z-index: 12; inset: 0; display: grid; place-items: center; min-height: 0; padding: 12px; background: rgb(0 0 0 / 42%); backdrop-filter: blur(2px); }
+.code-editor-view .ai-question-dialog { display: grid; gap: 14px; width: min(520px, 100%); max-height: 100%; overflow: auto; padding: 18px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); color: var(--text); box-shadow: 0 16px 44px var(--shadow); }
+.code-editor-view .ai-question-dialog h2 { min-width: 0; margin: 0; font-size: 15px; font-weight: 700; }
+.code-editor-view .editor-dialog-question-options { display: grid; gap: 7px; }
+.code-editor-view .editor-dialog-choice { display: grid; gap: 3px; width: 100%; padding: 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--panel-soft); color: var(--text); text-align: left; }
+.code-editor-view .editor-dialog-choice:hover,
+.code-editor-view .editor-dialog-choice.selected { border-color: var(--accent-strong); background: var(--context-hover); }
+.code-editor-view .editor-dialog-choice strong { font-size: 13px; }
+.code-editor-view .editor-dialog-choice small { color: var(--muted); font-size: 11px; line-height: 1.45; }
+.code-editor-view .editor-dialog-input-row textarea { width: 100%; resize: vertical; min-height: 70px; border: 1px solid var(--border); border-radius: 5px; background: var(--input); color: var(--text); padding: 8px 9px; }
+.code-editor-view .editor-dialog-input-row textarea:focus { border-color: var(--accent-strong); outline: none; box-shadow: 0 0 0 1px var(--accent-strong); }
+.code-editor-view .editor-dialog-actions button:disabled { cursor: not-allowed; opacity: 0.55; }
 .code-editor-view .ssh-dialog { width: min(620px, 100%); max-height: min(760px, calc(100vh - 36px)); overflow: auto; }
 .code-editor-view .ssh-dialog-grid { display: grid; grid-template-columns: minmax(0, 1fr) 120px; gap: 10px; }
 .code-editor-view .editor-dialog-actions { position: sticky; bottom: -18px; display: flex; justify-content: flex-end; gap: 8px; margin: 0 -18px -18px; padding: 12px 18px 18px; border-top: 1px solid var(--border); background: var(--panel); }

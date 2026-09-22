@@ -245,6 +245,29 @@ test('执行期间关闭预览会返回失败，不把旧文档结果作为成�
     expect(results[0].summary).toMatch(/changed|ready/i);
 });
 
+test('预览容器隐藏时 AI 仍可刷新读取错误和检查 DOM，恢复显示后无需重开', async ({page}) => {
+    const ai = await setup(page);
+    await ai.run([['preview_open', {path: 'index.html'}]]);
+    await page.locator('.preview-viewport-host').evaluate((host) => { host.style.display = 'none'; });
+    const result = await ai.run([
+        ['preview_refresh'],
+        ['preview_evaluate', {code: 'console.warn("预览隐藏日志"); document.body.dataset.retained="yes";'}],
+        ['preview_get_errors', {limit: 15, since: 0}],
+        ['preview_inspect', {selector: 'body', limit: 5, include_styles: false, timeout_ms: 5000}],
+        ['preview_get_state'],
+    ]);
+    expect(result.results.every((item) => item.ok)).toBe(true);
+    expect(result.results[2].errors.some((entry) => entry.kind === 'console.warn')).toBe(true);
+    expect(result.results[3].value).toHaveProperty('elements');
+    expect(result.results[4]).toMatchObject({ready: true, viewportReady: false, visible: false, error: null});
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await page.locator('.preview-viewport-host').evaluate((host) => { host.style.display = ''; });
+    await expect(page.frameLocator('.preview-frame').locator('body')).toHaveAttribute('data-retained', 'yes');
+    const recovered = await ai.run([['preview_get_state']]);
+    expect(recovered.results[0]).toMatchObject({ready: true, viewportReady: true, visible: true});
+    expect(recovered.results[0].revision).toBe(result.results[4].revision);
+});
+
 test('AI 与用户共用指定视口和恢复控制，缩放不重载页面或清空表单', async ({page}) => {
     const ai = await setup(page);
     const opened = await ai.run([

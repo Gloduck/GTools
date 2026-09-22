@@ -6429,7 +6429,7 @@ function getAiRequirementStatus(requirement) {
     case "workspace": return { met: isWorkspaceLoaded(), description: "requires an open workspace folder", reason: "No workspace folder is open" };
     case "backend": return { met: isBackendEnabled(), description: "requires backend server enabled", reason: "Backend server setting is disabled" };
     case "ssh_exposed": return { met: getAiExposedSshConfigs().length > 0, description: "requires at least one SSH setting exposed to AI", reason: "No SSH setting is exposed to AI" };
-    case "preview": return { met: Boolean(previewPaneVisible.value && previewFrame.value && previewPath.value && previewSession.getState().attached), description: "requires the visible attached internal preview iframe", reason: "No internal preview iframe is open; use preview_open first" };
+    case "preview": return { met: Boolean(previewPaneVisible.value && previewFrame.value && previewPath.value && previewSession.getState().attached), description: "requires an attached internal preview iframe", reason: "No internal preview iframe is open; use preview_open first" };
     case "preview_capture": return { met: previewSession.getState().capture.status === "active", description: "requires preview sharing already enabled by the user", reason: "The user must enable sharing in the preview toolbar first. Do not retry alternate capture methods or execute scripts to bypass sharing" };
     default: return { met: false, description: `requires ${requirement}`, reason: `Unknown requirement: ${requirement}` };
   }
@@ -6512,7 +6512,7 @@ function okTool(result) {
 
 function getAiPreviewState() {
   const { content, ...state } = previewSession.getState();
-  return { ...state, ready: state.ready && state.viewportReady && !previewSyncSerial && !previewRenderError, error: previewRenderError || state.error, visible: previewPaneVisible.value, target_path: previewPath.value, rendering: Boolean(previewSyncSerial) };
+  return { ...state, ready: state.ready && !previewSyncSerial && !previewRenderError, error: previewRenderError || state.error, visible: Boolean(previewPaneVisible.value && state.display.width && state.display.height), target_path: previewPath.value, rendering: Boolean(previewSyncSerial) };
 }
 
 function awaitAiPreviewOperation(promise, signal) {
@@ -6542,7 +6542,7 @@ async function aiToolPreview(name, args, session, signal, imageInputs) {
       const state = previewSession.getState();
       if (!previewPaneVisible.value || !state.attached || !state.ready || state.error
         || state.path !== rendered.path || state.revision !== rendered.revision
-        || state.viewportRevision !== rendered.viewportRevision || !state.viewportReady
+        || (["preview_inspect", "preview_screenshot"].includes(name) && state.viewportRevision !== rendered.viewportRevision)
         || previewRenderSerial !== rendered.serial || previewContentRevision.value !== rendered.contentRevision || diskTree.value !== rendered.diskTree) {
         throw new Error("Preview document changed or has pending rendering; result discarded");
       }

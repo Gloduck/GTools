@@ -47,7 +47,11 @@ export function createPreviewSession(initialFiles) {
             };
             const check = () => {
                 if (disposed || viewport !== target || !frame) finish(new Error('Preview viewport is detached'));
-                else if (viewportState().viewportReady) finish();
+                else {
+                    const state = viewportState();
+                    if (!state.display.width || !state.display.height) finish(new Error('Preview area is hidden or has zero size; show the preview before capturing or waiting for its viewport'));
+                    else if (state.viewportReady) finish();
+                }
             };
             const timer = setTimeout(() => finish(new Error('Preview viewport did not become ready')), Math.max(0, timeoutMs));
             listeners.add(check);
@@ -94,8 +98,8 @@ export function createPreviewSession(initialFiles) {
             content = next;
             if (frame) frame.srcdoc = content;
             publish();
+            // 页面加载不依赖宿主是否可见；只有截图和视口设置需要等待显示布局稳定。
             if (frame) await waitUntilReady(current);
-            if (viewport) await waitForViewport(viewport);
         } catch (failure) {
             if (current !== revision || disposed) return getState();
             content = '';

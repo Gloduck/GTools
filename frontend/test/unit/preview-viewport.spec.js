@@ -229,3 +229,45 @@ test('截图编码期间切换视口会拒绝旧尺寸图片但不停止共享',
         });
     }
 });
+
+test('容器隐藏时重载不等待截图视口，也不清空文档或阻塞日志读取', async ({page}) => {
+    await setup(page);
+    const state = await page.evaluate(async () => {
+        document.querySelector('#container').style.display = 'none';
+        await session.refresh();
+        await session.evaluate({code: 'console.warn("隐藏时的日志"); document.body.dataset.retained="yes";'});
+        return session.getState();
+    });
+    expect(state).toMatchObject({ready: true, error: null, viewportReady: false});
+    expect(state.content).toContain('点击计数');
+    expect((await page.evaluate(() => session.inspect({selector: 'body', limit: 5}))).value).toHaveProperty('elements');
+    expect(await page.evaluate(() => session.getErrors({limit: 15, since: 0}))).toEqual(expect.arrayContaining([
+        expect.objectContaining({kind: 'console.warn', value: ['隐藏时的日志']}),
+    ]));
+    await page.locator('#container').evaluate((container) => { container.style.display = ''; });
+    await expect.poll(() => page.evaluate(() => session.getState().viewportReady)).toBe(true);
+    await expect(page.frameLocator('iframe').locator('body')).toHaveAttribute('data-retained', 'yes');
+    expect(await page.evaluate(() => session.getState().revision)).toBe(state.revision);
+});
+
+test('宿主动画帧不执行时页面仍可加载检查和执行脚本', async ({page}) => {
+    await page.goto('/test/runtime-harness.html');
+    const result = await page.evaluate(async () => {
+        const {createPreviewSession} = await import('/src/shared/preview/index.js');
+        document.body.innerHTML = '<div style="width:600px;height:400px;position:relative"><iframe style="position:absolute;border:0"></iframe></div>';
+        const requestFrame = window.requestAnimationFrame;
+        // 模拟后台标签页暂停宿主动画帧，不影响 iframe 自身加载。
+        window.requestAnimationFrame = () => 0;
+        window.session = createPreviewSession([{path: 'index.html', mimeType: 'text/html', content: '<h1>Background</h1><script>console.warn("背景日志")</script>'}]);
+        try {
+            session.attachFrame(document.querySelector('iframe'), {container: document.querySelector('div')});
+            await session.open('index.html');
+            return {state: session.getState(), inspected: await session.inspect({selector: 'h1'}), logs: session.getErrors()};
+        } finally {
+            window.requestAnimationFrame = requestFrame;
+        }
+    });
+    expect(result.state).toMatchObject({ready: true, error: null, viewportReady: false});
+    expect(result.inspected.value.elements[0].text).toBe('Background');
+    expect(result.logs[0]).toMatchObject({kind: 'console.warn', value: ['背景日志']});
+});

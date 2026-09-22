@@ -570,11 +570,14 @@
           <div v-show="activeSshTerminal.terminal" ref="sshTerminalHost" class="ssh-terminal-host"></div>
           <pre v-if="!activeSshTerminal.terminal" class="ssh-terminal-fallback">{{ activeSshTerminal.output || tr('ssh.noOutput') }}</pre>
         </section>
-        <aside v-if="previewPaneVisible && !activeSshTerminal" class="preview-pane" :aria-label="tr('preview.aria')">
+        <aside v-if="previewPaneVisible" class="preview-pane" :aria-label="tr('preview.aria')">
           <div class="preview-pane-resizer" role="separator" aria-orientation="vertical" :aria-valuenow="previewWidth" :aria-valuemin="PREVIEW_MIN_WIDTH" :aria-valuemax="PREVIEW_MAX_WIDTH" @pointerdown="startPreviewResize"></div>
           <header class="preview-header">
-            <span>{{ tr(previewLabelKey) }}</span>
+            <span :title="previewPath">{{ tr(previewLabelKey) }} · {{ previewPath }}</span>
             <div class="preview-header-actions">
+              <button type="button" class="icon-button" :disabled="previewCapture.status === 'requesting'" :title="tr(previewCapture.status === 'active' ? 'preview.stopCapture' : 'preview.startCapture')" :aria-label="tr(previewCapture.status === 'active' ? 'preview.stopCapture' : 'preview.startCapture')" @click="togglePreviewCapture">
+                <span :class="['codicon', previewCapture.status === 'active' ? 'codicon-debug-stop' : 'codicon-device-camera']" aria-hidden="true"></span>
+              </button>
               <a v-if="previewPageUrl" class="icon-button preview-external-link" :href="previewPageUrl" target="_blank" rel="noopener noreferrer" :title="tr('preview.openNewTab')" :aria-label="tr('preview.openNewTab')">
                 <span class="codicon codicon-link-external" aria-hidden="true"></span>
               </a>
@@ -583,7 +586,7 @@
               </button>
             </div>
           </header>
-          <iframe ref="previewFrame" :key="previewFrameKey" class="preview-frame" :sandbox="PREVIEW_FRAME_SANDBOX" :srcdoc="previewContent"></iframe>
+          <iframe ref="previewFrame" class="preview-frame" :sandbox="PREVIEW_FRAME_SANDBOX"></iframe>
         </aside>
       </section>
 
@@ -757,6 +760,8 @@ import {
   normalizeFilePath,
 } from "@/shared/file-utils.js";
 import { MarkdownUtils } from "@/shared/markdown-utils.js";
+import { createPreviewSession, collectPreviewReferences, PREVIEW_FRAME_SANDBOX } from "@/shared/preview/index.js";
+import { createPreviewWindow } from "@/shared/preview/window.js";
 import { NetworkLimit } from "@/shared/network-limit.js";
 import { enableEditorPwa } from "@/shared/pwa-install.js";
 import { downloadDirectory, downloadFile } from "@/shared/file-downloader.js";
@@ -933,14 +938,9 @@ const languageOptions = [
 
 const aiReasoningEfforts = ["default", "low", "medium", "high", "xhigh", "max"];
 const renderMarkdown = MarkdownUtils.renderMarkdown;
-const PREVIEW_FRAME_SANDBOX = "allow-forms allow-modals allow-popups allow-scripts";
 const PREVIEW_TYPES = Object.freeze({
   html: Object.freeze({ languages: Object.freeze(["html"]), labelKey: "preview.html" }),
   markdown: Object.freeze({ languages: Object.freeze(["markdown", "mdx"]), labelKey: "preview.markdown" }),
-});
-const PREVIEW_SOURCE_RENDERERS = Object.freeze({
-  html: (content) => String(content || ""),
-  markdown: (content, title) => createMarkdownPreviewDocument(renderMarkdown(content), title),
 });
 
 function getPreviewType(file) {
@@ -950,58 +950,6 @@ function getPreviewType(file) {
 
 function getPreviewTypeDefinition(type) {
   return PREVIEW_TYPES[type] || null;
-}
-
-function resolveWorkspacePreviewUrl(url, currentPath) {
-  const value = String(url || "").trim();
-  if (!value || value.startsWith("#") || value.startsWith("//") || /^[a-z][a-z0-9+.-]*:/i.test(value)) return null;
-
-  const parts = splitPreviewUrlSuffix(value);
-  const decodedPath = decodePreviewPath(parts.path);
-  if (decodedPath == null) return null;
-  const rawPath = decodedPath.replace(/\\/g, "/");
-  if (!rawPath) {
-    const path = String(currentPath || "").replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
-    return path ? { path, suffix: parts.suffix, hash: parts.hash } : null;
-  }
-  const segments = rawPath.startsWith("/") ? [] : getPreviewDirectorySegments(currentPath);
-  for (const segment of rawPath.split("/")) {
-    if (!segment || segment === ".") continue;
-    if (segment === "..") {
-      if (!segments.length) return null;
-      segments.pop();
-      continue;
-    }
-    segments.push(segment);
-  }
-  if (!segments.length) return null;
-  return { path: segments.join("/"), suffix: parts.suffix, hash: parts.hash };
-}
-
-function splitPreviewUrlSuffix(url) {
-  const value = String(url || "");
-  const hashIndex = value.indexOf("#");
-  const queryIndex = value.indexOf("?");
-  const indexes = [hashIndex, queryIndex].filter((index) => index >= 0);
-  if (!indexes.length) return { path: value, suffix: "", hash: "" };
-  const splitIndex = Math.min(...indexes);
-  return { path: value.slice(0, splitIndex), suffix: value.slice(splitIndex), hash: hashIndex >= 0 ? value.slice(hashIndex) : "" };
-}
-
-function getPreviewDirectorySegments(path) {
-  const normalized = String(path || "").replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
-  if (!normalized) return [];
-  const segments = normalized.split("/");
-  segments.pop();
-  return segments;
-}
-
-function decodePreviewPath(path) {
-  try {
-    return decodeURIComponent(String(path || ""));
-  } catch {
-    return null;
-  }
 }
 
 const sshTerminalThemes = {
@@ -1085,11 +1033,11 @@ const pendingFileLoads = new Set();
 const selectedChangePaths = reactive(new Set());
 const activePath = ref("");
 const activeDiffPath = ref("");
-const previewOpenPaths = reactive(new Set());
 const previewVisible = ref(false);
-const previewContent = ref("");
 const previewPageUrl = ref("");
-const previewFrameKey = ref(0);
+const previewSession = createPreviewSession([]);
+const previewCapture = ref(previewSession.getState().capture);
+let detachPreviewFrame = null;
 const previewOwnerPath = ref("");
 const previewPath = ref("");
 const previewUrlSuffix = ref("");
@@ -1256,8 +1204,8 @@ const activeLanguage = computed({ get: () => activeFile.value?.language || "plai
 const activePreviewType = computed(() => getPreviewType(activeTextFile.value));
 const canPreviewActiveFile = computed(() => Boolean(activePreviewType.value));
 const previewLabelKey = computed(() => getPreviewTypeDefinition(previewType.value)?.labelKey || "action.preview");
-const activeFilePreviewVisible = computed(() => Boolean(activePath.value && previewOpenPaths.has(activePath.value)));
-const previewPaneVisible = computed(() => Boolean(activeFilePreviewVisible.value && previewVisible.value && previewOwnerPath.value === activePath.value && previewPath.value && previewType.value && !activeSshTerminal.value));
+const previewPaneVisible = computed(() => Boolean(previewVisible.value && previewPath.value && previewType.value));
+const activeFilePreviewVisible = computed(() => Boolean(previewPaneVisible.value && previewOwnerPath.value === activePath.value && !activeSshTerminal.value));
 const sshFeatureEnabled = computed(() => isBackendEnabled());
 const sshTerminalTabs = computed(() => {
   sshRevision.value;
@@ -1296,6 +1244,10 @@ watch(aiSessions, handleAiSessionsChanged, { deep: true, flush: "sync" });
 watch(searchMatchCase, () => { if (searchSearched.value && searchQuery.value.trim()) runGlobalSearch(); });
 watch(() => dirtyFiles.value.map((file) => file.path).join("\0"), pruneSelectedChangePaths);
 watch(previewPaneVisible, () => { nextTick(layoutVisibleEditors); });
+watch(previewFrame, (frame) => {
+  detachPreviewFrame?.();
+  detachPreviewFrame = frame ? previewSession.attachFrame(frame) : null;
+});
 watch([previewPaneVisible, previewPath, previewUrlSuffix, dirtyRevision, currentLocale], () => { void updatePreviewContent(); });
 watch(settings, () => {
   syncFileOperationPolicy();
@@ -1365,7 +1317,6 @@ onMounted(async () => {
   window.addEventListener("resize", scheduleActiveSshTerminalFit);
   window.addEventListener("beforeunload", beforeUnload);
   window.addEventListener("pagehide", handlePageHide);
-  window.addEventListener("message", handlePreviewWindowMessage);
 });
 
 onBeforeUnmount(() => {
@@ -1389,10 +1340,8 @@ onBeforeUnmount(() => {
   editor.value?.setModel(null);
   openFiles.forEach((file) => disposeFileModels(file, { force: true }));
   disposeWorkspaceModels({ force: true });
-  previewBroadcastChannel?.close();
-  previewBroadcastChannel = null;
-  revokePreviewPageUrl();
-  revokePreviewResourceUrls();
+  previewWindow.dispose();
+  previewSession.dispose();
   editor.value?.dispose();
   diffEditor.value?.dispose();
   document.removeEventListener("click", hideAllContextMenus);
@@ -1401,7 +1350,6 @@ onBeforeUnmount(() => {
   window.removeEventListener("resize", scheduleActiveSshTerminalFit);
   window.removeEventListener("beforeunload", beforeUnload);
   window.removeEventListener("pagehide", handlePageHide);
-  window.removeEventListener("message", handlePreviewWindowMessage);
 });
 
 function tr(key, params = {}) {
@@ -1420,189 +1368,138 @@ function togglePreview() {
   }
 }
 
-function openPreview() {
-  const file = activeTextFile.value;
+function openPreview(file = activeTextFile.value) {
   const type = getPreviewType(file);
   if (!file || !type) return;
-  previewOpenPaths.add(file.path);
+  // 预览目标仅在显式打开时切换，阻止收集期间的旧文档状态覆盖本次目标。
+  previewSyncSerial = ++previewRenderSerial;
   previewOwnerPath.value = file.path;
   previewPath.value = file.path;
   previewUrlSuffix.value = "";
   previewType.value = type;
   previewVisible.value = true;
-  void nextTick(() => updatePreviewContent({ remountFrame: true }));
+  void nextTick(() => updatePreviewContent());
 }
 
-function closePreview(path = activePath.value || previewOwnerPath.value) {
-  if (path) previewOpenPaths.delete(path);
+function closePreview(path = previewOwnerPath.value) {
   if (previewOwnerPath.value !== path) return;
   previewRenderSerial += 1;
   previewVisible.value = false;
   previewOwnerPath.value = "";
-  if (standalonePreviewClients.size) return;
+  if (previewWindow.getClientCount()) return;
   clearPreviewContent();
 }
 
 function clearPreviewContent() {
-  previewContent.value = "";
-  lastPreviewUpdate = null;
-  revokePreviewPageUrl();
-  replacePreviewResourceUrls(new Map());
+  previewWindow.clear();
+  previewSession.reset();
 }
 
-function resetPreviewState() {
-  previewRenderSerial += 1;
+function resetPreviewState(path = "") {
   previewNavigationSerial += 1;
-  previewOpenPaths.clear();
+  if (path && previewOwnerPath.value !== path && previewPath.value !== path) return;
+  previewRenderSerial += 1;
   previewVisible.value = false;
   previewOwnerPath.value = "";
   previewPath.value = "";
   previewUrlSuffix.value = "";
   previewType.value = "";
-  previewBroadcastChannel?.postMessage({ type: "preview:update", content: "", title: tr("action.preview"), path: "", suffix: "", previewType: "", revision: ++previewUpdateRevision });
+  previewWindow.reset(tr("action.preview"));
   clearPreviewContent();
 }
 
 function layoutVisibleEditors() {
   editor.value?.layout();
   diffEditor.value?.layout();
+  scheduleActiveSshTerminalFit();
 }
 
 let previewRenderSerial = 0;
-let previewResourceObjectUrls = new Map();
-let previewPageObjectUrl = "";
-const previewBroadcastChannelName = `code-editor-preview-${crypto.randomUUID()}`;
-const standalonePreviewClients = new Set();
-let previewBroadcastChannel = null;
-let lastPreviewUpdate = null;
 let previewNavigationSerial = 0;
-let previewUpdateRevision = 0;
+let previewSyncSerial = 0;
+const previewWindow = createPreviewWindow(previewSession, {
+  onNavigate: navigatePreviewDocument,
+  onClientsChanged: (count) => {
+    if (!previewPaneVisible.value && !count) clearPreviewContent();
+  },
+  onUrlChanged: (url) => { previewPageUrl.value = url; },
+  getLocale: getCurrentLocale,
+});
 
-async function updatePreviewContent({ remountFrame = false } = {}) {
+previewSession.subscribe((state) => {
+  previewCapture.value = state.capture;
+  if (!state.path || !state.content || state.error) return;
+  if (!previewSyncSerial && (previewPath.value !== state.path || previewUrlSuffix.value !== state.suffix)) {
+    previewPath.value = state.path;
+    previewUrlSuffix.value = state.suffix;
+  }
+});
+
+async function togglePreviewCapture() {
+  if (previewCapture.value.status === "active") previewSession.stopCapture();
+  else {
+    try { await previewSession.startCapture(); }
+    catch (error) { reportError("error.openFile", error); }
+  }
+}
+
+async function updatePreviewContent() {
   const serial = ++previewRenderSerial;
   const path = previewPath.value;
   const suffix = previewUrlSuffix.value;
-  if (!previewPaneVisible.value && !standalonePreviewClients.size) return;
+  if (!previewPaneVisible.value && !previewWindow.getClientCount()) return;
   if (!path) return;
 
-  const objectUrls = new Map();
-  let file;
-  let type;
-  let resolved;
+  previewSyncSerial = serial;
   try {
-    file = await readPreviewFile(path);
-    type = getPreviewType(file);
+    const file = await readPreviewFile(path);
+    const type = getPreviewType(file);
     if (!type) throw new Error(`File is not previewable: ${path}`);
-    const title = file.name || tr("action.preview");
-    const sourceDocument = createPreviewSourceDocument(getPreviewFileContent(file), title, type);
-    resolved = await rewritePreviewDocument(sourceDocument, file, objectUrls, suffix);
+    const files = await collectWorkspacePreviewFiles(path);
+    if (serial !== previewRenderSerial) return;
+    previewType.value = type;
+    // 依赖文件修改也整体替换快照，模型中可能还有尚未暂存的最新文本。
+    await previewSession.setFiles(files);
+    if (serial !== previewRenderSerial) return;
+    const state = previewSession.getState();
+    if (state.path !== path || state.suffix !== suffix) await previewSession.open(path + suffix);
   } catch (error) {
-    revokeObjectUrlMap(objectUrls);
     if (serial === previewRenderSerial) reportError("error.openFile", error);
-    return;
+  } finally {
+    if (previewSyncSerial === serial) previewSyncSerial = 0;
   }
-  if (serial !== previewRenderSerial) {
-    revokeObjectUrlMap(objectUrls);
-    return;
+}
+
+async function collectWorkspacePreviewFiles(path) {
+  const files = [];
+  const visited = new Set();
+  const queue = [path];
+  let bytes = 0;
+  const budget = fileSession.value.fileSystem.policy.maxMemoryReadBytes;
+  for (const next of queue) {
+    if (visited.has(next)) continue;
+    visited.add(next);
+    if (visited.size > WORKSPACE_REFERENCE_FILE_LIMIT) throw new Error("Preview dependency file limit exceeded");
+    const node = openFiles.get(next) || findNodeByPath(tree.value, next);
+    if (next !== path && (!node || node.kind === "directory" || node.deleted)) continue;
+    const file = await readPreviewFile(next);
+    let content, mimeType;
+    if (file.fileType === "text") {
+      content = getPreviewFileContent(file);
+      mimeType = getPreviewMimeType(file);
+    } else {
+      content = getActiveBlobFile(file) || await fileSession.value.readBlob(next);
+      fileSession.value.fileSystem.policy.assertMemoryRead(next, content.size);
+      if (file.fileType === "image" && content.size > PREVIEW_INLINE_IMAGE_MAX_FILE_SIZE) continue;
+      mimeType = getMimeType(file.name, "") || content.type || file.mimeType || "application/octet-stream";
+    }
+    bytes += typeof content === "string" ? content.length * 2 : content.size;
+    if (bytes > budget) throw new Error("Preview dependencies exceed the configured memory read budget");
+    const entry = { path: next, mimeType, content };
+    files.push(entry);
+    queue.push(...await collectPreviewReferences(entry));
   }
-  previewType.value = type;
-  previewContent.value = resolved;
-  const title = file.name || tr("action.preview");
-  const update = { type: "preview:update", content: resolved, title, path, suffix, previewType: type, revision: ++previewUpdateRevision };
-  replacePreviewPageUrl(createPreviewPageUrl(update));
-  broadcastPreviewUpdate(update);
-  if (remountFrame) previewFrameKey.value += 1;
-  replacePreviewResourceUrls(objectUrls);
-}
-
-function createPreviewSourceDocument(source, title, type) {
-  const renderer = PREVIEW_SOURCE_RENDERERS[type];
-  if (!renderer) throw new Error(`Unsupported preview type: ${type}`);
-  return renderer(source, title);
-}
-
-function createPreviewPageUrl(initialUpdate) {
-  const frameContent = initialUpdate.content;
-  const title = initialUpdate.title;
-  const documentContent = `<!doctype html>
-<html lang="${escapePreviewAttribute(getCurrentLocale())}">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>${escapePreviewHtml(title)}</title>
-  <style>html,body,iframe{width:100%;height:100%;margin:0;border:0}body{overflow:hidden;background:#fff}iframe{display:block}</style>
-</head>
-<body>
-  <iframe title="${escapePreviewAttribute(title)}" sandbox="${PREVIEW_FRAME_SANDBOX}" srcdoc="${escapePreviewAttribute(frameContent)}"></iframe>
-  <script>
-    (() => {
-      const frame = document.querySelector("iframe");
-      if (!("BroadcastChannel" in window)) return;
-      const channel = new BroadcastChannel(${JSON.stringify(previewBroadcastChannelName)});
-      const clientId = crypto.randomUUID();
-      let revision = ${Number(initialUpdate.revision) || 0};
-      channel.addEventListener("message", (event) => {
-        const update = event.data;
-        if (!update || update.type !== "preview:update" || typeof update.content !== "string") return;
-        if (update.targetClientId && update.targetClientId !== clientId) return;
-        if (Number(update.revision) <= revision) return;
-        revision = Number(update.revision) || revision;
-        const title = typeof update.title === "string" ? update.title : document.title;
-        document.title = title;
-        frame.title = title;
-        frame.srcdoc = update.content;
-      });
-      window.addEventListener("message", (event) => {
-        const message = event.data;
-        if (event.source !== frame.contentWindow || message?.type !== "code-editor-preview:navigate") return;
-        channel.postMessage({ ...message, type: "preview:navigate", clientId });
-      });
-      channel.postMessage({ type: "preview:subscribe", clientId });
-      window.addEventListener("pagehide", () => {
-        channel.postMessage({ type: "preview:unsubscribe", clientId });
-        channel.close();
-      }, { once: true });
-    })();
-  ${"</scr" + "ipt>"}
-</body>
-</html>`;
-  return URL.createObjectURL(new Blob([documentContent], { type: "text/html;charset=utf-8" }));
-}
-
-function broadcastPreviewUpdate(update, targetClientId = "") {
-  if (!targetClientId) lastPreviewUpdate = { ...update };
-  getPreviewBroadcastChannel()?.postMessage(targetClientId ? { ...update, targetClientId } : update);
-}
-
-function getPreviewBroadcastChannel() {
-  if (!("BroadcastChannel" in window)) return null;
-  if (previewBroadcastChannel) return previewBroadcastChannel;
-  previewBroadcastChannel = new BroadcastChannel(previewBroadcastChannelName);
-  previewBroadcastChannel.addEventListener("message", handlePreviewBroadcastMessage);
-  return previewBroadcastChannel;
-}
-
-function handlePreviewBroadcastMessage(event) {
-  const message = event.data;
-  if (!message?.clientId) return;
-  if (message.type === "preview:subscribe") {
-    standalonePreviewClients.add(message.clientId);
-    if (lastPreviewUpdate) broadcastPreviewUpdate(lastPreviewUpdate, message.clientId);
-    return;
-  }
-  if (message.type === "preview:navigate") {
-    void navigatePreviewDocument(message.path, message.suffix);
-    return;
-  }
-  if (message.type !== "preview:unsubscribe") return;
-  standalonePreviewClients.delete(message.clientId);
-  if (!previewPaneVisible.value && !standalonePreviewClients.size) clearPreviewContent();
-}
-
-function handlePreviewWindowMessage(event) {
-  const message = event.data;
-  if (event.source !== previewFrame.value?.contentWindow || message?.type !== "code-editor-preview:navigate") return;
-  void navigatePreviewDocument(message.path, message.suffix);
+  return files;
 }
 
 async function navigatePreviewDocument(path, suffix = "") {
@@ -1617,148 +1514,14 @@ async function navigatePreviewDocument(path, suffix = "") {
     if (!type) throw new Error(`File is not previewable: ${normalized}`);
     const normalizedSuffix = /^[?#]/.test(String(suffix || "")) ? String(suffix) : "";
     const unchanged = previewPath.value === normalized && previewUrlSuffix.value === normalizedSuffix && previewType.value === type;
+    previewSyncSerial = ++previewRenderSerial;
     previewPath.value = normalized;
     previewUrlSuffix.value = normalizedSuffix;
     previewType.value = type;
-    if (unchanged) void updatePreviewContent({ remountFrame: true });
+    if (unchanged) void updatePreviewContent();
   } catch (error) {
     if (serial === previewNavigationSerial && workspace === rootHandle.value) reportError("error.openFile", error);
   }
-}
-
-function createMarkdownPreviewDocument(content, title) {
-  return `<!doctype html>
-<html lang="${escapePreviewAttribute(getCurrentLocale())}">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>${escapePreviewHtml(title)}</title>
-  <style>
-    :root{color-scheme:light dark;font-family:ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;line-height:1.6}
-    body{max-width:960px;margin:0 auto;padding:32px;color:CanvasText;background:Canvas;overflow-wrap:anywhere}
-    img,video{max-width:100%;height:auto}pre{overflow:auto;padding:16px;border-radius:6px;background:color-mix(in srgb,CanvasText 8%,Canvas)}
-    code{font-family:ui-monospace,SFMono-Regular,Consolas,"Liberation Mono",monospace}blockquote{margin-left:0;padding-left:16px;border-left:4px solid color-mix(in srgb,CanvasText 24%,Canvas)}
-    table{border-collapse:collapse}th,td{padding:6px 12px;border:1px solid color-mix(in srgb,CanvasText 24%,Canvas)}a{color:LinkText}
-    @media(max-width:640px){body{padding:20px}}
-  </style>
-</head>
-<body>${content}</body>
-</html>`;
-}
-
-function escapePreviewHtml(value) {
-  return String(value || "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
-}
-
-function escapePreviewAttribute(value) {
-  return escapePreviewHtml(value).replaceAll('"', "&quot;");
-}
-
-function replacePreviewPageUrl(nextUrl) {
-  const previousUrl = previewPageObjectUrl;
-  previewPageObjectUrl = nextUrl;
-  previewPageUrl.value = nextUrl;
-  if (previousUrl) URL.revokeObjectURL(previousUrl);
-}
-
-function revokePreviewPageUrl() {
-  replacePreviewPageUrl("");
-}
-
-async function rewritePreviewDocument(html, file, objectUrls, suffix) {
-  const documentNode = new DOMParser().parseFromString(String(html || ""), "text/html");
-  const elements = Array.from(documentNode.querySelectorAll("[src], [href]"));
-  for (const element of elements) {
-    if (element.hasAttribute("src")) {
-      element.setAttribute("src", await getPreviewResourceUrl(element.getAttribute("src"), file, objectUrls));
-    }
-    if (!element.hasAttribute("href")) continue;
-    if (element.tagName.toLowerCase() === "a") {
-      await rewritePreviewAnchor(element, file, objectUrls);
-    } else {
-      element.setAttribute("href", await getPreviewResourceUrl(element.getAttribute("href"), file, objectUrls));
-    }
-  }
-  installPreviewNavigationBridge(documentNode, suffix);
-  return `<!doctype html>\n${documentNode.documentElement.outerHTML}`;
-}
-
-async function rewritePreviewAnchor(anchor, file, objectUrls) {
-  const href = anchor.getAttribute("href") || "";
-  const resolved = resolveWorkspacePreviewUrl(href, file.path);
-  if (!resolved) return;
-  try {
-    const target = await readPreviewFile(resolved.path);
-    if (getPreviewType(target)) {
-      anchor.dataset.previewPath = resolved.path;
-      anchor.dataset.previewSuffix = resolved.suffix;
-      anchor.removeAttribute("target");
-      return;
-    }
-  } catch {
-    return;
-  }
-  anchor.setAttribute("href", await getPreviewResourceUrl(href, file, objectUrls));
-}
-
-function installPreviewNavigationBridge(documentNode, suffix) {
-  const script = documentNode.createElement("script");
-  const initialHash = getPreviewHash(suffix);
-  script.dataset.previewBridge = "";
-  script.textContent = `(() => {
-    const initialHash = ${serializePreviewScriptValue(initialHash)};
-    document.addEventListener("click", (event) => {
-      if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-      const target = event.target instanceof Element ? event.target : event.target?.parentElement;
-      const anchor = target?.closest("a[data-preview-path]");
-      if (!anchor || anchor.hasAttribute("download")) return;
-      event.preventDefault();
-      window.parent.postMessage({
-        type: "code-editor-preview:navigate",
-        path: anchor.dataset.previewPath || "",
-        suffix: anchor.dataset.previewSuffix || ""
-      }, "*");
-    }, true);
-    const scrollToInitialHash = () => {
-      if (!initialHash) return;
-      let name = initialHash.slice(1);
-      try { name = decodeURIComponent(name); } catch {}
-      const target = document.getElementById(name) || document.getElementsByName(name)[0];
-      target?.scrollIntoView();
-    };
-    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", scrollToInitialHash, { once: true });
-    else scrollToInitialHash();
-  })();`;
-  documentNode.head.prepend(script);
-}
-
-function serializePreviewScriptValue(value) {
-  return JSON.stringify(String(value || "")).replaceAll("<", "\\u003c");
-}
-
-function getPreviewHash(suffix) {
-  const value = String(suffix || "");
-  const index = value.indexOf("#");
-  return index >= 0 ? value.slice(index) : "";
-}
-
-async function getPreviewResourceUrl(value, file, objectUrls) {
-  const url = String(value || "").trim();
-  const resolved = resolveWorkspacePreviewUrl(url, file.path);
-  if (!resolved) return value;
-  let resource;
-  try {
-    resource = await readPreviewFile(resolved.path);
-  } catch {
-    return value;
-  }
-  if (resource.fileType === "text") return `${getTextDataUrl(resource)}${resolved.hash}`;
-  if (resource.fileType === "image") {
-    const dataUrl = await getPreviewImageDataUrl(resource);
-    return dataUrl ? `${dataUrl}${resolved.hash}` : value;
-  }
-  if (resource.persisted || resource.isNew) return `${await getPreviewBlobUrl(resource, objectUrls)}${resolved.hash}`;
-  return value;
 }
 
 async function readPreviewFile(path) {
@@ -1786,46 +1549,9 @@ function getPreviewFileContent(file) {
   return file.model?.getValue() ?? String(file.content || "");
 }
 
-async function getPreviewBlobUrl(file, objectUrls) {
-  if (objectUrls.has(file.path)) return objectUrls.get(file.path);
-  const source = getActiveBlobFile(file);
-  if (source) fileSession.value.fileSystem.policy.assertMemoryRead(file.path, source.size);
-  const blob = source || await fileSession.value.readBlob(file.path);
-  const objectUrl = URL.createObjectURL(blob);
-  objectUrls.set(file.path, objectUrl);
-  return objectUrl;
-}
-
-function replacePreviewResourceUrls(nextUrls) {
-  const previousUrls = previewResourceObjectUrls;
-  previewResourceObjectUrls = nextUrls;
-  revokeObjectUrlMap(previousUrls);
-}
-
-function revokePreviewResourceUrls() {
-  replacePreviewResourceUrls(new Map());
-}
-
-function revokeObjectUrlMap(urls) {
-  urls.forEach((url) => URL.revokeObjectURL(url));
-  urls.clear();
-}
-
-function getTextDataUrl(file) {
-  const mimeType = getPreviewMimeType(file);
-  return `data:${mimeType};charset=utf-8,${encodeURIComponent(getPreviewFileContent(file))}`;
-}
-
-async function getPreviewImageDataUrl(file) {
-  const blob = getActiveImageBlob(file) || await fileSession.value.readBlob(file.path);
-  const maxSize = Math.min(PREVIEW_INLINE_IMAGE_MAX_FILE_SIZE, fileSession.value.fileSystem.policy.maxMemoryReadBytes);
-  if (blob.size > maxSize) return "";
-  return FileUtils.normalizeImageDataUrl(await FileUtils.readFileAsDataUrl(blob), FileUtils.getImageMimeType(file.name, blob.type));
-}
-
 function getPreviewMimeType(file) {
-  const byLanguage = { css: "text/css", javascript: "text/javascript", typescript: "text/typescript", html: "text/html", markdown: "text/markdown", json: "application/json", svg: "image/svg+xml", xml: "application/xml" };
-  return byLanguage[file.language] || "text/plain";
+  const byLanguage = { css: "text/css", javascript: "text/javascript", typescript: "text/typescript", html: "text/html", markdown: "text/markdown", mdx: "text/markdown", json: "application/json", svg: "image/svg+xml", xml: "application/xml" };
+  return byLanguage[file.language] || getMimeType(file.name) || "text/plain";
 }
 
 const dialogQueue = [];
@@ -3517,7 +3243,6 @@ function activateFile(path) {
   activeDiffPath.value = "";
   diffEditor.value?.setModel(null);
   activePath.value = path;
-  if (previewOpenPaths.has(path)) openPreview();
   if (file.fileType === "image") {
     activateReadonlyPreviewEditor(file);
     setStatus(path, `${tr("imagePreview.type")} | ${FileUtils.formatFileSize(file.size)}`);
@@ -3596,10 +3321,11 @@ function activateLastOpenFile(excludedPath = "") {
   }
 }
 
-function removeFileState(path) {
+function removeFileState(path, { removed = false } = {}) {
   const file = openFiles.get(path);
   if (!file) return;
-  closePreview(path);
+  if (removed) resetPreviewState(path);
+  else closePreview(path);
   disposeFileModels(file, { force: true });
   openFiles.delete(path);
   removeAiTouchedPath(path);
@@ -3642,7 +3368,7 @@ async function saveFile(file, options = {}) {
   const hasPendingChange = fileSession.value.hasChange(file.path);
   if (file.deleted) {
     const path = file.path;
-    removeFileState(path);
+    removeFileState(path, { removed: true });
     touchDirtyState();
     if (refresh) await refreshTree();
     if (updateStatus) setStatus(tr("status.deleted", { path }), new Date().toLocaleTimeString(getCurrentLocale()));
@@ -3728,7 +3454,7 @@ function changeActiveLanguage() {
     const type = getPreviewType(activeFile.value);
     if (type) {
       previewType.value = type;
-      void updatePreviewContent({ remountFrame: true });
+      void updatePreviewContent();
     } else {
       closePreview();
     }
@@ -4232,21 +3958,22 @@ function captureMovedOpenFiles(sourcePath, destinationPath) {
     closed: file.closed,
     active: activePath.value === file.path,
     diff: activeDiffPath.value === file.path,
-    preview: previewOpenPaths.has(file.path),
+    preview: previewVisible.value && previewOwnerPath.value === file.path,
   }));
 }
 
 async function restoreMovedOpenFiles(files, workspace) {
   let activeFileState = null;
+  let previewFile = null;
   for (const state of files) {
     if (state.closed && !state.active && !state.preview) continue;
     const file = await ensureAnyFileState(state.newPath, { closed: state.closed, workspace });
-    if (state.preview) previewOpenPaths.add(state.newPath);
+    if (state.preview) previewFile = file;
     if (state.active) activeFileState = { ...state, file };
   }
-  if (!activeFileState) return;
-  if (activeFileState.diff) activateDiff(activeFileState.file.path);
-  else activateFile(activeFileState.file.path);
+  if (activeFileState?.diff) activateDiff(activeFileState.file.path);
+  else if (activeFileState) activateFile(activeFileState.file.path);
+  if (previewFile) openPreview(previewFile);
 }
 
 function remapPath(path, sourcePath, destinationPath) {
@@ -4499,7 +4226,7 @@ async function markNodeDeleted(node, workspace = captureWorkspace()) {
     await awaitLatestStage(file).catch(() => {});
     if (!isCurrentWorkspace(workspace)) return;
     workspace.session.revert(node.path);
-    removeFileState(node.path);
+    removeFileState(node.path, { removed: true });
     setStatus(tr("status.deleted", { path: node.path }), tr("status.unsaved"));
     return;
   }
@@ -4536,7 +4263,7 @@ async function revertFile(path, options = {}) {
   await file.stagePromise?.catch(() => {});
   if (file.isNew) {
     fileSession.value.revert(path);
-    removeFileState(path);
+    removeFileState(path, { removed: true });
     if (options.status !== false) setStatus(tr("status.reverted", { path }), "");
     return;
   }
@@ -4635,7 +4362,7 @@ async function discardMemoryOnlyNode(node, workspace) {
     if (!isCurrentWorkspace(workspace)) return;
     files.forEach((file) => {
       workspace.session.revert(file.path);
-      removeFileState(file.path);
+      removeFileState(file.path, { removed: true });
     });
   } finally {
     releaseExternalWritePath(operationKey);
@@ -8618,7 +8345,7 @@ async function markFileDeleted(path, options = {}, workspace = captureWorkspace(
   if (!isCurrentWorkspace(workspace)) throw new Error("Workspace session changed");
   if (file.isNew && !file.persisted) {
     workspace.session.revert(file.path);
-    removeFileState(file.path);
+    removeFileState(file.path, { removed: true });
     return file;
   }
   file.deleted = true;
@@ -9121,6 +8848,9 @@ function getTreeIconClass(node, collapsed = false) {
 .code-editor-view .ssh-terminal-host .terminal { width: 100%; height: 100%; }
 .code-editor-view .ssh-terminal-fallback { min-width: 0; min-height: 0; margin: 0; overflow: auto; padding: 10px 12px; background: var(--editor); color: var(--text); font-family: Consolas, 'Courier New', monospace; font-size: 13px; line-height: 1.45; white-space: pre-wrap; }
 .code-editor-view .editor-stage.preview-open .monaco-host.visible,
+.code-editor-view .editor-stage.preview-open .image-preview,
+.code-editor-view .editor-stage.preview-open .ssh-terminal,
+.code-editor-view .editor-stage.preview-open .empty-state,
 .code-editor-view .editor-stage.preview-open .unsupported-preview { right: var(--preview-pane-size); }
 .code-editor-view .preview-pane { position: absolute; inset: 0 0 0 auto; z-index: 4; display: grid; grid-template-rows: 34px minmax(0, 1fr); width: var(--preview-pane-size); border-left: 1px solid var(--border); background: var(--editor); color: var(--text); box-shadow: -12px 0 24px rgb(0 0 0 / 14%); }
 .code-editor-view .preview-pane-resizer { position: absolute; top: 0; left: -3px; z-index: 6; width: 6px; height: 100%; background: transparent; cursor: col-resize; }
@@ -9128,7 +8858,8 @@ function getTreeIconClass(node, collapsed = false) {
 .code-editor-view.preview-resizing .preview-pane-resizer { background: var(--accent); opacity: 0.35; }
 .code-editor-view.preview-resizing .preview-frame { pointer-events: none; }
 .code-editor-view .preview-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 8px 0 12px; border-bottom: 1px solid var(--border); background: var(--panel); color: var(--muted); font-size: 12px; font-weight: 600; }
-.code-editor-view .preview-header-actions { display: flex; align-items: center; gap: 4px; }
+.code-editor-view .preview-header > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.code-editor-view .preview-header-actions { display: flex; flex-shrink: 0; align-items: center; gap: 4px; }
 .code-editor-view .preview-external-link { display: inline-grid; place-items: center; border: 1px solid var(--border); border-radius: 4px; background: var(--button); color: var(--text); text-decoration: none; }
 .code-editor-view .preview-external-link:hover,
 .code-editor-view .preview-external-link:focus-visible { border-color: var(--button-hover-border); background: var(--button-hover); outline: none; }
@@ -9220,6 +8951,9 @@ function getTreeIconClass(node, collapsed = false) {
   .code-editor-view .command-center-shortcut { display: none; }
   .code-editor-view .status-right-group { display: none; }
   .code-editor-view .editor-stage.preview-open .monaco-host.visible,
+  .code-editor-view .editor-stage.preview-open .image-preview,
+  .code-editor-view .editor-stage.preview-open .ssh-terminal,
+  .code-editor-view .editor-stage.preview-open .empty-state,
   .code-editor-view .editor-stage.preview-open .unsupported-preview { right: 0; bottom: 45%; }
   .code-editor-view .preview-pane { inset: auto 0 0 0; width: auto; height: 45%; border-top: 1px solid var(--border); border-left: 0; box-shadow: 0 -12px 24px rgb(0 0 0 / 14%); }
   .code-editor-view .preview-pane-resizer { display: none; }

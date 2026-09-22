@@ -152,3 +152,50 @@ test('固定预览在桌面和窄屏图片视图中保持可见且不遮挡编�
         }, width <= 760)).toBe(true);
     }
 });
+
+test('仅打开切换和关闭文件不重建预览，脚本内容连续修改仍自动刷新', async ({page}) => {
+    await openWorkspace(page, {
+        'index.html': '<h1>Stable</h1><input value="initial"><script>window.previewInstance = crypto.randomUUID();</script><script src="main.js"></script>',
+        'main.js': 'document.querySelector("h1").dataset.version="saved";',
+        'notes.txt': 'Notes',
+        'image.svg': '<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10" fill="red"/></svg>',
+    });
+    await page.locator('.file-tree').getByTitle('index.html', {exact: true}).click();
+    await page.getByRole('button', {name: 'Preview', exact: true}).click();
+    const frame = page.frameLocator('.preview-frame');
+    await expect(frame.locator('h1')).toHaveAttribute('data-version', 'saved');
+    await frame.locator('input').fill('保留表单内容');
+    const initial = await frame.locator('body').evaluate(() => window.previewInstance);
+
+    for (const path of ['main.js', 'notes.txt', 'image.svg', 'index.html', 'main.js']) {
+        await page.locator('.file-tree').getByTitle(path, {exact: true}).click();
+        await page.locator(`.tab[title="${path}"]`).click();
+        // 等待本次界面切换完成，检查的不是 iframe 节点，而是其中的文档运行状态。
+        await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        expect(await frame.locator('body').evaluate(() => window.previewInstance)).toBe(initial);
+        await expect(frame.locator('input')).toHaveValue('保留表单内容');
+    }
+    await page.locator('.tab[title="notes.txt"] .tab-close').click();
+    expect(await frame.locator('body').evaluate(() => window.previewInstance)).toBe(initial);
+
+    for (const version of ['first', 'second']) {
+        await page.getByLabel('Code editor', {exact: true}).getByRole('textbox', {name: 'Editor content', exact: true}).press('Control+A');
+        await page.keyboard.insertText(`document.querySelector("h1").dataset.version="${version}";`);
+        await expect(frame.locator('h1')).toHaveAttribute('data-version', version);
+        expect(await frame.locator('body').evaluate(() => window.previewInstance)).not.toBe(initial);
+        await frame.locator('input').fill(version);
+        const instance = await frame.locator('body').evaluate(() => window.previewInstance);
+        await page.locator('.tab[title="index.html"]').click();
+        await page.locator('.tab[title="main.js"]').click();
+        expect(await frame.locator('body').evaluate(() => window.previewInstance)).toBe(instance);
+        await expect(frame.locator('input')).toHaveValue(version);
+    }
+    await page.getByRole('button', {name: 'Changes', exact: true}).click();
+    const change = page.locator('.change-row').filter({has: page.locator('small', {hasText: 'main.js'})});
+    await change.click();
+    await expect(frame.locator('input')).toHaveValue('second');
+    await change.click({button: 'right'});
+    await page.getByRole('menuitem', {name: 'Revert Changes', exact: true}).click();
+    await page.getByRole('dialog', {name: 'Revert Changes'}).getByRole('button', {name: 'OK', exact: true}).click();
+    await expect(frame.locator('h1')).toHaveAttribute('data-version', 'saved');
+});

@@ -1043,6 +1043,7 @@ const previewPath = ref("");
 const previewUrlSuffix = ref("");
 const previewType = ref("");
 const dirtyRevision = ref(0);
+const previewContentRevision = ref(0);
 const activeView = ref("explorer");
 const sidePanelVisible = ref(true);
 const sidebarResizing = ref(false);
@@ -1248,7 +1249,8 @@ watch(previewFrame, (frame) => {
   detachPreviewFrame?.();
   detachPreviewFrame = frame ? previewSession.attachFrame(frame) : null;
 });
-watch([previewPaneVisible, previewPath, previewUrlSuffix, dirtyRevision, currentLocale], () => { void updatePreviewContent(); });
+watch([previewVisible, previewPath, previewUrlSuffix], () => { previewTargetSerial += 1; }, { flush: "sync" });
+watch([previewPaneVisible, previewPath, previewUrlSuffix, previewContentRevision, diskTree, currentLocale], () => { void updatePreviewContent(); });
 watch(settings, () => {
   syncFileOperationPolicy();
   persistSettings();
@@ -1371,6 +1373,7 @@ function togglePreview() {
 function openPreview(file = activeTextFile.value) {
   const type = getPreviewType(file);
   if (!file || !type) return;
+  previewTargetSerial += 1;
   // 预览目标仅在显式打开时切换，阻止收集期间的旧文档状态覆盖本次目标。
   previewSyncSerial = ++previewRenderSerial;
   previewOwnerPath.value = file.path;
@@ -1417,6 +1420,9 @@ function layoutVisibleEditors() {
 let previewRenderSerial = 0;
 let previewNavigationSerial = 0;
 let previewSyncSerial = 0;
+let previewTargetSerial = 0;
+let previewRenderPromise = Promise.resolve();
+let previewRenderError = "";
 const previewWindow = createPreviewWindow(previewSession, {
   onNavigate: navigatePreviewDocument,
   onClientsChanged: (count) => {
@@ -1443,8 +1449,23 @@ async function togglePreviewCapture() {
   }
 }
 
-async function updatePreviewContent() {
+function updatePreviewContent() {
+  previewRenderError = "";
+  const pending = renderPreviewContent();
+  const serial = previewRenderSerial;
+  previewRenderPromise = pending;
+  // 界面继续报告错误，AI 则等待原始 Promise，不能把渲染失败当成成功。
+  return pending.catch((error) => {
+    if (previewRenderPromise === pending && serial === previewRenderSerial) {
+      previewRenderError = error.message || String(error);
+      reportError("error.openFile", error);
+    }
+  });
+}
+
+async function renderPreviewContent() {
   const serial = ++previewRenderSerial;
+  const workspace = captureWorkspace();
   const path = previewPath.value;
   const suffix = previewUrlSuffix.value;
   if (!previewPaneVisible.value && !previewWindow.getClientCount()) return;
@@ -1452,19 +1473,19 @@ async function updatePreviewContent() {
 
   previewSyncSerial = serial;
   try {
+    await nextTick();
+    if (serial !== previewRenderSerial || !isCurrentWorkspace(workspace)) return;
     const file = await readPreviewFile(path);
     const type = getPreviewType(file);
     if (!type) throw new Error(`File is not previewable: ${path}`);
     const files = await collectWorkspacePreviewFiles(path);
-    if (serial !== previewRenderSerial) return;
+    if (serial !== previewRenderSerial || !isCurrentWorkspace(workspace)) return;
     previewType.value = type;
     // 依赖文件修改也整体替换快照，模型中可能还有尚未暂存的最新文本。
     await previewSession.setFiles(files);
-    if (serial !== previewRenderSerial) return;
+    if (serial !== previewRenderSerial || !isCurrentWorkspace(workspace)) return;
     const state = previewSession.getState();
     if (state.path !== path || state.suffix !== suffix) await previewSession.open(path + suffix);
-  } catch (error) {
-    if (serial === previewRenderSerial) reportError("error.openFile", error);
   } finally {
     if (previewSyncSerial === serial) previewSyncSerial = 0;
   }
@@ -3328,6 +3349,7 @@ function removeFileState(path, { removed = false } = {}) {
   else closePreview(path);
   disposeFileModels(file, { force: true });
   openFiles.delete(path);
+  if (removed || file.isNew || file.dirty) previewContentRevision.value += 1;
   removeAiTouchedPath(path);
   selectedChangePaths.delete(path);
   if (activePath.value === path) activateLastOpenFile(path);
@@ -3450,6 +3472,7 @@ function changeActiveLanguage() {
   activeFile.value.monacoLanguage = getMonacoLanguageId(activeFile.value.language);
   monaco.editor.setModelLanguage(activeFile.value.model, activeFile.value.monacoLanguage);
   if (activeFile.value.originalModel) monaco.editor.setModelLanguage(activeFile.value.originalModel, activeFile.value.monacoLanguage);
+  previewContentRevision.value += 1;
   if (previewOwnerPath.value === activeFile.value.path) {
     const type = getPreviewType(activeFile.value);
     if (type) {
@@ -3467,6 +3490,8 @@ function updateDirtyState(file) {
   if (isTextFileState(file)) file.size = fileSession.value.fileSystem.policy.getTextSize(file.model.getValue());
   file.dirty = Boolean(file.isNew || file.deleted || blobChanged) || (isTextFileState(file) && file.model.getValue() !== file.savedValue);
   openFiles.set(file.path, file);
+  // 内容变更与标签、列表等界面状态分开计数，避免切换文件重建预览。
+  previewContentRevision.value += 1;
   touchDirtyState();
 }
 
@@ -4289,6 +4314,7 @@ async function revertFile(path, options = {}) {
   } else {
     openFiles.set(path, file);
   }
+  previewContentRevision.value += 1;
   touchDirtyState();
   if (!file.closed && activeDiffPath.value === path) activateFile(path);
   selectedChangePaths.delete(path);
@@ -5743,7 +5769,7 @@ async function runAiAgent(prompt, signal, session = getActiveAiSession(), runCon
       try {
         const result = call.name === "read_image"
           ? await runAiReadImageToolCall(args, imageInputs)
-          : await runAiToolCall(call, args, session, signal);
+          : await runAiToolCall(call, args, session, signal, imageInputs);
         throwIfAiAborted(signal);
         completeAiToolMessage(message, result);
         conversation.push({ type: "function_call_output", call_id: call.call_id, output: JSON.stringify(result) });
@@ -5789,7 +5815,9 @@ async function runAiReadImageToolCall(args, imageInputs) {
 function buildImageInputMessage(images) {
   const content = [];
   images.forEach((image) => {
-    content.push({ type: "input_text", text: `Image attached from read_image: ${image.path}` });
+    content.push({ type: "input_text", text: image.source === "preview_screenshot"
+      ? `Image attached from preview_screenshot: ${image.path} (revision ${image.revision})${image.stagedPath ? `; staged at ${image.stagedPath} (unsaved)` : ""}`
+      : `Image attached from read_image: ${image.path}` });
     content.push({ type: "input_image", image_url: image.dataUrl, detail: "auto" });
   });
   return { role: "user", content };
@@ -5932,7 +5960,7 @@ function buildAgentWorkspaceContext() {
 }
 
 function formatAiRequirementStatusLines() {
-  return ["workspace", "backend", "ssh_exposed"].map((requirement) => {
+  return ["workspace", "backend", "ssh_exposed", "preview", "preview_capture"].map((requirement) => {
     const status = getAiRequirementStatus(requirement);
     return `- ${requirement}: ${status.met ? "available" : `unavailable (${status.reason})`}`;
   });
@@ -6037,7 +6065,7 @@ function getAiAllToolDefinitions() {
   return [
     { type: "function", name: "get_tool_availability", description: aiToolDescription(
       "Check current AI tool availability and requirement status.",
-      "Use this when you are unsure whether workspace, backend, SSH, or SFTP related tools are currently usable. This tool does not return parameter schemas; use each tool's own description and parameters directly.",
+      "Use this when you are unsure whether workspace, preview, backend, SSH, or SFTP related tools are currently usable. This tool does not return parameter schemas; use each tool's own description and parameters directly.",
       "All tools are visible to you, but tools with unmet requirements will fail if called. Prefer checking availability before using tools that depend on workspace, backend, or exposed SSH settings."
     ), parameters: { type: "object", properties: { names: { type: "array", items: { type: "string" }, description: "Optional tool names to check. Omit to return all tools." } } } },
     { type: "function", name: "load_credentials", requirements: ["workspace"], description: aiToolDescription(
@@ -6153,6 +6181,28 @@ function getAiAllToolDefinitions() {
     { type: "function", name: "read_file", requirements: ["workspace"], description: aiToolDescription("Read a workspace text file.", "Dirty in-memory content is returned when present. Use offset and limit for partial line-based reads. This tool only reads text-like files; binary or unsupported files will fail.", "Use max_chars to keep large files concise; default is intentionally limited."), parameters: { type: "object", properties: { path: { type: "string" }, offset: { type: "number", description: "Optional 1-based starting line number. Defaults to 1." }, limit: { type: "number", description: "Optional maximum number of lines to return." }, max_chars: { type: "number", description: aiToolOutputLimitDescription() } }, required: ["path"] } },
     { type: "function", name: "read_files", requirements: ["workspace"], description: aiToolDescription("Read multiple workspace text files in one call.", "Prefer this over repeated read_file calls when several files are known. Dirty in-memory content is returned when present. Offset and limit apply to each file.", "Use max_chars_per_file to keep large files concise; default is intentionally limited."), parameters: { type: "object", properties: { paths: { type: "array", items: { type: "string" } }, offset: { type: "number", description: "Optional 1-based starting line number applied to each file. Defaults to 1." }, limit: { type: "number", description: "Optional maximum number of lines to return per file." }, max_chars_per_file: { type: "number", description: aiToolOutputLimitDescription() } }, required: ["paths"] } },
     { type: "function", name: "read_image", requirements: ["workspace"], description: aiToolDescription("Read an image file and attach it to the next model turn for visual analysis.", "Use this for screenshots, diagrams, mockups, and other workspace image files. Do not use it for non-image files or oversized images."), parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } },
+    { type: "function", name: "preview_get_state", description: "Get compact internal preview state, including path, revision, readiness and sharing status, without HTML. No screen sharing is required.", parameters: { type: "object", properties: {} } },
+    { type: "function", name: "preview_open", requirements: ["workspace"], description: "Open a previewable workspace file in the visible internal iframe using current unsaved content and wait for rendering. Does not activate an editor tab, open external windows or create hidden sessions. No screen sharing is required.", parameters: { type: "object", properties: { path: { type: "string", description: "Required workspace-relative preview file path." } }, required: ["path"] } },
+    { type: "function", name: "preview_refresh", requirements: ["workspace", "preview"], description: "Recollect current workspace files and refresh the attached internal preview, including unsaved changes. Resets temporary DOM/script changes. No screen sharing is required.", parameters: { type: "object", properties: {} } },
+    { type: "function", name: "preview_inspect", requirements: ["preview"], description: "Inspect visible DOM elements in the existing internal iframe without refreshing it. No screen sharing is required. Waits for pending host rendering; never targets external windows or hidden sessions.", parameters: { type: "object", properties: {
+      selector: { type: "string", description: "Optional CSS selector; defaults to body and its descendants." },
+      limit: { type: "integer", minimum: 1, maximum: 100, description: "Maximum elements, from 1 to 100; defaults to 100." },
+      include_styles: { type: "boolean", description: "Include selected computed styles; defaults to false." },
+      timeout_ms: { type: "number", exclusiveMinimum: 0, maximum: 30000, description: "Request timeout in milliseconds; defaults to 5000, minimum effective timeout 100." }
+    } } },
+    { type: "function", name: "preview_evaluate", requirements: ["preview"], description: "Execute an async JavaScript function body in the existing internal preview iframe, with JSON-compatible args available as args. Use return to provide a result. No screen sharing is required. DOM/script changes are temporary and never persist workspace edits. Timeout/cancellation stops waiting, not synchronous JavaScript execution. Do not use scripts or alternate capture methods to bypass screenshot sharing requirements.", parameters: { type: "object", properties: {
+      code: { type: "string", maxLength: 50000, description: "Required async function body, not a complete module." },
+      args: { description: "Optional JSON-compatible value exposed as args." },
+      timeout_ms: { type: "number", exclusiveMinimum: 0, maximum: 30000, description: "Request timeout in milliseconds; defaults to 5000, minimum effective timeout 100." }
+    }, required: ["code"] } },
+    { type: "function", name: "preview_get_errors", requirements: ["preview"], description: "Read buffered runtime/resource errors, unhandled rejections and console warnings/errors from the current internal preview revision without refreshing. No screen sharing is required.", parameters: { type: "object", properties: {
+      limit: { type: "integer", minimum: 1, maximum: 200, description: "Maximum entries; defaults to 100." },
+      since: { type: "number", minimum: 0, description: "Optional inclusive Unix timestamp in milliseconds." }
+    } } },
+    { type: "function", name: "preview_screenshot", requirements: ["workspace", "preview", "preview_capture"], description: "Capture the visible internal preview viewport as PNG and attach it to the next model turn. Full-page screenshots are unsupported. Sharing must already be enabled by the user in the preview toolbar; otherwise this tool fails. Never retry alternate capture methods or execute scripts to bypass sharing. Omit path or leave it empty to attach only. With a nonempty path, stage a new PNG as an unsaved workspace change AND attach it. Nothing is written to disk until the user saves; the user can revert the temporary file. Existing saved or unsaved files fail; no overwrite is supported. A staging failure attaches no image.", parameters: { type: "object", properties: {
+      path: { type: "string", description: "Optional new workspace-relative .png path for an unsaved image. Omitted, empty or whitespace-only means attach only without creating a file. No absolute paths, URLs or parent traversal. Files and parent directories reach disk only when the user saves." },
+      timeout_ms: { type: "number", exclusiveMinimum: 0, maximum: 30000, description: "Capture timeout in milliseconds; defaults to 5000, minimum effective timeout 100." }
+    } } },
     { type: "function", name: "generate_or_edit_image", requirements: ["workspace"], description: aiToolDescription(
       "Generate a new image or edit an existing workspace image using the configured image model.",
       "Omit input_path to use the image generation endpoint. Provide input_path to use the image edit endpoint; mask_path is optional and requires input_path.",
@@ -6251,7 +6301,7 @@ function aiToolGetToolAvailability({ names } = {}) {
   });
   return {
     summary: `${tools.filter((tool) => tool.found !== false && tool.available).length}/${tools.length} tool(s) available`,
-    requirements: ["workspace", "backend", "ssh_exposed"].map((requirement) => {
+    requirements: ["workspace", "backend", "ssh_exposed", "preview", "preview_capture"].map((requirement) => {
       const status = getAiRequirementStatus(requirement);
       return { name: requirement, available: status.met, reason: status.met ? "" : status.reason };
     }),
@@ -6326,6 +6376,8 @@ function getAiRequirementStatus(requirement) {
     case "workspace": return { met: isWorkspaceLoaded(), description: "requires an open workspace folder", reason: "No workspace folder is open" };
     case "backend": return { met: isBackendEnabled(), description: "requires backend server enabled", reason: "Backend server setting is disabled" };
     case "ssh_exposed": return { met: getAiExposedSshConfigs().length > 0, description: "requires at least one SSH setting exposed to AI", reason: "No SSH setting is exposed to AI" };
+    case "preview": return { met: Boolean(previewPaneVisible.value && previewFrame.value && previewPath.value && previewSession.getState().attached), description: "requires the visible attached internal preview iframe", reason: "No internal preview iframe is open; use preview_open first" };
+    case "preview_capture": return { met: previewSession.getState().capture.status === "active", description: "requires preview sharing already enabled by the user", reason: "The user must enable sharing in the preview toolbar first. Do not retry alternate capture methods or execute scripts to bypass sharing" };
     default: return { met: false, description: `requires ${requirement}`, reason: `Unknown requirement: ${requirement}` };
   }
 }
@@ -6339,12 +6391,31 @@ function parseAiToolArguments(call) {
   return call.arguments ? JSON.parse(call.arguments) : {};
 }
 
-async function runAiToolCall(call, args = {}, session = getActiveAiSession(), signal) {
+async function runAiToolCall(call, args = {}, session = getActiveAiSession(), signal, imageInputs = []) {
   try {
+    throwIfAiAborted(signal);
     const availability = getAiToolAvailability(call.name);
     if (availability.found && !availability.available) return { ok: false, summary: `Tool ${call.name} is unavailable because ${availability.reason}` };
     switch (call.name) {
       case "get_tool_availability": return okTool(aiToolGetToolAvailability(args));
+      case "preview_get_state": return okTool({ summary: "Internal preview state", ...getAiPreviewState() });
+      case "preview_open":
+      case "preview_refresh":
+      case "preview_inspect":
+      case "preview_evaluate":
+      case "preview_get_errors":
+      case "preview_screenshot": {
+        const controller = new AbortController();
+        const abort = () => controller.abort();
+        signal?.addEventListener("abort", abort, { once: true });
+        const stopWorkspaceWatch = watch(fileSession, abort, { flush: "sync" });
+        try {
+          return okTool(await aiToolPreview(call.name, args, session, controller.signal, imageInputs));
+        } finally {
+          stopWorkspaceWatch();
+          signal?.removeEventListener("abort", abort);
+        }
+      }
       case "load_credentials": return okTool(await aiToolLoadCredentials(args));
       case "list_credentials": return okTool(aiToolListCredentials());
       case "list_files": return okTool(await aiToolListFiles(args));
@@ -6383,6 +6454,137 @@ async function runAiToolCall(call, args = {}, session = getActiveAiSession(), si
 
 function okTool(result) {
   return { ok: true, ...result };
+}
+
+function getAiPreviewState() {
+  const { content, ...state } = previewSession.getState();
+  return { ...state, ready: state.ready && !previewSyncSerial && !previewRenderError, error: previewRenderError || state.error, visible: previewPaneVisible.value, target_path: previewPath.value, rendering: Boolean(previewSyncSerial) };
+}
+
+function awaitAiPreviewOperation(promise, signal) {
+  if (!signal) return Promise.resolve(promise);
+  return new Promise((resolve, reject) => {
+    const abort = () => {
+      signal.removeEventListener("abort", abort);
+      reject(createAiAbortError());
+    };
+    signal.addEventListener("abort", abort, { once: true });
+    // 取消只释放宿主等待，不承诺中断 iframe 内正在执行的同步脚本。
+    Promise.resolve(promise).then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
+    if (signal.aborted) abort();
+  });
+}
+
+async function aiToolPreview(name, args, session, signal, imageInputs) {
+  const workspace = captureWorkspace();
+  let targetSerial = previewTargetSerial;
+  let frame = previewFrame.value;
+  let rendered = null;
+  const assertTarget = () => {
+    throwIfAiAborted(signal);
+    assertCurrentWorkspace(workspace);
+    if (targetSerial !== previewTargetSerial || (frame && frame !== previewFrame.value)) throw new Error("Preview target changed");
+    if (rendered) {
+      const state = previewSession.getState();
+      if (!previewPaneVisible.value || !state.attached || !state.ready || state.error
+        || state.path !== rendered.path || state.revision !== rendered.revision
+        || previewRenderSerial !== rendered.serial || previewContentRevision.value !== rendered.contentRevision || diskTree.value !== rendered.diskTree) {
+        throw new Error("Preview document changed or has pending rendering; result discarded");
+      }
+    }
+    if (name === "preview_screenshot" && previewSession.getState().capture.status !== "active") throw new Error(getAiRequirementStatus("preview_capture").reason);
+  };
+  assertTarget();
+  if (args.timeout_ms !== undefined && (typeof args.timeout_ms !== "number" || !Number.isFinite(args.timeout_ms) || args.timeout_ms <= 0 || args.timeout_ms > 30000)) throw new Error("timeout_ms must be a positive number at most 30000");
+  if (args.limit !== undefined) {
+    const maximum = name === "preview_inspect" ? 100 : 200;
+    if (!Number.isInteger(args.limit) || args.limit < 1 || args.limit > maximum) throw new Error(`limit must be an integer from 1 to ${maximum}`);
+  }
+  if (name === "preview_evaluate" && (typeof args.code !== "string" || !args.code.trim())) throw new Error("code is required");
+  if (name === "preview_get_errors" && args.since !== undefined && (typeof args.since !== "number" || !Number.isFinite(args.since) || args.since < 0)) throw new Error("since must be a nonnegative Unix timestamp in milliseconds");
+
+  let destination = "";
+  const hasScreenshotPath = args.path !== undefined && !(typeof args.path === "string" && !args.path.trim());
+  if (name === "preview_open" || (name === "preview_screenshot" && hasScreenshotPath)) {
+    // normalizeWorkspacePath 会去掉根斜线，必须先拒绝绝对路径和 URL。
+    const rawPath = typeof args.path === "string" ? decodeWorkspacePath(args.path).trim() : "";
+    if (!rawPath || /^(?:[\\/]|[a-z][a-z\d+.-]*:)/i.test(rawPath)) throw new Error("path must be workspace-relative, not an absolute path or URL");
+    destination = normalizeWorkspacePath(args.path);
+    if (name === "preview_screenshot" && !/\.png$/i.test(destination)) throw new Error("Screenshot path must end in .png");
+  }
+  if (name === "preview_open") {
+    const file = await awaitAiPreviewOperation(ensureFileState(destination, { closed: true, workspace }), signal);
+    assertTarget();
+    if (file.deleted || !getPreviewType(file)) throw new Error(`File is not previewable: ${destination}`);
+    openPreview(file);
+    targetSerial = previewTargetSerial;
+  }
+  await awaitAiPreviewOperation(nextTick(), signal);
+  assertTarget();
+  frame = previewFrame.value;
+  if (!getAiRequirementStatus("preview").met) throw new Error("No attached internal preview iframe");
+  if (name === "preview_refresh") {
+    targetSerial = ++previewTargetSerial;
+    void updatePreviewContent();
+  }
+  // 只等待最新宿主渲染；检查和执行脚本不能隐式刷新，否则会丢失 DOM 临时状态。
+  while (true) {
+    const pending = previewRenderPromise;
+    try {
+      await awaitAiPreviewOperation(pending, signal);
+    } catch (error) {
+      assertTarget();
+      if (pending === previewRenderPromise) throw error;
+    }
+    await awaitAiPreviewOperation(nextTick(), signal);
+    assertTarget();
+    if (pending === previewRenderPromise) break;
+  }
+  const state = previewSession.getState();
+  if (!state.ready || state.error || state.path !== previewPath.value || state.suffix !== previewUrlSuffix.value || previewSyncSerial) throw new Error(state.error || "Preview frame is not ready or has pending rendering");
+  rendered = { path: state.path, revision: state.revision, serial: previewRenderSerial, contentRevision: previewContentRevision.value, diskTree: diskTree.value };
+  assertTarget();
+  if (name === "preview_open" || name === "preview_refresh") return { summary: `Rendered preview ${state.path}`, ...getAiPreviewState() };
+  if (name === "preview_get_errors") {
+    const errors = previewSession.getErrors({ limit: args.limit, since: args.since });
+    assertTarget();
+    return { summary: `${errors.length} preview error(s)`, path: state.path, revision: state.revision, errors };
+  }
+  if (name === "preview_inspect" || name === "preview_evaluate") {
+    const result = await awaitAiPreviewOperation(name === "preview_inspect"
+      ? previewSession.inspect({ selector: args.selector, limit: args.limit, includeStyles: args.include_styles, timeoutMs: args.timeout_ms })
+      : previewSession.evaluate({ code: args.code, args: args.args, timeoutMs: args.timeout_ms }), signal);
+    assertTarget();
+    return { summary: `${name === "preview_inspect" ? "Inspected" : "Evaluated"} preview ${state.path}`, ...result };
+  }
+
+  const captureStatus = getAiRequirementStatus("preview_capture");
+  if (!captureStatus.met) throw new Error(captureStatus.reason);
+  const image = await awaitAiPreviewOperation(previewSession.screenshot({ timeoutMs: args.timeout_ms }), signal);
+  assertTarget();
+  if (image.path !== state.path || image.revision !== state.revision) throw new Error("Preview screenshot target changed");
+  assertSpecialReadSize(image.path, image.blob.size, AI_IMAGE_MAX_FILE_SIZE, "AI preview screenshot");
+  const dataUrl = await awaitAiPreviewOperation(FileUtils.readFileAsDataUrl(image.blob), signal);
+  assertTarget();
+  if (destination) {
+    assertFilePathAncestors(destination);
+    if (hasExternalWriteOverlap(destination, workspace.generation)) throw new Error(`File operation is already in progress: ${destination}`);
+    await awaitAiPreviewOperation(awaitPendingFileLoads(workspace, destination), signal);
+    assertTarget();
+    if (findNodeByPath(tree.value, destination) || getOpenFilesUnderPath(destination).length || workspace.session.hasChange(destination)) throw new Error(`File already exists: ${destination}`);
+    // 截图已完成版本校验；暂存自身会触发预览刷新，不能因此丢弃已采集的图片。
+    rendered = null;
+    await awaitAiPreviewOperation(trackFileLoad(workspace, destination, () => stageImageFile({
+      path: destination, blob: image.blob, session, signal, createOnly: true, activate: false, workspace,
+    })), signal);
+  }
+  assertTarget();
+  imageInputs.push({ source: "preview_screenshot", path: image.path, revision: image.revision, stagedPath: destination, mimeType: "image/png", size: image.blob.size, dataUrl });
+  return {
+    summary: destination ? `Staged unsaved preview screenshot at ${destination} and attached it to the next model turn; not written to disk` : `Attached preview screenshot of ${image.path} to the next model turn`,
+    path: image.path, revision: image.revision, width: image.width, height: image.height, capturedAt: image.capturedAt,
+    mime_type: "image/png", size: image.blob.size, image_path: destination || null, dirty: Boolean(destination),
+  };
 }
 
 const formatterDisposables = [];
@@ -6965,6 +7167,7 @@ async function createVirtualFileState(path, options = {}) {
   const fileState = { name, path, fileType: "text", model, originalModel: null, savedValue: "", lastLegalValue: content, lastStagedValue: "", dirty: true, closed: options.closed ?? true, language, monacoLanguage, isNew: true, persisted: false, deleted: false, size: workspace.session.fileSystem.policy.getTextSize(content), mimeType: getMimeType(path, "text/plain;charset=utf-8"), version: null };
   attachTextModelListener(fileState);
   openFiles.set(path, fileState);
+  previewContentRevision.value += 1;
   try {
     await queueFileStage(fileState, (session) => session.stageText(path, content, {
       mimeType: fileState.mimeType,
@@ -7246,6 +7449,7 @@ function createVirtualImageFileState(path, blob, workspace = captureWorkspace())
   const fileState = { name, path, fileType: "image", blob: imageBlob, savedBlob: null, objectUrl: URL.createObjectURL(imageBlob), size: imageBlob.size, mimeType: imageBlob.type || FileUtils.getImageMimeType(name), dirty: true, closed: false, language: "plaintext", monacoLanguage: "plaintext", isNew: true, persisted: false, deleted: false, version: null };
   fileState.model = getOrCreatePreviewModel(getReadonlyPreviewContent(fileState), path);
   openFiles.set(path, fileState);
+  previewContentRevision.value += 1;
   touchDirtyState();
   return fileState;
 }
@@ -7259,6 +7463,7 @@ function createVirtualBinaryFileState(path, blob, workspace = captureWorkspace()
   const fileState = { name, path, fileType: "unsupported", blob: binaryBlob, savedBlob: null, size: binaryBlob.size, mimeType: binaryBlob.type || getMimeType(name), dirty: true, closed: true, language: "plaintext", monacoLanguage: "plaintext", isNew: true, persisted: false, deleted: false, version: null };
   fileState.model = getOrCreatePreviewModel(getReadonlyPreviewContent(fileState), path);
   openFiles.set(path, fileState);
+  previewContentRevision.value += 1;
   touchDirtyState();
   return fileState;
 }
@@ -8369,6 +8574,7 @@ async function markFileDeleted(path, options = {}, workspace = captureWorkspace(
   else refreshReadonlyPreviewModel(file);
   file.dirty = true;
   openFiles.set(file.path, file);
+  previewContentRevision.value += 1;
   touchDirtyState();
   if (activePath.value === file.path && !activeDiffPath.value) activateDiff(file.path);
   setStatus(tr("status.pendingDelete", { path: file.path }), tr("status.unsaved"));

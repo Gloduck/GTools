@@ -204,6 +204,10 @@
                 <div v-if="message.role === 'user'" class="ai-message-content ai-message-plain">{{ message.content }}</div>
                 <div v-else class="ai-message-content" v-html="renderMarkdown(message.content)"></div>
               </template>
+              <div v-if="message.sources?.length" class="ai-message-sources">
+                <strong>{{ tr('ai.webSearch.sources') }}</strong>
+                <a v-for="(source, index) in message.sources" :key="source.url" :href="source.url" :title="source.url" target="_blank" rel="noopener noreferrer">[{{ index + 1 }}] {{ source.title }}</a>
+              </div>
             </article>
           </div>
           <form class="ai-chat-form" @submit.prevent="sendAiPrompt">
@@ -4666,6 +4670,7 @@ async function requestOpenAiResponse(payload, signal, startedAt) {
   let buffer = "";
   let bytes = 0;
   let completedResponse = null;
+  const completedItems = new Map();
   const processEvent = (block) => {
     const eventData = block.split(/\r?\n/)
       .filter((line) => line.startsWith("data:"))
@@ -4673,6 +4678,7 @@ async function requestOpenAiResponse(payload, signal, startedAt) {
       .join("\n");
     if (!eventData || eventData === "[DONE]") return;
     const event = JSON.parse(eventData);
+    if (event.type === "response.output_item.done") completedItems.set(event.output_index, event.item);
     if (event.type === "response.completed" || event.type === "response.incomplete") completedResponse = event.response;
     if (event.type === "response.failed") throw new Error(event.response?.error?.message || "AI response failed");
     if (event.type === "error") throw new Error(event.message || event.error?.message || "AI streaming response failed");
@@ -4690,6 +4696,10 @@ async function requestOpenAiResponse(payload, signal, startedAt) {
   if (buffer.trim()) processEvent(buffer);
   if (!completedResponse) throw new Error("AI streaming response ended before completion");
   const data = completedResponse;
+  // 部分服务商只在 output_item.done 事件中返回完整输出。
+  const output = [...(data.output || [])];
+  completedItems.forEach((item, index) => { if (!output[index]) output[index] = item; });
+  data.output = output.filter(Boolean);
   Object.defineProperty(data, "__meta", { value: { ms: Math.round(performance.now() - startedAt), bytes }, enumerable: false });
   return data;
 }
@@ -4869,13 +4879,14 @@ async function fetchAiModels() {
 }
 
 function extractResponseText(response) {
-  if (typeof response.output_text === "string") return response.output_text.trim();
+  if (typeof response.output_text === "string" && response.output_text.trim()) return response.output_text.trim();
   const parts = [];
   for (const item of response.output || []) {
     if (item.type === "message") {
       for (const content of item.content || []) {
         if (typeof content.text === "string") parts.push(content.text);
         if (typeof content.output_text === "string") parts.push(content.output_text);
+        if (typeof content.refusal === "string") parts.push(content.refusal);
       }
     }
   }
@@ -4986,6 +4997,7 @@ function normalizeStoredAiMessage(value) {
     id: String(value.id || `${Date.now()}-${Math.random().toString(16).slice(2)}`),
     role: value.role,
     content: String(value.content || ""),
+    sources: normalizeAiWebSources(value.sources),
   };
 }
 
@@ -5045,6 +5057,7 @@ function serializeAiSessionContent(session) {
       id: message.id,
       role: message.role,
       content: message.tool?.pending ? tr("ai.toolCancelled") : String(message.content || ""),
+      sources: message.sources?.length ? normalizeAiWebSources(message.sources) : undefined,
     })),
   };
 }
@@ -5328,6 +5341,7 @@ function completeAiToolMessage(message, result) {
   if (message.tool.cancelled) return;
   message.content = result.summary || "";
   message.imagePreview = createAiImagePreview(result);
+  message.sources = normalizeAiWebSources(result.sources);
   if (!result.ok) message.expanded = true;
   message.tool.pending = false;
   message.tool.cancelled = false;
@@ -5787,6 +5801,7 @@ async function compressAiContext() {
 }
 
 async function runAiAgent(prompt, signal, session = getActiveAiSession(), runConfig = {}) {
+  const workspace = captureWorkspace();
   const conversation = buildAgentInputMessages(prompt, session, runConfig.attachments);
   const agentInstructions = getAgentInstructions();
   const model = runConfig.model || session.agentModel.trim();
@@ -5795,15 +5810,25 @@ async function runAiAgent(prompt, signal, session = getActiveAiSession(), runCon
     const payload = { model, instructions: agentInstructions, input: conversation, tools: getAiToolDefinitions() };
     if (reasoningEffort && reasoningEffort !== "default") payload.reasoning = { effort: reasoningEffort };
     const response = await callOpenAiResponses(payload, signal);
+    throwIfAiAborted(signal);
     updateAiContextUsage(response, session);
     const text = extractResponseText(response);
-    if (text) addAiMessage("assistant", text, {}, session);
+    const sources = normalizeAiWebSources((response.output || []).filter((item) => item.type === "message")
+      .flatMap((item) => item.content || []).flatMap((part) => part.annotations || []).filter((annotation) => annotation.type === "url_citation"));
+    if (text || sources.length) addAiMessage("assistant", text, { sources }, session);
     const toolCalls = extractFunctionCalls(response);
-    if (!toolCalls.length) return;
-    conversation.push(...getContinuationOutputItems(response));
+    const outputCalls = (response.output || []).filter((item) => !["message", "reasoning"].includes(item.type));
+    if (!text && !sources.length && !outputCalls.length) throw new Error(response.error?.message || tr("ai.error.emptyResponse"));
+    if (toolCalls.length) conversation.push(...getContinuationOutputItems(response));
     const imageInputs = [];
-    const parsedToolCalls = toolCalls.map((call) => ({ call, args: parseAiToolArguments(call) }));
-    const pendingToolCalls = parsedToolCalls.map(({ call, args }, index) => ({ call, args, message: addPendingAiToolMessage(call, args, session, index + 1, parsedToolCalls.length) }));
+    const parsedToolCalls = outputCalls.map((call) => {
+      let args = {};
+      if (call.type === "function_call") args = parseAiToolArguments(call);
+      if (call.type === "image_generation_call") args = { output_format: call.output_format || "png" };
+      if (call.type === "web_search_call") args = call.action || {};
+      return { call, args };
+    });
+    const pendingToolCalls = parsedToolCalls.map(({ call, args }, index) => ({ call, args, message: addPendingAiToolMessage({ name: call.type === "function_call" ? call.name : call.type }, args, session, index + 1, parsedToolCalls.length) }));
     await nextTick();
     scrollAiMessagesToBottom();
     for (let index = 0; index < pendingToolCalls.length; index += 1) {
@@ -5815,12 +5840,22 @@ async function runAiAgent(prompt, signal, session = getActiveAiSession(), runCon
       }
       const { call, args, message } = pendingToolCalls[index];
       try {
-        const result = call.name === "read_image"
-          ? await runAiReadImageToolCall(args, imageInputs)
-          : await runAiToolCall(call, args, session, signal, imageInputs);
+        let result;
+        switch (call.type) {
+          case "function_call":
+            result = await handleAiFunctionCall(call, args, session, signal, imageInputs, conversation);
+            break;
+          case "image_generation_call":
+            result = await handleAiImageGenerationCall(call, args, session, signal, workspace);
+            break;
+          case "web_search_call":
+            result = handleAiWebSearchCall(call);
+            break;
+          default:
+            result = { ok: false, summary: tr("ai.error.unsupportedOutput", { type: call.type || "unknown" }) };
+        }
         throwIfAiAborted(signal);
         completeAiToolMessage(message, result);
-        conversation.push({ type: "function_call_output", call_id: call.call_id, output: JSON.stringify(result) });
       } catch (error) {
         if (error.name !== "AbortError" && !signal.aborted) throw error;
         cancelAiToolMessage(message);
@@ -5838,9 +5873,62 @@ async function runAiAgent(prompt, signal, session = getActiveAiSession(), runCon
         throw createAiAbortError();
       }
     }
+    if (!toolCalls.length) return;
     if (imageInputs.length) conversation.push(buildImageInputMessage(imageInputs));
   }
   addAiMessage("assistant", "Reached the tool-call round limit. Review the current changes before continuing.", {}, session);
+}
+
+async function handleAiFunctionCall(call, args, session, signal, imageInputs, conversation) {
+  const result = call.name === "read_image"
+    ? await runAiReadImageToolCall(args, imageInputs)
+    : await runAiToolCall(call, args, session, signal, imageInputs);
+  throwIfAiAborted(signal);
+  conversation.push({ type: "function_call_output", call_id: call.call_id, output: JSON.stringify(result) });
+  return result;
+}
+
+async function handleAiImageGenerationCall(image, args, session, signal, workspace) {
+  try {
+    assertCurrentWorkspace(workspace);
+    throwIfAiAborted(signal);
+    if (!isWorkspaceLoaded()) throw new Error(tr("ai.error.noWorkspace"));
+    if (image.status && image.status !== "completed") throw new Error(tr("ai.error.hostedToolStatus", { type: image.type, status: image.status }));
+    if (typeof image.result !== "string" || !image.result.trim()) throw new Error(tr("ai.error.emptyImageResult"));
+    const format = normalizeImageOutputFormat(args.output_format, `image.${args.output_format}`);
+    const path = `generated-image-${crypto.randomUUID()}.${format}`;
+    args.output_path = path;
+    assertImageOutputSize(path, FileUtils.getBase64DecodedSize(image.result));
+    const blob = FileUtils.base64ToBlob(image.result, getImageMimeTypeForFormat(format));
+    return okTool(await stageGeneratedImage({ path, blob, session, signal, createOnly: true, workspace }));
+  } catch (error) {
+    if (error.name === "AbortError" || signal.aborted) throw error;
+    return { ok: false, summary: error.message || String(error) };
+  }
+}
+
+function handleAiWebSearchCall(call) {
+  const action = call.action || {};
+  const ok = call.status === "completed" && !call.error;
+  const actionLabel = { search: "ai.webSearch.search", open_page: "ai.webSearch.openPage", find_in_page: "ai.webSearch.findInPage" }[action.type] || "ai.webSearch.search";
+  const sources = normalizeAiWebSources([...(Array.isArray(action.sources) ? action.sources : []), { url: action.url }]);
+  const summary = ok ? tr(actionLabel) : tr("ai.error.hostedToolStatus", { type: call.type, status: call.status || "unknown" });
+  return { ok, summary, status: call.status, action, sources, error: call.error || null };
+}
+
+function normalizeAiWebSources(values) {
+  const sources = new Map();
+  for (const source of Array.isArray(values) ? values : []) {
+    if (typeof source?.url !== "string" || !/^https?:\/\//i.test(source.url) || /[\s\u0000-\u001f\u007f]/.test(source.url)) continue;
+    try {
+      const url = new URL(source.url);
+      if (url.username || url.password || sources.has(url.href)) continue;
+      sources.set(url.href, { url: url.href, title: typeof source.title === "string" && source.title.trim() ? source.title : url.href });
+    } catch {
+      // 无效来源只忽略链接，不影响回答和其他工具结果。
+    }
+  }
+  return [...sources.values()];
 }
 
 async function runAiReadImageToolCall(args, imageInputs) {
@@ -5873,6 +5961,9 @@ function buildImageInputMessage(images) {
 
 function getContinuationOutputItems(response) {
   return (response.output || []).flatMap((item) => {
+    if (item.type === "web_search_call") {
+      return [compactObject({ type: item.type, id: item.id, status: item.status, action: item.action })];
+    }
     if (item.type === "function_call" && item.name) {
       return [compactObject({ type: "function_call", id: item.id, call_id: item.call_id, name: item.name, arguments: item.arguments || "{}", status: item.status })];
     }
@@ -7336,27 +7427,40 @@ async function aiToolGenerateOrEditImage({ prompt, output_path: outputPath, inpu
     outputFormat: format,
     outputPath: normalizedOutputPath,
   }, signal);
-  throwIfAiAborted(signal);
-  assertCurrentWorkspace(workspace);
-  const dimensions = await readImageDimensions(blob);
-  throwIfAiAborted(signal);
-  assertCurrentWorkspace(workspace);
-  const operation = input ? "edited" : "generated";
-  const file = await trackFileLoad(workspace, normalizedOutputPath, () => stageImageFile({
+  return stageGeneratedImage({
     path: normalizedOutputPath,
     blob,
+    inputPath: input?.path,
     session,
     signal,
     createOnly: !existingTarget && !overwrite,
     workspace,
+  });
+}
+
+async function stageGeneratedImage({ path, blob, inputPath = null, session, signal, createOnly, workspace }) {
+  throwIfAiAborted(signal);
+  assertCurrentWorkspace(workspace);
+  assertImageOutputSize(path, blob.size);
+  const dimensions = await readImageDimensions(blob);
+  throwIfAiAborted(signal);
+  assertCurrentWorkspace(workspace);
+  const operation = inputPath ? "edited" : "generated";
+  const file = await trackFileLoad(workspace, path, () => stageImageFile({
+    path,
+    blob,
+    session,
+    signal,
+    createOnly,
+    workspace,
   }));
   assertCurrentWorkspace(workspace);
-  const summary = tr(input ? "ai.imageEdited" : "ai.imageGenerated", { path: file.path });
+  const summary = tr(inputPath ? "ai.imageEdited" : "ai.imageGenerated", { path: file.path });
   setStatus(summary, tr("status.unsaved"));
   return {
     summary,
     image_path: file.path,
-    input_path: input?.path || null,
+    input_path: inputPath,
     operation,
     mime_type: file.mimeType,
     size: file.size,
@@ -9052,6 +9156,8 @@ function getTreeIconClass(node, collapsed = false) {
 .code-editor-view .ai-image-result span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .code-editor-view .ai-message-content { min-width: 0; max-width: 100%; overflow-wrap: anywhere; color: var(--text); font-size: 12px; word-break: break-word; }
 .code-editor-view .ai-message-plain { white-space: pre-wrap; }
+.code-editor-view .ai-message-sources { display: grid; gap: 4px; min-width: 0; font-size: 12px; overflow-wrap: anywhere; }
+.code-editor-view .ai-message-sources a { color: var(--accent-strong); text-decoration: underline; text-underline-offset: 2px; }
 .code-editor-view .ai-message-content * { max-width: 100%; }
 .code-editor-view .ai-message-content pre { overflow-x: auto; white-space: pre-wrap; }
 .code-editor-view .ai-message-content code { white-space: break-spaces; }

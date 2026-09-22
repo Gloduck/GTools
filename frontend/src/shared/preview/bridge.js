@@ -1,6 +1,8 @@
 // 此函数会被序列化后注入不透明源沙箱，不通过闭包引用宿主对象。
 export function previewBridge(token, revision, suffix) {
-    const send = (message) => parent.postMessage({channel: 'preview-session', token, revision, ...message}, '*');
+    let domContentLoaded = false, loadEventFired = false;
+    const snapshot = () => ({readyState: document.readyState, domContentLoaded, loadEventFired, observedAt: Date.now()});
+    const send = (message) => parent.postMessage({channel: 'preview-session', token, revision, pageState: snapshot(), ...message}, '*');
     const bound = (value) => {
         let remaining = 20000;
         const seen = new WeakSet();
@@ -89,11 +91,19 @@ export function previewBridge(token, revision, suffix) {
         event.preventDefault();
         send({type: 'navigate', path: anchor.dataset.previewPath, suffix: anchor.dataset.previewSuffix});
     }, true);
+    document.addEventListener('readystatechange', () => send({type: 'page-state'}));
+    document.addEventListener('DOMContentLoaded', () => {
+        domContentLoaded = true;
+        send({type: 'page-state'});
+    }, {once: true});
     addEventListener('load', () => {
+        loadEventFired = true;
         const hash = suffix.includes('#') ? suffix.slice(suffix.indexOf('#') + 1) : '';
         let name = hash;
         try { name = decodeURIComponent(hash); } catch {}
         if (name) (document.getElementById(name) || document.getElementsByName(name)[0])?.scrollIntoView();
-        send({type: 'ready'});
+        send({type: 'page-state'});
     }, {once: true});
+    // 消息处理器已安装即可连接；外部脚本、模型和图片可以继续加载。
+    send({type: 'ready'});
 }

@@ -1477,6 +1477,7 @@ previewSession.subscribe((state) => {
   previewViewport.value = state.viewport;
   previewDisplay.value = state.display;
   if (!state.path || !state.content || state.error) return;
+  if (previewRenderError?.code === "PREVIEW_BRIDGE_TIMEOUT" && state.ready && state.path === previewPath.value && state.suffix === previewUrlSuffix.value) previewRenderError = "";
   if (!previewSyncSerial && (previewPath.value !== state.path || previewUrlSuffix.value !== state.suffix)) {
     previewPath.value = state.path;
     previewUrlSuffix.value = state.suffix;
@@ -1509,7 +1510,7 @@ function updatePreviewContent() {
   // 界面继续报告错误，AI 则等待原始 Promise，不能把渲染失败当成成功。
   return pending.catch((error) => {
     if (previewRenderPromise === pending && serial === previewRenderSerial) {
-      previewRenderError = error.message || String(error);
+      previewRenderError = error;
       reportError("error.openFile", error);
     }
   });
@@ -6320,15 +6321,15 @@ function getAiAllToolDefinitions() {
     { type: "function", name: "read_file", requirements: ["workspace"], description: aiToolDescription("Read a workspace text file.", "Dirty in-memory content is returned when present. Use offset and limit for partial line-based reads. This tool only reads text-like files; binary or unsupported files will fail.", "Use max_chars to keep large files concise; default is intentionally limited."), parameters: { type: "object", properties: { path: { type: "string" }, offset: { type: "number", description: "Optional 1-based starting line number. Defaults to 1." }, limit: { type: "number", description: "Optional maximum number of lines to return." }, max_chars: { type: "number", description: aiToolOutputLimitDescription() } }, required: ["path"] } },
     { type: "function", name: "read_files", requirements: ["workspace"], description: aiToolDescription("Read multiple workspace text files in one call.", "Prefer this over repeated read_file calls when several files are known. Dirty in-memory content is returned when present. Offset and limit apply to each file.", "Use max_chars_per_file to keep large files concise; default is intentionally limited."), parameters: { type: "object", properties: { paths: { type: "array", items: { type: "string" } }, offset: { type: "number", description: "Optional 1-based starting line number applied to each file. Defaults to 1." }, limit: { type: "number", description: "Optional maximum number of lines to return per file." }, max_chars_per_file: { type: "number", description: aiToolOutputLimitDescription() } }, required: ["paths"] } },
     { type: "function", name: "read_image", requirements: ["workspace"], description: aiToolDescription("Read an image file and attach it to the next model turn for visual analysis.", "Use this for screenshots, diagrams, mockups, and other workspace image files. Do not use it for non-image files or oversized images."), parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } },
-    { type: "function", name: "preview_get_state", description: "Get compact internal preview state, including path, revision, readiness and sharing status, without HTML. No screen sharing is required.", parameters: { type: "object", properties: {} } },
-    { type: "function", name: "preview_open", requirements: ["workspace"], description: "Open a previewable workspace file in the visible internal iframe using current unsaved content and wait for rendering. Does not activate an editor tab, open external windows or create hidden sessions. No screen sharing is required.", parameters: { type: "object", properties: { path: { type: "string", description: "Required workspace-relative preview file path." } }, required: ["path"] } },
+    { type: "function", name: "preview_get_state", description: "Get compact internal preview state, including path, revision, bridge connection, page loading and sharing status, without HTML. Waits for the current bridge when a preview exists; otherwise reports disconnected. No screen sharing is required.", parameters: { type: "object", properties: {} } },
+    { type: "function", name: "preview_open", requirements: ["workspace"], description: "Open a previewable workspace file in the visible internal iframe using current unsaved content and wait only for the new document's bridge connection, not window.load. Does not activate an editor tab, open external windows or create hidden sessions. No screen sharing is required.", parameters: { type: "object", properties: { path: { type: "string", description: "Required workspace-relative preview file path." } }, required: ["path"] } },
     { type: "function", name: "preview_refresh", requirements: ["workspace", "preview"], description: "Recollect current workspace files and refresh the attached internal preview, including unsaved changes. Resets temporary DOM/script changes. No screen sharing is required.", parameters: { type: "object", properties: {} } },
     { type: "function", name: "preview_set_viewport", requirements: ["preview"], description: "Set the layout viewport of the same visible internal preview without reloading it or stopping sharing. Supply width and height in CSS pixels, or reset=true to follow the container. Large viewports are scaled down to fit the user's panel; screenshots show those displayed pixels, not full-resolution offscreen content. Returns viewport, display size and scale. Does not emulate device hardware, user agent or touch input.", parameters: { type: "object", properties: {
       width: { type: "integer", minimum: 1, maximum: PREVIEW_VIEWPORT_MAX_SIZE, description: "Layout width in CSS pixels; required unless reset=true." },
       height: { type: "integer", minimum: 1, maximum: PREVIEW_VIEWPORT_MAX_SIZE, description: "Layout height in CSS pixels; required unless reset=true." },
       reset: { type: "boolean", description: "Restore container-following layout instead of a fixed viewport." }
     } } },
-    { type: "function", name: "preview_inspect", requirements: ["preview"], description: "Inspect visible DOM elements in the existing internal iframe without refreshing it. No screen sharing is required. Waits for pending host rendering; never targets external windows or hidden sessions.", parameters: { type: "object", properties: {
+    { type: "function", name: "preview_inspect", requirements: ["preview"], description: "Inspect currently available DOM elements in the existing internal iframe without refreshing it. No screen sharing is required. Waits for the current document's bridge, not resource loading; elements may not exist yet. Never targets external windows or hidden sessions.", parameters: { type: "object", properties: {
       selector: { type: "string", description: "Optional CSS selector; defaults to body and its descendants." },
       limit: { type: "integer", minimum: 1, maximum: 100, description: "Maximum elements, from 1 to 100; defaults to 100." },
       include_styles: { type: "boolean", description: "Include selected computed styles; defaults to false." },
@@ -6503,7 +6504,10 @@ function getAiToolAvailability(name) {
 
 function formatAiToolDescriptionWithCondition(tool = {}) {
   const condition = getAiToolConditionDescription(tool);
-  return condition ? `${tool.description || ""} Condition: ${condition}` : (tool.description || "");
+  const description = tool.name?.startsWith("preview_")
+    ? `${tool.description || ""} Preview operations wait for the current bridge, not DOMContentLoaded or window.load. Use preview_get_state to read page_state and distinguish loading, interactive and complete pages. A blank or incomplete screenshot may be from a loading page; load_event_fired does not guarantee application models or textures are ready. Screenshot still requires authorized sharing and a valid visible viewport.`
+    : tool.description || "";
+  return condition ? `${description} Condition: ${condition}` : description;
 }
 
 function getAiToolConditionDescription(tool) {
@@ -6542,7 +6546,7 @@ async function runAiToolCall(call, args = {}, session = getActiveAiSession(), si
     if (availability.found && !availability.available) return { ok: false, summary: `Tool ${call.name} is unavailable because ${availability.reason}` };
     switch (call.name) {
       case "get_tool_availability": return okTool(aiToolGetToolAvailability(args));
-      case "preview_get_state": return okTool({ summary: "Internal preview state", ...getAiPreviewState() });
+      case "preview_get_state":
       case "preview_open":
       case "preview_refresh":
       case "preview_set_viewport":
@@ -6550,12 +6554,14 @@ async function runAiToolCall(call, args = {}, session = getActiveAiSession(), si
       case "preview_evaluate":
       case "preview_get_errors":
       case "preview_screenshot": {
+        if (call.name === "preview_get_state" && !getAiRequirementStatus("preview").met) return okTool({ summary: "No internal preview bridge is attached", ...getAiPreviewState() });
         const controller = new AbortController();
         const abort = () => controller.abort();
         signal?.addEventListener("abort", abort, { once: true });
         const stopWorkspaceWatch = watch(fileSession, abort, { flush: "sync" });
         try {
-          return okTool(await aiToolPreview(call.name, args, session, controller.signal, imageInputs));
+          const {page_state, ...result} = await aiToolPreview(call.name, args, session, controller.signal, imageInputs);
+          return okTool(call.name === "preview_get_state" ? {...result, page_state} : result);
         } finally {
           stopWorkspaceWatch();
           signal?.removeEventListener("abort", abort);
@@ -6602,8 +6608,18 @@ function okTool(result) {
 }
 
 function getAiPreviewState() {
-  const { content, ...state } = previewSession.getState();
-  return { ...state, ready: state.ready && !previewSyncSerial && !previewRenderError, error: previewRenderError || state.error, visible: Boolean(previewPaneVisible.value && state.display.width && state.display.height), target_path: previewPath.value, rendering: Boolean(previewSyncSerial) };
+  const { content, pageState: page, ...state } = previewSession.getState();
+  return {
+    ...state,
+    page_state: {
+      bridge_connected: state.ready, ready_state: page?.readyState ?? null,
+      dom_content_loaded: page?.domContentLoaded ?? false, load_event_fired: page?.loadEventFired ?? false,
+      observed_at: page?.observedAt ?? null,
+    },
+    ready: state.ready && !previewSyncSerial && !previewRenderError, error: previewRenderError ? (previewRenderError.message || String(previewRenderError)) : state.error,
+    visible: Boolean(previewPaneVisible.value && state.display.width && state.display.height),
+    target_path: previewPath.value, rendering: Boolean(previewSyncSerial),
+  };
 }
 
 function awaitAiPreviewOperation(promise, signal) {
@@ -6673,14 +6689,18 @@ async function aiToolPreview(name, args, session, signal, imageInputs) {
     targetSerial = ++previewTargetSerial;
     void updatePreviewContent();
   }
-  // 只等待最新宿主渲染；检查和执行脚本不能隐式刷新，否则会丢失 DOM 临时状态。
+  // 只等待最新文档准备和桥接连接，不等待资源加载，也不隐式刷新页面。
   while (true) {
     const pending = previewRenderPromise;
     try {
       await awaitAiPreviewOperation(pending, signal);
     } catch (error) {
       assertTarget();
-      if (pending === previewRenderPromise) throw error;
+      if (pending === previewRenderPromise) {
+        const current = previewSession.getState();
+        // 旧的等待可能已超时，但同一文档的迟到桥接连接仍然可用。
+        if (error.code !== "PREVIEW_BRIDGE_TIMEOUT" || !current.ready || current.error || current.path !== previewPath.value || current.suffix !== previewUrlSuffix.value) throw error;
+      }
     }
     await awaitAiPreviewOperation(nextTick(), signal);
     assertTarget();
@@ -6695,7 +6715,7 @@ async function aiToolPreview(name, args, session, signal, imageInputs) {
   if (!state.ready || state.error || state.path !== previewPath.value || state.suffix !== previewUrlSuffix.value || previewSyncSerial) throw new Error(state.error || "Preview frame is not ready or has pending rendering");
   rendered = { path: state.path, revision: state.revision, viewportRevision: state.viewportRevision, serial: previewRenderSerial, contentRevision: previewContentRevision.value, diskTree: diskTree.value };
   assertTarget();
-  if (name === "preview_open" || name === "preview_refresh") return { summary: `Rendered preview ${state.path}`, ...getAiPreviewState() };
+  if (["preview_get_state", "preview_open", "preview_refresh"].includes(name)) return { summary: `Preview bridge connected for ${state.path}; use preview_get_state for loading progress`, ...getAiPreviewState() };
   if (name === "preview_get_errors") {
     const errors = previewSession.getErrors({ limit: args.limit, since: args.since });
     assertTarget();

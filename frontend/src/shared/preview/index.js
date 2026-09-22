@@ -10,6 +10,7 @@ export function createPreviewSession(initialFiles) {
     let files = fileMap(initialFiles);
     let frame = null, disposed = false, revision = 0, path = '', suffix = '', content = '', ready = false, error = null;
     let requestId = 0;
+    let pageState = null;
     let viewport = null, viewportContainer = null, viewportSettings = null, viewportRevision = 0;
     const token = crypto.randomUUID();
     const listeners = new Set(), pending = new Map();
@@ -26,7 +27,7 @@ export function createPreviewSession(initialFiles) {
         };
     }
     function getState() {
-        return {path, suffix, revision, content, ready, error, disposed, attached: Boolean(frame), capture: capture.getState(), ...viewportState(), viewportRevision};
+        return {path, suffix, revision, content, ready, pageState: pageState ? {...pageState} : null, error, disposed, attached: Boolean(frame), capture: capture.getState(), ...viewportState(), viewportRevision};
     }
     function publish() { for (const listener of listeners) listener(getState()); }
     function assertLive() { if (disposed) throw new Error('Preview session is disposed'); }
@@ -61,6 +62,7 @@ export function createPreviewSession(initialFiles) {
     function invalidate() {
         revision++;
         ready = false;
+        pageState = null;
         for (const operation of pending.values()) operation.reject(new Error('Preview document changed'));
         pending.clear();
     }
@@ -76,7 +78,7 @@ export function createPreviewSession(initialFiles) {
                 else if (error) finish(new Error(error));
                 else if (ready) finish();
             };
-            const timer = setTimeout(() => finish(new Error('Preview frame did not become ready')), timeoutMs);
+            const timer = setTimeout(() => finish(Object.assign(new Error('Preview bridge did not connect'), {code: 'PREVIEW_BRIDGE_TIMEOUT'})), timeoutMs);
             listeners.add(check);
             check();
         });
@@ -98,8 +100,6 @@ export function createPreviewSession(initialFiles) {
             content = next;
             if (frame) frame.srcdoc = content;
             publish();
-            // 页面加载不依赖宿主是否可见；只有截图和视口设置需要等待显示布局稳定。
-            if (frame) await waitUntilReady(current);
         } catch (failure) {
             if (current !== revision || disposed) return getState();
             content = '';
@@ -108,17 +108,27 @@ export function createPreviewSession(initialFiles) {
             publish();
             throw failure;
         }
+        // 桥接超时只结束本次等待，不清空仍在加载的文档；迟到的连接仍可恢复。
+        if (frame && current === revision && !disposed) {
+            try { await waitUntilReady(current); }
+            catch (failure) {
+                if (current !== revision || disposed) return getState();
+                throw failure;
+            }
+        }
         return getState();
     }
     function receive(event) {
         const message = event.data;
         if (!frame || event.source !== frame.contentWindow || message?.token !== token || message.revision !== revision) return;
         if (message.channel !== 'preview-session') return;
+        if (message.pageState) pageState = {...message.pageState};
         if (message.type === 'navigate') {
             session.open(message.path + (message.suffix || '')).catch(() => {});
             return;
         }
         if (message.type === 'ready') { ready = true; publish(); }
+        if (message.type === 'page-state') publish();
         if (message.type === 'log' && errors.length < 200 && JSON.stringify(message.entry)?.length <= 30000) errors.push({...message.entry, path, revision});
         if (message.type === 'response' && JSON.stringify(message.result)?.length <= 30000) pending.get(message.id)?.resolve(message.result);
     }

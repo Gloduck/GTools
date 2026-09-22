@@ -118,6 +118,80 @@ test('预览工具无需共享即可检查和执行，未授权截图明确失�
     expect(refreshed.results[2].value).toEqual({title: 'Original', version: 'unsaved'});
 });
 
+const slowResourceTest = test.extend({
+    // 仅此用例绕开 Chromium 沙箱独立进程的拦截遗漏，不改变页面 sandbox 权限。
+    launchOptions: async ({launchOptions}, use) => {
+        await use({...launchOptions, args: [...(launchOptions.args || []), '--disable-features=IsolateSandboxedIframes']});
+    },
+});
+
+slowResourceTest('AI 工具与截图不等慢资源，只有状态工具返回页面加载阶段', async ({page, baseURL}) => {
+    const ai = await setup(page);
+    let releaseScript, releaseImage;
+    let scriptRequests = 0;
+    const scriptUrl = `${baseURL}/test/ai-loading-model.js`;
+    const imageUrl = `${baseURL}/test/ai-loading-texture.svg`;
+    const scriptGate = new Promise((resolve) => { releaseScript = resolve; });
+    const imageGate = new Promise((resolve) => { releaseImage = resolve; });
+    await page.context().route(scriptUrl, async (route) => {
+        scriptRequests++;
+        await scriptGate;
+        await route.fulfill({contentType: 'text/javascript', body: 'document.querySelector("h1").textContent="资源已加载";'});
+    });
+    await page.context().route(imageUrl, async (route) => {
+        await imageGate;
+        await route.fulfill({contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>'});
+    });
+    try {
+        const opened = await ai.run([
+            ['write_file', {path: 'index.html', content: `<h1>加载中</h1><img src="${imageUrl}"><script src="${scriptUrl}"></script>`}],
+            ['preview_open', {path: 'index.html'}],
+            ['preview_get_state'],
+        ]);
+        expect(opened.results.every((result) => result.ok)).toBe(true);
+        await expect.poll(() => scriptRequests).toBeGreaterThan(0);
+        expect(opened.results[1]).not.toHaveProperty('page_state');
+        expect(opened.results[2].page_state).toMatchObject({bridge_connected: true, ready_state: 'loading', dom_content_loaded: false, load_event_fired: false});
+        await page.getByRole('button', {name: 'Share Preview for Screenshots', exact: true}).click();
+        await expect(page.getByRole('button', {name: 'Stop Preview Sharing', exact: true})).toBeVisible({timeout: 10000});
+        const checked = await ai.run([
+            ['preview_evaluate', {code: 'console.warn("模型仍在加载"); return document.readyState;'}],
+            ['preview_inspect', {selector: 'h1'}],
+            ['preview_get_errors', {limit: 15, since: 0}],
+            ['preview_set_viewport', {width: 960, height: 600}],
+            ['preview_screenshot', {path: ''}],
+            ['preview_get_state'],
+        ]);
+        expect(checked.results.every((result) => result.ok)).toBe(true);
+        for (const result of checked.results.slice(0, -1)) {
+            expect(result).not.toHaveProperty('page_state');
+            expect(result).not.toHaveProperty('pageState');
+        }
+        expect(checked.results[0].value).toBe('loading');
+        expect(checked.results[1].value.elements[0].text).toBe('加载中');
+        expect(checked.results[2].errors.some((entry) => entry.kind === 'console.warn')).toBe(true);
+        expect(checked.images).toHaveLength(1);
+        expect(checked.results.at(-1).page_state).toMatchObject({ready_state: 'loading', load_event_fired: false});
+        const revision = checked.results.at(-1).revision;
+        releaseScript();
+        await expect.poll(() => page.frameLocator('.preview-frame').locator('body').evaluate(() => document.readyState)).toBe('interactive');
+        const interactive = await ai.run([['preview_get_state']]);
+        expect(interactive.results[0].page_state).toMatchObject({ready_state: 'interactive', dom_content_loaded: true, load_event_fired: false});
+        releaseImage();
+        await expect.poll(() => page.frameLocator('.preview-frame').locator('body').evaluate(() => document.readyState)).toBe('complete');
+        const loaded = await ai.run([['preview_get_state'], ['preview_refresh'], ['preview_get_state']]);
+        expect(loaded.results[0]).toMatchObject({revision, page_state: {ready_state: 'complete', dom_content_loaded: true, load_event_fired: true}});
+        expect(loaded.results[1].ok).toBe(true);
+        expect(loaded.results[1]).not.toHaveProperty('page_state');
+        expect(loaded.results[2].page_state.bridge_connected).toBe(true);
+        await expect(page.getByRole('dialog')).toHaveCount(0);
+    } finally {
+        releaseScript();
+        releaseImage();
+        await page.context().unrouteAll({behavior: 'wait'});
+    }
+});
+
 test('截图按路径进入临时态，可读取且拒绝覆盖，用户保存后才落盘', async ({page}) => {
     const ai = await setup(page);
     await ai.run([['preview_open', {path: 'index.html'}]]);

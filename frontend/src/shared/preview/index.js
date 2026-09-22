@@ -1,22 +1,59 @@
 import {normalizePreviewPath, PREVIEW_FRAME_SANDBOX, renderPreview} from './resources.js';
 import {previewBridge} from './bridge.js';
 import {createPreviewCapture} from './capture.js';
+import {createPreviewViewport} from './viewport.js';
 export {collectPreviewReferences, normalizePreviewPath, resolvePreviewUrl, PREVIEW_FRAME_SANDBOX} from './resources.js';
 export {createPreviewWindow} from './window.js';
+export {createPreviewViewport, PREVIEW_VIEWPORT_MAX_SIZE} from './viewport.js';
 
 export function createPreviewSession(initialFiles) {
     let files = fileMap(initialFiles);
     let frame = null, disposed = false, revision = 0, path = '', suffix = '', content = '', ready = false, error = null;
     let requestId = 0;
+    let viewport = null, viewportContainer = null, viewportSettings = null, viewportRevision = 0;
     const token = crypto.randomUUID();
     const listeners = new Set(), pending = new Map();
     let errors = [];
     const capture = createPreviewCapture(() => frame, publish);
+    function viewportState() {
+        if (viewport) return viewport.getState();
+        const width = frame?.clientWidth || 0, height = frame?.clientHeight || 0;
+        const bounds = frame?.getBoundingClientRect?.();
+        return {
+            viewport: {mode: 'container', width, height},
+            display: {width: bounds?.width ?? width, height: bounds?.height ?? height, scale: width ? (bounds?.width ?? width) / width : 0},
+            viewportReady: Boolean(frame && width && height && (!bounds || (bounds.width && bounds.height))),
+        };
+    }
     function getState() {
-        return {path, suffix, revision, content, ready, error, disposed, attached: Boolean(frame), capture: capture.getState()};
+        return {path, suffix, revision, content, ready, error, disposed, attached: Boolean(frame), capture: capture.getState(), ...viewportState(), viewportRevision};
     }
     function publish() { for (const listener of listeners) listener(getState()); }
     function assertLive() { if (disposed) throw new Error('Preview session is disposed'); }
+    function bindViewport() {
+        if (!viewportContainer) return;
+        viewport = createPreviewViewport(frame, viewportContainer, (changed) => {
+            if (changed) viewportRevision++;
+            publish();
+        });
+        viewport.setViewport(viewportSettings);
+    }
+    function waitForViewport(target, timeoutMs = 10000) {
+        return new Promise((resolve, reject) => {
+            const finish = (failure) => {
+                clearTimeout(timer);
+                listeners.delete(check);
+                failure ? reject(failure) : resolve();
+            };
+            const check = () => {
+                if (disposed || viewport !== target || !frame) finish(new Error('Preview viewport is detached'));
+                else if (viewportState().viewportReady) finish();
+            };
+            const timer = setTimeout(() => finish(new Error('Preview viewport did not become ready')), Math.max(0, timeoutMs));
+            listeners.add(check);
+            check();
+        });
+    }
     function invalidate() {
         revision++;
         ready = false;
@@ -42,6 +79,7 @@ export function createPreviewSession(initialFiles) {
     }
     async function rebuild() {
         assertLive();
+        if (!viewport) bindViewport();
         invalidate();
         const current = revision;
         errors = [];
@@ -57,6 +95,7 @@ export function createPreviewSession(initialFiles) {
             if (frame) frame.srcdoc = content;
             publish();
             if (frame) await waitUntilReady(current);
+            if (viewport) await waitForViewport(viewport);
         } catch (failure) {
             if (current !== revision || disposed) return getState();
             content = '';
@@ -100,10 +139,14 @@ export function createPreviewSession(initialFiles) {
         });
     }
     const session = {
-        attachFrame(next) {
+        attachFrame(next, {container} = {}) {
             assertLive();
             if (frame) { capture.stop(); invalidate(); frame.srcdoc = ''; }
+            viewport?.dispose();
+            viewport = null;
             frame = next;
+            viewportContainer = container || null;
+            bindViewport();
             frame.setAttribute('sandbox', PREVIEW_FRAME_SANDBOX);
             if (path) void rebuild().catch(() => {});
             publish();
@@ -111,10 +154,26 @@ export function createPreviewSession(initialFiles) {
                 if (frame !== next) return;
                 capture.stop();
                 invalidate();
+                viewport?.dispose();
+                viewport = viewportContainer = null;
                 frame.srcdoc = '';
                 frame = null;
                 publish();
             };
+        },
+        async setViewport(value) {
+            assertLive();
+            if (!viewportContainer) throw new Error('Attach a preview frame with a container before setting its viewport');
+            if (!viewport) bindViewport();
+            const target = viewport;
+            target.setViewport(value);
+            viewportSettings = value === null ? null : {width: value.width, height: value.height};
+            do {
+                await waitForViewport(target);
+                if (disposed || viewport !== target) throw new Error('Preview viewport is detached');
+                target.refresh();
+            } while (!target.getState().viewportReady);
+            return getState();
         },
         setFiles(next) {
             assertLive();
@@ -153,8 +212,17 @@ export function createPreviewSession(initialFiles) {
             const deadline = Date.now() + Math.max(100, Math.min(30000, options?.timeoutMs || 5000));
             if (capture.getState().status !== 'active') throw new Error('Start preview capture first');
             await waitUntilReady(current, deadline - Date.now());
-            const image = await capture.screenshot({...options, timeoutMs: deadline - Date.now()}, () => current === revision && !disposed && ready);
-            return {...image, path: currentPath, revision: current};
+            viewport?.refresh();
+            await waitForViewport(viewport, deadline - Date.now());
+            const layout = viewportState(), currentViewport = viewportRevision;
+            const image = await capture.screenshot({...options, timeoutMs: deadline - Date.now()}, () => {
+                viewport?.refresh();
+                const next = viewportState();
+                return current === revision && !disposed && ready && currentViewport === viewportRevision && next.viewportReady
+                    && next.viewport.width === layout.viewport.width && next.viewport.height === layout.viewport.height
+                    && next.display.width === layout.display.width && next.display.height === layout.display.height;
+            });
+            return {...image, path: currentPath, revision: current, viewport: layout.viewport, display: layout.display, viewportRevision: currentViewport};
         },
         getState,
         subscribe(listener) { assertLive(); listeners.add(listener); listener(getState()); return () => listeners.delete(listener); },
@@ -165,6 +233,10 @@ export function createPreviewSession(initialFiles) {
             error = null;
             errors = [];
             capture.stop();
+            // 重置时释放观察器；下次打开文档或设置尺寸时再绑定保留的宿主。
+            viewport?.dispose();
+            viewport = null;
+            viewportSettings = null;
             if (frame) frame.srcdoc = '';
             publish();
         },
@@ -172,6 +244,8 @@ export function createPreviewSession(initialFiles) {
             if (disposed) return;
             session.reset();
             disposed = true;
+            viewport?.dispose();
+            viewport = viewportContainer = null;
             frame = null;
             files.clear();
             window.removeEventListener('message', receive);

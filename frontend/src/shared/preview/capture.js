@@ -48,7 +48,10 @@ export function createPreviewCapture(getFrame, changed) {
                 if (current !== generation) throw new Error('Capture ended');
                 publish('active');
             } catch (error) {
-                if (current === generation) { stop(); publish('error', error.message); }
+                // 关闭预览会主动暂停视频；旧启动请求的播放中断属于取消，不应显示为故障。
+                if (current !== generation) throw new DOMException('Preview capture cancelled', 'AbortError');
+                stop();
+                publish('error', error.message);
                 throw error;
             }
         },

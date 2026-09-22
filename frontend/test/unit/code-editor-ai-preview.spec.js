@@ -106,7 +106,7 @@ test('预览工具无需共享即可检查和执行，未授权截图明确失�
     expect(await readFile(page, 'index.html')).toContain('Original');
     await expect(page.getByRole('dialog')).toHaveCount(0);
     const definitions = ai.requests[0].tools.filter((tool) => tool.name.startsWith('preview_'));
-    expect(definitions.map((tool) => tool.name).sort()).toEqual(['preview_evaluate', 'preview_get_errors', 'preview_get_state', 'preview_inspect', 'preview_open', 'preview_refresh', 'preview_screenshot']);
+    expect(definitions.map((tool) => tool.name).sort()).toEqual(['preview_evaluate', 'preview_get_errors', 'preview_get_state', 'preview_inspect', 'preview_open', 'preview_refresh', 'preview_screenshot', 'preview_set_viewport']);
     expect(definitions.find((tool) => tool.name === 'preview_screenshot').parameters.properties).toHaveProperty('path');
 
     const refreshed = await ai.run([
@@ -243,6 +243,53 @@ test('执行期间关闭预览会返回失败，不把旧文档结果作为成�
     const {results} = await ai.finish(run);
     expect(results[0].ok).toBe(false);
     expect(results[0].summary).toMatch(/changed|ready/i);
+});
+
+test('AI 与用户共用指定视口和恢复控制，缩放不重载页面或清空表单', async ({page}) => {
+    const ai = await setup(page);
+    const opened = await ai.run([
+        ['preview_open', {path: 'index.html'}],
+        ['preview_evaluate', {code: 'const input=document.createElement("input");input.id="retained";input.value="保留输入";document.body.append(input);const style=document.createElement("style");style.textContent="h1{color:rgb(0,0,255)}@media(min-width:1000px){h1{color:rgb(255,0,0)}}";document.head.append(style);'}],
+    ]);
+    const revision = opened.results[0].revision;
+    const frame = page.frameLocator('.preview-frame');
+    const resized = await ai.run([
+        ['preview_set_viewport', {width: 1440, height: 900}],
+        ['preview_evaluate', {code: 'return {width:innerWidth,height:innerHeight,value:document.querySelector("#retained").value};'}],
+    ]);
+    expect(resized.results[0]).toMatchObject({ok: true, revision, viewportReady: true, viewport: {mode: 'fixed', width: 1440, height: 900}});
+    expect(resized.results[0].display.scale).toBeLessThan(1);
+    expect(resized.results[1]).toMatchObject({ok: true, revision, value: {width: 1440, height: 900, value: '保留输入'}});
+    const toggleViewport = page.getByRole('button', {name: 'Toggle Preview Dimensions', exact: true});
+    await expect(toggleViewport).toHaveAttribute('aria-expanded', 'false');
+    await expect(page.locator('.preview-viewport-controls')).toBeHidden();
+    await toggleViewport.click();
+    await expect(page.getByRole('spinbutton', {name: 'Preview Width', exact: true})).toHaveValue('1440');
+    await expect(page.getByRole('spinbutton', {name: 'Preview Height', exact: true})).toHaveValue('900');
+    await expect(frame.locator('h1')).toHaveCSS('color', 'rgb(255, 0, 0)');
+
+    await page.getByRole('combobox', {name: 'Preview Dimension Preset', exact: true}).selectOption('390x844');
+    await expect.poll(() => frame.locator('body').evaluate(() => ({width: innerWidth, height: innerHeight}))).toEqual({width: 390, height: 844});
+    await expect(frame.locator('h1')).toHaveCSS('color', 'rgb(0, 0, 255)');
+    await page.getByRole('spinbutton', {name: 'Preview Width', exact: true}).fill('1200');
+    await page.getByRole('spinbutton', {name: 'Preview Height', exact: true}).fill('800');
+    await page.getByRole('button', {name: 'Apply Preview Dimensions', exact: true}).click();
+    await expect.poll(() => frame.locator('body').evaluate(() => ({width: innerWidth, height: innerHeight}))).toEqual({width: 1200, height: 800});
+    await expect(page.getByRole('combobox', {name: 'Preview Dimension Preset', exact: true})).toHaveValue('custom');
+    await toggleViewport.click();
+    await expect(page.locator('.preview-viewport-controls')).toBeHidden();
+    expect(await frame.locator('body').evaluate(() => ({width: innerWidth, height: innerHeight}))).toEqual({width: 1200, height: 800});
+    await expect(frame.locator('#retained')).toHaveValue('保留输入');
+    await toggleViewport.click();
+
+    const reset = await ai.run([['preview_set_viewport', {reset: true}], ['preview_set_viewport', {width: 0, height: 900}]]);
+    expect(reset.results[0]).toMatchObject({ok: true, revision, viewportReady: true, viewport: {mode: 'container'}, display: {scale: 1}});
+    expect(reset.results[1].ok).toBe(false);
+    await expect(page.getByRole('combobox', {name: 'Preview Dimension Preset', exact: true})).toHaveValue('container');
+    const container = await page.locator('.preview-viewport-host').evaluate((node) => ({width: node.clientWidth, height: node.clientHeight}));
+    expect(await frame.locator('body').evaluate(() => ({width: innerWidth, height: innerHeight}))).toEqual(container);
+    await expect(frame.locator('#retained')).toHaveValue('保留输入');
+    expect(await page.evaluate(() => window.displayRequests)).toBe(0);
 });
 
 test('执行预览脚本期间切换编辑文件不会中断请求或丢失 DOM 状态', async ({page}) => {

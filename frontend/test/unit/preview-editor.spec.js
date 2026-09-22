@@ -199,3 +199,136 @@ test('仅打开切换和关闭文件不重建预览，脚本内容连续修改�
     await page.getByRole('dialog', {name: 'Revert Changes'}).getByRole('button', {name: 'OK', exact: true}).click();
     await expect(frame.locator('h1')).toHaveAttribute('data-version', 'saved');
 });
+
+for (const [name, cancelled] of [
+    ['共享播放等待期间关闭预览会取消采集且不报错，重新打开后仍可共享', true],
+    ['当前共享请求的真实视频播放失败会显示错误并释放采集流', false],
+]) {
+    test(name, async ({page}) => {
+        const pageErrors = [];
+        page.on('pageerror', (error) => pageErrors.push(error.message));
+        await openWorkspace(page, {'index.html': '<h1>Capture regression</h1>'});
+        await page.locator('.file-tree').getByTitle('index.html', {exact: true}).click();
+        await page.getByRole('button', {name: 'Preview', exact: true}).click();
+        await expect(page.frameLocator('.preview-frame').locator('h1')).toHaveText('Capture regression');
+
+        await page.evaluate(() => {
+            window.captureUnhandledRejections = [];
+            window.addEventListener('unhandledrejection', (event) => {
+                window.captureUnhandledRejections.push(String(event.reason));
+            });
+            window.capturePlayPending = false;
+            window.captureRequests = 0;
+            window.capturePauseRejections = 0;
+            window.CropTarget = {fromElement: async (element) => element};
+            Object.defineProperty(navigator.mediaDevices, 'getDisplayMedia', {configurable: true, value: async () => {
+                window.captureRequests++;
+                const canvas = document.createElement('canvas');
+                canvas.width = 320;
+                canvas.height = 180;
+                const paint = () => {
+                    const context = canvas.getContext('2d');
+                    context.fillStyle = 'rgb(20,180,60)';
+                    context.fillRect(0, 0, canvas.width, canvas.height);
+                };
+                paint();
+                const stream = canvas.captureStream(10);
+                const interval = setInterval(paint, 50);
+                const track = stream.getVideoTracks()[0];
+                const stop = track.stop.bind(track);
+                track.stop = () => { clearInterval(interval); stop(); };
+                track.getSettings = () => ({displaySurface: 'browser'});
+                track.applyConstraints = async () => {};
+                track.cropTo = async () => {};
+                window.captureStreamRef = stream;
+                return stream;
+            }});
+
+            // 保留真实视频元素，仅挂起播放承诺，由关闭时的暂停或显式失败决定结果。
+            const play = HTMLMediaElement.prototype.play;
+            const pause = HTMLMediaElement.prototype.pause;
+            HTMLMediaElement.prototype.play = function (...args) {
+                if (!this.srcObject || this.srcObject !== window.captureStreamRef) return play.apply(this, args);
+                window.captureVideoRef = this;
+                window.capturePlayPending = true;
+                return new Promise((resolve, reject) => {
+                    window.rejectCapturePlayback = (error) => {
+                        window.capturePlayPending = false;
+                        reject(error);
+                    };
+                });
+            };
+            HTMLMediaElement.prototype.pause = function (...args) {
+                const result = pause.apply(this, args);
+                if (this === window.captureVideoRef && window.capturePlayPending) {
+                    window.capturePauseRejections++;
+                    window.rejectCapturePlayback(new DOMException(
+                        'The play() request was interrupted by a call to pause().', 'AbortError',
+                    ));
+                }
+                return result;
+            };
+            window.restoreCapturePlayback = () => {
+                HTMLMediaElement.prototype.play = play;
+                HTMLMediaElement.prototype.pause = pause;
+            };
+        });
+
+        const startSharing = page.getByRole('button', {name: 'Share Preview for Screenshots', exact: true});
+        await startSharing.click();
+        await expect.poll(() => page.evaluate(() => window.capturePlayPending)).toBe(true);
+        await expect(startSharing).toBeDisabled();
+        expect(await page.evaluate(() => ({
+            video: window.captureVideoRef instanceof HTMLVideoElement,
+            source: window.captureVideoRef.srcObject === window.captureStreamRef,
+            track: window.captureStreamRef.getVideoTracks()[0].readyState,
+        }))).toEqual({video: true, source: true, track: 'live'});
+
+        if (cancelled) {
+            await page.locator('.preview-header').getByRole('button', {name: 'Close', exact: true}).click();
+            await expect(page.locator('.preview-frame')).toHaveCount(0);
+        } else {
+            // 不改变采集代次，确保真正的播放失败不会被取消处理吞掉。
+            await page.evaluate(() => window.rejectCapturePlayback(new Error('测试视频播放失败')));
+            await expect(page.getByRole('dialog')).toBeVisible();
+            await expect(page.getByRole('dialog')).toContainText('测试视频播放失败');
+            await expect(page.locator('.preview-frame')).toHaveCount(1);
+            await expect(startSharing).toBeEnabled();
+        }
+        await expect.poll(() => page.evaluate(() => ({
+            pending: window.capturePlayPending,
+            pauseRejections: window.capturePauseRejections,
+            active: window.captureStreamRef.active,
+            tracks: window.captureStreamRef.getTracks().map((track) => track.readyState),
+            source: window.captureVideoRef.srcObject,
+        }))).toEqual({pending: false, pauseRejections: cancelled ? 1 : 0, active: false, tracks: ['ended'], source: null});
+        // 跨过任务边界，让拒绝处理及界面更新完成后再检查静默取消。
+        await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 0)));
+        expect(await page.evaluate(() => window.captureUnhandledRejections)).toEqual([]);
+        expect(pageErrors).toEqual([]);
+        await page.evaluate(() => window.restoreCapturePlayback());
+
+        if (cancelled) {
+            await expect(page.getByRole('dialog')).toHaveCount(0);
+            await page.evaluate(() => { window.cancelledCaptureStreamRef = window.captureStreamRef; });
+            await page.getByRole('button', {name: 'Preview', exact: true}).click();
+            await expect(page.frameLocator('.preview-frame').locator('h1')).toHaveText('Capture regression');
+            await startSharing.click();
+            const stopSharing = page.getByRole('button', {name: 'Stop Preview Sharing', exact: true});
+            await expect(stopSharing).toBeVisible();
+            expect(await page.evaluate(() => ({
+                requests: window.captureRequests,
+                fresh: window.captureStreamRef !== window.cancelledCaptureStreamRef,
+                oldTrack: window.cancelledCaptureStreamRef.getVideoTracks()[0].readyState,
+                newTrack: window.captureStreamRef.getVideoTracks()[0].readyState,
+                active: window.captureStreamRef.active,
+            }))).toEqual({requests: 2, fresh: true, oldTrack: 'ended', newTrack: 'live', active: true});
+            await stopSharing.click();
+            await expect(startSharing).toBeEnabled();
+            await expect.poll(() => page.evaluate(() => window.captureStreamRef.getVideoTracks()[0].readyState)).toBe('ended');
+            await expect(page.getByRole('dialog')).toHaveCount(0);
+            expect(await page.evaluate(() => window.captureUnhandledRejections)).toEqual([]);
+            expect(pageErrors).toEqual([]);
+        }
+    });
+}

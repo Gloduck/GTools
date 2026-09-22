@@ -575,6 +575,9 @@
           <header class="preview-header">
             <span :title="previewPath">{{ tr(previewLabelKey) }} · {{ previewPath }}</span>
             <div class="preview-header-actions">
+              <button type="button" class="icon-button" :title="tr('preview.toggleViewport')" :aria-label="tr('preview.toggleViewport')" :aria-expanded="previewViewportControlsVisible" aria-controls="code-editor-preview-viewport" @click="previewViewportControlsVisible = !previewViewportControlsVisible">
+                <span class="codicon codicon-screen-full" aria-hidden="true"></span>
+              </button>
               <button type="button" class="icon-button" :disabled="previewCapture.status === 'requesting'" :title="tr(previewCapture.status === 'active' ? 'preview.stopCapture' : 'preview.startCapture')" :aria-label="tr(previewCapture.status === 'active' ? 'preview.stopCapture' : 'preview.startCapture')" @click="togglePreviewCapture">
                 <span :class="['codicon', previewCapture.status === 'active' ? 'codicon-debug-stop' : 'codicon-device-camera']" aria-hidden="true"></span>
               </button>
@@ -586,7 +589,23 @@
               </button>
             </div>
           </header>
-          <iframe ref="previewFrame" class="preview-frame" :sandbox="PREVIEW_FRAME_SANDBOX"></iframe>
+          <form v-show="previewViewportControlsVisible" id="code-editor-preview-viewport" class="preview-viewport-controls" :aria-label="tr('preview.viewport')" @submit.prevent="applyPreviewViewport()">
+            <select :value="previewViewportPreset" :aria-label="tr('preview.viewportPreset')" @change="selectPreviewViewport($event.target.value)">
+              <option value="container">{{ tr('preview.followContainer') }}</option>
+              <option value="390x844">390 × 844</option>
+              <option value="768x1024">768 × 1024</option>
+              <option value="1440x900">1440 × 900</option>
+              <option value="custom" disabled>{{ tr('preview.customViewport') }}</option>
+            </select>
+            <input v-model.number="previewViewportWidth" type="number" min="1" :max="PREVIEW_VIEWPORT_MAX_SIZE" step="1" required :aria-label="tr('preview.viewportWidth')" />
+            <span aria-hidden="true">×</span>
+            <input v-model.number="previewViewportHeight" type="number" min="1" :max="PREVIEW_VIEWPORT_MAX_SIZE" step="1" required :aria-label="tr('preview.viewportHeight')" />
+            <button type="submit" :title="tr('preview.applyViewport')" :aria-label="tr('preview.applyViewport')"><span class="codicon codicon-check" aria-hidden="true"></span></button>
+            <output :title="tr('preview.fitScale')">{{ Math.round(previewDisplay.scale * 100) }}%</output>
+          </form>
+          <div ref="previewViewportHost" class="preview-viewport-host">
+            <iframe ref="previewFrame" class="preview-frame" :sandbox="PREVIEW_FRAME_SANDBOX"></iframe>
+          </div>
         </aside>
       </section>
 
@@ -760,7 +779,7 @@ import {
   normalizeFilePath,
 } from "@/shared/file-utils.js";
 import { MarkdownUtils } from "@/shared/markdown-utils.js";
-import { createPreviewSession, collectPreviewReferences, PREVIEW_FRAME_SANDBOX } from "@/shared/preview/index.js";
+import { createPreviewSession, collectPreviewReferences, PREVIEW_FRAME_SANDBOX, PREVIEW_VIEWPORT_MAX_SIZE } from "@/shared/preview/index.js";
 import { createPreviewWindow } from "@/shared/preview/window.js";
 import { NetworkLimit } from "@/shared/network-limit.js";
 import { enableEditorPwa } from "@/shared/pwa-install.js";
@@ -1037,6 +1056,17 @@ const previewVisible = ref(false);
 const previewPageUrl = ref("");
 const previewSession = createPreviewSession([]);
 const previewCapture = ref(previewSession.getState().capture);
+const previewViewportHost = ref(null);
+const previewViewportControlsVisible = ref(false);
+const previewViewport = ref(previewSession.getState().viewport);
+const previewDisplay = ref(previewSession.getState().display);
+const previewViewportWidth = ref(1440);
+const previewViewportHeight = ref(900);
+const previewViewportPreset = computed(() => {
+  if (previewViewport.value.mode === "container") return "container";
+  const size = `${previewViewport.value.width}x${previewViewport.value.height}`;
+  return ["390x844", "768x1024", "1440x900"].includes(size) ? size : "custom";
+});
 let detachPreviewFrame = null;
 const previewOwnerPath = ref("");
 const previewPath = ref("");
@@ -1245,9 +1275,15 @@ watch(aiSessions, handleAiSessionsChanged, { deep: true, flush: "sync" });
 watch(searchMatchCase, () => { if (searchSearched.value && searchQuery.value.trim()) runGlobalSearch(); });
 watch(() => dirtyFiles.value.map((file) => file.path).join("\0"), pruneSelectedChangePaths);
 watch(previewPaneVisible, () => { nextTick(layoutVisibleEditors); });
-watch(previewFrame, (frame) => {
+watch([previewFrame, previewViewportHost], ([frame, container]) => {
   detachPreviewFrame?.();
-  detachPreviewFrame = frame ? previewSession.attachFrame(frame) : null;
+  detachPreviewFrame = frame && container ? previewSession.attachFrame(frame, { container }) : null;
+});
+watch([() => previewViewport.value.width, () => previewViewport.value.height], ([width, height]) => {
+  if (width > 0 && height > 0) {
+    previewViewportWidth.value = width;
+    previewViewportHeight.value = height;
+  }
 });
 watch([previewVisible, previewPath, previewUrlSuffix], () => { previewTargetSerial += 1; }, { flush: "sync" });
 watch([previewPaneVisible, previewPath, previewUrlSuffix, previewContentRevision, diskTree, currentLocale], () => { void updatePreviewContent(); });
@@ -1434,6 +1470,8 @@ const previewWindow = createPreviewWindow(previewSession, {
 
 previewSession.subscribe((state) => {
   previewCapture.value = state.capture;
+  previewViewport.value = state.viewport;
+  previewDisplay.value = state.display;
   if (!state.path || !state.content || state.error) return;
   if (!previewSyncSerial && (previewPath.value !== state.path || previewUrlSuffix.value !== state.suffix)) {
     previewPath.value = state.path;
@@ -1445,8 +1483,18 @@ async function togglePreviewCapture() {
   if (previewCapture.value.status === "active") previewSession.stopCapture();
   else {
     try { await previewSession.startCapture(); }
-    catch (error) { reportError("error.openFile", error); }
+    catch (error) { if (error.name !== "AbortError") reportError("error.openFile", error); }
   }
+}
+
+async function applyPreviewViewport(value = { width: previewViewportWidth.value, height: previewViewportHeight.value }) {
+  try { await previewSession.setViewport(value); }
+  catch (error) { reportError("error.openFile", error); }
+}
+
+function selectPreviewViewport(value) {
+  const [width, height] = value.split("x").map(Number);
+  void applyPreviewViewport(value === "container" ? null : { width, height });
 }
 
 function updatePreviewContent() {
@@ -6184,6 +6232,11 @@ function getAiAllToolDefinitions() {
     { type: "function", name: "preview_get_state", description: "Get compact internal preview state, including path, revision, readiness and sharing status, without HTML. No screen sharing is required.", parameters: { type: "object", properties: {} } },
     { type: "function", name: "preview_open", requirements: ["workspace"], description: "Open a previewable workspace file in the visible internal iframe using current unsaved content and wait for rendering. Does not activate an editor tab, open external windows or create hidden sessions. No screen sharing is required.", parameters: { type: "object", properties: { path: { type: "string", description: "Required workspace-relative preview file path." } }, required: ["path"] } },
     { type: "function", name: "preview_refresh", requirements: ["workspace", "preview"], description: "Recollect current workspace files and refresh the attached internal preview, including unsaved changes. Resets temporary DOM/script changes. No screen sharing is required.", parameters: { type: "object", properties: {} } },
+    { type: "function", name: "preview_set_viewport", requirements: ["preview"], description: "Set the layout viewport of the same visible internal preview without reloading it or stopping sharing. Supply width and height in CSS pixels, or reset=true to follow the container. Large viewports are scaled down to fit the user's panel; screenshots show those displayed pixels, not full-resolution offscreen content. Returns viewport, display size and scale. Does not emulate device hardware, user agent or touch input.", parameters: { type: "object", properties: {
+      width: { type: "integer", minimum: 1, maximum: PREVIEW_VIEWPORT_MAX_SIZE, description: "Layout width in CSS pixels; required unless reset=true." },
+      height: { type: "integer", minimum: 1, maximum: PREVIEW_VIEWPORT_MAX_SIZE, description: "Layout height in CSS pixels; required unless reset=true." },
+      reset: { type: "boolean", description: "Restore container-following layout instead of a fixed viewport." }
+    } } },
     { type: "function", name: "preview_inspect", requirements: ["preview"], description: "Inspect visible DOM elements in the existing internal iframe without refreshing it. No screen sharing is required. Waits for pending host rendering; never targets external windows or hidden sessions.", parameters: { type: "object", properties: {
       selector: { type: "string", description: "Optional CSS selector; defaults to body and its descendants." },
       limit: { type: "integer", minimum: 1, maximum: 100, description: "Maximum elements, from 1 to 100; defaults to 100." },
@@ -6401,6 +6454,7 @@ async function runAiToolCall(call, args = {}, session = getActiveAiSession(), si
       case "preview_get_state": return okTool({ summary: "Internal preview state", ...getAiPreviewState() });
       case "preview_open":
       case "preview_refresh":
+      case "preview_set_viewport":
       case "preview_inspect":
       case "preview_evaluate":
       case "preview_get_errors":
@@ -6458,7 +6512,7 @@ function okTool(result) {
 
 function getAiPreviewState() {
   const { content, ...state } = previewSession.getState();
-  return { ...state, ready: state.ready && !previewSyncSerial && !previewRenderError, error: previewRenderError || state.error, visible: previewPaneVisible.value, target_path: previewPath.value, rendering: Boolean(previewSyncSerial) };
+  return { ...state, ready: state.ready && state.viewportReady && !previewSyncSerial && !previewRenderError, error: previewRenderError || state.error, visible: previewPaneVisible.value, target_path: previewPath.value, rendering: Boolean(previewSyncSerial) };
 }
 
 function awaitAiPreviewOperation(promise, signal) {
@@ -6488,6 +6542,7 @@ async function aiToolPreview(name, args, session, signal, imageInputs) {
       const state = previewSession.getState();
       if (!previewPaneVisible.value || !state.attached || !state.ready || state.error
         || state.path !== rendered.path || state.revision !== rendered.revision
+        || state.viewportRevision !== rendered.viewportRevision || !state.viewportReady
         || previewRenderSerial !== rendered.serial || previewContentRevision.value !== rendered.contentRevision || diskTree.value !== rendered.diskTree) {
         throw new Error("Preview document changed or has pending rendering; result discarded");
       }
@@ -6540,9 +6595,14 @@ async function aiToolPreview(name, args, session, signal, imageInputs) {
     assertTarget();
     if (pending === previewRenderPromise) break;
   }
+  if (name === "preview_set_viewport") {
+    await awaitAiPreviewOperation(previewSession.setViewport(args.reset === true ? null : { width: args.width, height: args.height }), signal);
+    assertTarget();
+    return { summary: "Updated internal preview viewport without reloading", ...getAiPreviewState() };
+  }
   const state = previewSession.getState();
   if (!state.ready || state.error || state.path !== previewPath.value || state.suffix !== previewUrlSuffix.value || previewSyncSerial) throw new Error(state.error || "Preview frame is not ready or has pending rendering");
-  rendered = { path: state.path, revision: state.revision, serial: previewRenderSerial, contentRevision: previewContentRevision.value, diskTree: diskTree.value };
+  rendered = { path: state.path, revision: state.revision, viewportRevision: state.viewportRevision, serial: previewRenderSerial, contentRevision: previewContentRevision.value, diskTree: diskTree.value };
   assertTarget();
   if (name === "preview_open" || name === "preview_refresh") return { summary: `Rendered preview ${state.path}`, ...getAiPreviewState() };
   if (name === "preview_get_errors") {
@@ -6583,6 +6643,7 @@ async function aiToolPreview(name, args, session, signal, imageInputs) {
   return {
     summary: destination ? `Staged unsaved preview screenshot at ${destination} and attached it to the next model turn; not written to disk` : `Attached preview screenshot of ${image.path} to the next model turn`,
     path: image.path, revision: image.revision, width: image.width, height: image.height, capturedAt: image.capturedAt,
+    viewport: image.viewport, display: image.display, viewportRevision: image.viewportRevision,
     mime_type: "image/png", size: image.blob.size, image_path: destination || null, dirty: Boolean(destination),
   };
 }
@@ -9058,7 +9119,7 @@ function getTreeIconClass(node, collapsed = false) {
 .code-editor-view .editor-stage.preview-open .ssh-terminal,
 .code-editor-view .editor-stage.preview-open .empty-state,
 .code-editor-view .editor-stage.preview-open .unsupported-preview { right: var(--preview-pane-size); }
-.code-editor-view .preview-pane { position: absolute; inset: 0 0 0 auto; z-index: 4; display: grid; grid-template-rows: 34px minmax(0, 1fr); width: var(--preview-pane-size); border-left: 1px solid var(--border); background: var(--editor); color: var(--text); box-shadow: -12px 0 24px rgb(0 0 0 / 14%); }
+.code-editor-view .preview-pane { position: absolute; inset: 0 0 0 auto; z-index: 4; display: grid; grid-template-rows: 34px auto minmax(0, 1fr); width: var(--preview-pane-size); border-left: 1px solid var(--border); background: var(--editor); color: var(--text); box-shadow: -12px 0 24px rgb(0 0 0 / 14%); }
 .code-editor-view .preview-pane-resizer { position: absolute; top: 0; left: -3px; z-index: 6; width: 6px; height: 100%; background: transparent; cursor: col-resize; }
 .code-editor-view .preview-pane-resizer:hover,
 .code-editor-view.preview-resizing .preview-pane-resizer { background: var(--accent); opacity: 0.35; }
@@ -9072,6 +9133,16 @@ function getTreeIconClass(node, collapsed = false) {
 .code-editor-view .preview-content { min-height: 0; overflow: auto; padding: 18px; background: var(--editor); color: var(--text); }
 .code-editor-view .markdown-preview { font-size: 14px; line-height: 1.55; }
 .code-editor-view .preview-frame { width: 100%; height: 100%; border: 0; background: #ffffff; color-scheme: light; }
+.code-editor-view .preview-viewport-host { position: relative; grid-row: 3; min-width: 0; min-height: 0; overflow: hidden; }
+.code-editor-view .preview-header-actions .icon-button[aria-expanded="true"] { background: var(--button-hover); color: var(--accent); }
+.code-editor-view .preview-viewport-host > .preview-frame { position: absolute; top: 0; left: 0; }
+.code-editor-view .preview-viewport-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; padding: 4px 8px; border-bottom: 1px solid var(--border); font-size: 11px; }
+.code-editor-view .preview-viewport-controls select { width: 104px; }
+.code-editor-view .preview-viewport-controls input { width: 62px; min-width: 0; }
+.code-editor-view .preview-viewport-controls input,
+.code-editor-view .preview-viewport-controls select,
+.code-editor-view .preview-viewport-controls button { height: 25px; padding: 2px 4px; border: 1px solid var(--border); border-radius: 3px; background: var(--input); color: var(--text); }
+.code-editor-view .preview-viewport-controls output { margin-left: auto; min-width: 30px; text-align: right; color: var(--muted); }
 .code-editor-view .image-preview { position: absolute; inset: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto; align-items: center; justify-items: center; gap: 18px; padding: 24px; overflow: auto; background: var(--editor); }
 .code-editor-view .image-preview > img { max-width: 100%; max-height: 100%; object-fit: contain; box-shadow: 0 12px 32px var(--shadow); }
 .code-editor-view .image-preview-meta { display: grid; justify-items: center; gap: 4px; max-width: min(680px, 100%); color: var(--muted); font-size: 12px; text-align: center; }

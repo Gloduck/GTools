@@ -247,3 +247,129 @@ test('固定预览在切换编辑文件和显式更换目标后保留原生共�
     }))).toEqual({calls: 1, connected: false, active: false, readyState: 'ended'});
     await expect(page.locator('.tab[title="main.js"]')).toHaveAttribute('aria-selected', 'true');
 });
+
+test('原生共享在固定视口切换后保持同一文档和轨道，截图仅包含当前缩放区域', async ({page}, testInfo) => {
+    await page.goto('/test/runtime-harness.html');
+    await page.evaluate(async () => {
+        const {createPreviewSession} = await import('/src/shared/preview/index.js');
+        document.body.innerHTML = `
+            <style>html, body { margin: 0; background: rgb(240,20,180); }</style>
+            <button id="capture">开始原生共享</button>
+            <div id="container" style="position:relative;width:600px;height:400px;margin:80px;background:rgb(240,20,180)">
+                <iframe style="position:absolute;border:0;width:100%;height:100%"></iframe>
+            </div>`;
+        window.nativeViewportCapture = {calls: 0, stream: null};
+        const getDisplayMedia = navigator.mediaDevices.getDisplayMedia;
+        // 只记录并转调原生接口，不模拟共享、裁剪、视频帧或轨道。
+        navigator.mediaDevices.getDisplayMedia = async function (...args) {
+            nativeViewportCapture.calls++;
+            const stream = await getDisplayMedia.apply(this, args);
+            nativeViewportCapture.stream = stream;
+            return stream;
+        };
+        window.session = createPreviewSession([{
+            path: 'index.html', mimeType: 'text/html', content: `
+                <style>
+                    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; }
+                    body { background: rgb(20,180,60); }
+                    #right { position: absolute; left: 50%; top: 0; width: 50%; height: 100%; background: rgb(30,70,220); }
+                </style>
+                <div id="right"></div>
+                <script>window.sentinel = Math.random().toString(36); window.originalDocument = document;</script>`,
+        }]);
+        window.originalViewportFrame = document.querySelector('iframe');
+        session.attachFrame(originalViewportFrame, {container: document.querySelector('#container')});
+        window.captureError = null;
+        document.querySelector('#capture').onclick = () => {
+            session.startCapture().catch((error) => { window.captureError = error.message; });
+        };
+        await session.open('index.html');
+        await session.setViewport({width: 1440, height: 900});
+        window.originalViewportState = session.getState();
+        window.originalViewportSrcdoc = originalViewportFrame.srcdoc;
+        window.originalSentinel = (await session.evaluate({code: 'return sentinel'})).value;
+    });
+
+    try {
+        await page.locator('#capture').click();
+        await expect.poll(() => page.evaluate(() => ({...session.getState().capture, failure: captureError})), {
+            timeout: 10000,
+        }).toEqual({status: 'active', error: null, failure: null});
+        await page.evaluate(() => {
+            window.originalViewportStream = nativeViewportCapture.stream;
+            window.originalViewportTrack = originalViewportStream.getVideoTracks()[0];
+        });
+        // 首次共享等待静态页面的视频帧；切换视口后直接截图，防止旧帧尺寸被等待掩盖。
+        await page.waitForTimeout(1500);
+        let viewportRevision;
+        for (const size of [{width: 1440, height: 900}, {width: 390, height: 844}]) {
+            const image = await page.evaluate(async (size) => {
+                if (size.width !== 1440) await session.setViewport(size);
+                const shot = await session.screenshot({timeoutMs: 10000});
+                const bitmap = await createImageBitmap(shot.blob);
+                const canvas = document.createElement('canvas');
+                canvas.width = bitmap.width;
+                canvas.height = bitmap.height;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(bitmap, 0, 0);
+                bitmap.close();
+                const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+                const near = (offset, color) => color.every((value, channel) => Math.abs(pixels[offset + channel] - value) <= 32);
+                let outside = 0, green = 0, blue = 0;
+                for (let offset = 0; offset < pixels.length; offset += 4) {
+                    if (near(offset, [240, 20, 180])) outside++;
+                    if (near(offset, [20, 180, 60])) green++;
+                    if (near(offset, [30, 70, 220])) blue++;
+                }
+                return {
+                    width: shot.width, height: shot.height, path: shot.path, type: shot.blob.type,
+                    viewport: shot.viewport, display: shot.display, viewportRevision: shot.viewportRevision,
+                    decoded: {width: canvas.width, height: canvas.height}, outside, green, blue,
+                    png: [...new Uint8Array(await shot.blob.arrayBuffer())],
+                };
+            }, size);
+            const scale = Math.min(1, 600 / size.width, 400 / size.height);
+            await testInfo.attach(`viewport-${size.width}x${size.height}.png`, {body: Buffer.from(image.png), contentType: 'image/png'});
+            expect(image).toMatchObject({
+                path: 'index.html', type: 'image/png', viewport: {mode: 'fixed', ...size},
+                decoded: {width: image.width, height: image.height}, outside: 0,
+            });
+            expect(Math.abs(image.width - size.width * scale)).toBeLessThanOrEqual(1);
+            expect(Math.abs(image.height - size.height * scale)).toBeLessThanOrEqual(1);
+            expect(image.display.width).toBeCloseTo(size.width * scale, 2);
+            expect(image.display.height).toBeCloseTo(size.height * scale, 2);
+            expect(image.display.scale).toBeCloseTo(scale, 8);
+            expect(image.png.slice(0, 8)).toEqual([137, 80, 78, 71, 13, 10, 26, 10]);
+            expect(image.green).toBeGreaterThan(image.width * image.height * 0.45);
+            expect(image.blue).toBeGreaterThan(image.width * image.height * 0.45);
+            if (viewportRevision !== undefined) expect(image.viewportRevision).toBeGreaterThan(viewportRevision);
+            viewportRevision = image.viewportRevision;
+            expect(await page.evaluate(async () => ({
+                calls: nativeViewportCapture.calls,
+                sameFrame: document.querySelector('iframe') === originalViewportFrame,
+                sameSource: originalViewportFrame.srcdoc === originalViewportSrcdoc,
+                sameRevision: session.getState().revision === originalViewportState.revision,
+                runtime: (await session.evaluate({
+                    code: 'return {sameSentinel: sentinel === args, sameDocument: document === originalDocument, width: innerWidth, height: innerHeight}',
+                    args: originalSentinel,
+                })).value,
+                sameStream: nativeViewportCapture.stream === originalViewportStream,
+                sameTrack: nativeViewportCapture.stream.getVideoTracks()[0] === originalViewportTrack,
+                nativeStream: originalViewportStream instanceof MediaStream,
+                active: originalViewportStream.active, track: originalViewportTrack.readyState,
+                capture: session.getState().capture,
+            }))).toMatchObject({
+                calls: 1, sameFrame: true, sameSource: true, sameRevision: true, sameStream: true, sameTrack: true,
+                nativeStream: true, active: true, track: 'live', capture: {status: 'active', error: null},
+                runtime: {sameSentinel: true, sameDocument: true, width: size.width, height: size.height},
+            });
+        }
+        await page.evaluate(() => session.stopCapture());
+        expect(await page.evaluate(() => ({
+            calls: nativeViewportCapture.calls, active: originalViewportStream.active,
+            track: originalViewportTrack.readyState, capture: session.getState().capture,
+        }))).toEqual({calls: 1, active: false, track: 'ended', capture: {status: 'idle', error: null}});
+    } finally {
+        await page.evaluate(() => session.dispose());
+    }
+});

@@ -2,6 +2,7 @@ import {expect, test} from '@playwright/test';
 
 test.beforeEach(async ({page}) => {
     await page.goto('/codeEditor');
+    await expect(page.locator('.monaco-host .monaco-editor').first()).toBeAttached();
     await seedOpfs(page, {
         'alpha.txt': 'alpha',
         'archive/placeholder.txt': '',
@@ -126,6 +127,7 @@ async function createUnsavedFile(page, path) {
 
 async function seedOpfs(page, files) {
     await page.evaluate(async (entries) => {
+        Object.defineProperty(navigator.storage, 'persisted', {configurable: true, value: async () => true});
         const root = await navigator.storage.getDirectory();
         for await (const [name] of root.entries()) await root.removeEntry(name, {recursive: true});
         for (const [path, content] of Object.entries(entries)) {

@@ -30,7 +30,9 @@ test.beforeEach(async ({page}) => {
         });
     });
     await page.goto('/codeEditor');
+    await expect(page.locator('.monaco-host .monaco-editor').first()).toBeAttached();
     await page.evaluate(async (path) => {
+        Object.defineProperty(navigator.storage, 'persisted', {configurable: true, value: async () => true});
         const root = await navigator.storage.getDirectory();
         for await (const [name] of root.entries()) await root.removeEntry(name, {recursive: true});
         const file = await root.getFileHandle('home.html', {create: true});

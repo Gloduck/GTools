@@ -112,7 +112,9 @@ test('打开文件夹保持原有的不支持提示逻辑', async ({page}) => {
 
 async function openSeededOpfs(page) {
     await page.goto('/codeEditor');
+    await expect(page.locator('.monaco-host .monaco-editor').first()).toBeAttached();
     await page.evaluate(async () => {
+        Object.defineProperty(navigator.storage, 'persisted', {configurable: true, value: async () => true});
         const root = await navigator.storage.getDirectory();
         for await (const [name] of root.entries()) await root.removeEntry(name, {recursive: true});
         await writeFile(root, 'alpha.txt', 'alpha');

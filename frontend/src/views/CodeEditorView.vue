@@ -2659,9 +2659,25 @@ async function openBrowserFolder() {
     return;
   }
   try {
+    let persistent = false;
+    let persistenceWarning = "";
+    try {
+      if (typeof navigator.storage.persisted === "function") persistent = await navigator.storage.persisted();
+      if (!persistent) {
+        if (typeof navigator.storage.persist !== "function") {
+          persistenceWarning = "warning.opfsPersistenceUnsupported";
+        } else {
+          persistent = await navigator.storage.persist();
+          if (!persistent) persistenceWarning = "warning.opfsPersistenceDenied";
+        }
+      }
+    } catch {
+      persistenceWarning = "warning.opfsPersistenceFailed";
+    }
     const handle = markRaw(await navigator.storage.getDirectory());
     await activateWorkspace(handle, "OPFS", "opfs");
-    setStatus(tr("status.openedFolder", { name: "OPFS" }), tr("status.browserStorage"));
+    setStatus(tr("status.openedFolder", { name: "OPFS" }), tr(persistent ? "status.browserStoragePersistent" : "status.browserStorage"));
+    if (persistenceWarning) await showAlert(tr(persistenceWarning));
   } catch (error) {
     reportError("error.openFolder", error);
   }

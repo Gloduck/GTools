@@ -1,5 +1,6 @@
 package cn.gloduck.api.config;
 
+import cn.gloduck.api.entity.config.CorsConfig;
 import cn.gloduck.api.entity.config.GithubConfig;
 import cn.gloduck.api.entity.config.JrebelConfig;
 import cn.gloduck.api.entity.config.ProxyRequestConfig;
@@ -46,6 +47,12 @@ public class ConfigProducer {
     @Produces
     public SshConfig sshConfig() {
         return convert(rootNode().path("ssh"), SshConfig.class);
+    }
+
+    /** 从配置文件的 cors 节点创建跨域配置对象。 */
+    @Produces
+    public CorsConfig corsConfig() {
+        return convert(rootNode().path("cors"), CorsConfig.class);
     }
 
     /** 从配置文件的 webrtc 节点创建 WebRTC 配置对象。 */

@@ -192,12 +192,27 @@ Main configuration sections:
 - `frontendPath`: external frontend directory used when embedded resources are unavailable; defaults to `frontend`
 - `staticRoutes`: URL route and directory mappings for external static files
 - `maxBodySize`: request body limit
+- `cors`: allows frontends from other origins to call the backend API
 - `log`: log level, output file, and maximum file size
 - `jrebel`: JRebel license response settings
 - `torrent`: source URLs, proxies, timeouts, and Cloudflare bypass service
 - `proxyrequest`: request proxy and private-network policy
 - `github`: popular repository list
 - `ssh`: security key, connection limit, and heartbeat timeout
+
+CORS example:
+
+```json
+{
+  "cors": {
+    "enabled": true,
+    "allowedOrigins": ["https://tools.example.com", "http://localhost:5173"],
+    "maxAgeSeconds": 86400
+  }
+}
+```
+
+Each `allowedOrigins` entry must be a full origin (scheme, host, and port) without a path. `"*"` allows any website to call the backend and is not recommended when SSH is enabled. Browsers block an HTTPS page from calling an HTTP backend as mixed content, so the backend also needs HTTPS/WSS in that case.
 
 Logging example:
 

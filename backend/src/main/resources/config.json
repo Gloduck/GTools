@@ -8,6 +8,11 @@
     }
   ],
   "maxBodySize": "100M",
+  "cors": {
+    "enabled": false,
+    "allowedOrigins": [],
+    "maxAgeSeconds": 86400
+  },
   "log": {
     "level": "INFO",
     "file": "logs/app.log",

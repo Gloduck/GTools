@@ -192,12 +192,27 @@ bash script/remote-manage.sh status
 - `frontendPath`：内嵌前端不存在时使用的外部前端目录，默认 `frontend`
 - `staticRoutes`：外部静态文件的 URL 路由与目录映射列表
 - `maxBodySize`：请求体大小限制
+- `cors`：允许其他来源的前端跨域访问后端 API
 - `log`：日志级别、文件路径和单文件大小
 - `jrebel`：JRebel 许可证响应参数
 - `torrent`：各磁力来源、代理、超时和 Cloudflare 绕过服务
 - `proxyrequest`：请求代理及私有网络访问策略
 - `github`：热门仓库列表
 - `ssh`：SSH 安全密钥、连接上限和心跳超时
+
+跨域示例：
+
+```json
+{
+  "cors": {
+    "enabled": true,
+    "allowedOrigins": ["https://tools.example.com", "http://localhost:5173"],
+    "maxAgeSeconds": 86400
+  }
+}
+```
+
+`allowedOrigins` 需要填写完整来源（协议、域名和端口），不要带路径。`"*"` 会允许任意网站调用后端，开启 SSH 等能力时不建议使用。HTTPS 页面连接 HTTP 后端会被浏览器拦截为混合内容，此时后端也需要提供 HTTPS/WSS。
 
 日志示例：
 

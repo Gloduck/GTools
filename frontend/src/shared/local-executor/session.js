@@ -4,7 +4,7 @@ import {isLocalTaskFinished, LocalExecutorClient, normalizeLocalWaitSeconds} fro
 // 仅将非敏感展示状态放入响应式对象；凭据不进入设置、
 // 会话序列化、模型上下文、URL 或组件属性。
 export function createLocalExecutorSession({onFinished = () => {}, heartbeatMs = 5000} = {}) {
-    const state = reactive({connected: false, connecting: false, reachable: false, shell: '', info: null, url: '', error: '', whitelistText: '', bindWorkspace: false, tasks: []});
+    const state = reactive({connected: false, connecting: false, reachable: false, shell: '', info: null, url: '', error: '', whitelistText: '', autoApprove: false, bindWorkspace: false, tasks: []});
     let client = null;
     let generation = 0;
     let timer = null;
@@ -115,7 +115,8 @@ export function createLocalExecutorSession({onFinished = () => {}, heartbeatMs =
         client = null;
         owners.clear();
         finished.clear();
-        Object.assign(state, {connected: false, connecting: false, reachable: false, shell: '', info: null, url: '', error: '', whitelistText: '', bindWorkspace: false, tasks: []});
+        // 免审批仅属于本次连接，主动断开后不沿用授权。
+        Object.assign(state, {connected: false, connecting: false, reachable: false, shell: '', info: null, url: '', error: '', whitelistText: '', autoApprove: false, bindWorkspace: false, tasks: []});
     }
     return {
         state,
@@ -130,7 +131,7 @@ export function createLocalExecutorSession({onFinished = () => {}, heartbeatMs =
                 const info = await candidate.info();
                 if (version !== generation) return;
                 client = candidate;
-                Object.assign(state, {connected: true, reachable: true, shell: info.shell, info, url: candidate.url, whitelistText: ''});
+                Object.assign(state, {connected: true, reachable: true, shell: info.shell, info, url: candidate.url, whitelistText: '', autoApprove: false});
                 lastHeartbeat = Date.now();
                 timer = setTimeout(poll, 1000);
             } catch (error) {

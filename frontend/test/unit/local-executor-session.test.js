@@ -79,7 +79,7 @@ test('场景：提交响应丢失时保留任务编号，不自动重跑或取�
     } finally { session.disconnect({cancel: false}); globalThis.fetch = originalFetch; }
 });
 
-test('场景：临时断线保留白名单配置，无法连接时禁止执行', async () => {
+test('场景：临时断线保留白名单和免审批配置，无法连接时禁止执行', async () => {
     const originalFetch = globalThis.fetch;
     let online = true;
     globalThis.fetch = async () => { if (!online) throw new TypeError('模拟服务关闭'); return response(info); };
@@ -92,13 +92,16 @@ test('场景：临时断线保留白名单配置，无法连接时禁止执行',
     try {
         await session.connect(connection);
         session.state.whitelistText = 'pwd';
+        session.state.autoApprove = true;
         online = false;
         await waitFor(() => !session.state.reachable);
         assert.equal(session.state.whitelistText, 'pwd');
+        assert.equal(session.state.autoApprove, true);
         await assert.rejects(session.execute({command: 'pwd'}, {sessionId: 'a'}), /not connected/);
         online = true;
         await waitFor(() => session.state.reachable);
         assert.equal(session.state.whitelistText, 'pwd');
+        assert.equal(session.state.autoApprove, true);
     } finally { session.dispose(); globalThis.fetch = originalFetch; }
 });
 
@@ -264,7 +267,7 @@ test('场景：同步结果超过前端输出缓存时明确标记截断并保�
     } finally { session.disconnect({cancel: false}); globalThis.fetch = originalFetch; }
 });
 
-test('场景：连接之间的审批白名单相互独立，切换连接后不会继承上一条授权', async () => {
+test('场景：连接之间的白名单和免审批设置相互独立，切换连接后不会继承上一条授权', async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = async () => response(info);
     const first = createLocalExecutorSession();
@@ -273,13 +276,18 @@ test('场景：连接之间的审批白名单相互独立，切换连接后不�
         await assert.rejects(first.execute({command: 'pwd'}, {sessionId: 'a'}), /not connected/);
         await first.connect(connection);
         await second.connect({...connection, url: 'http://127.0.0.1:32101', token: 'b'.repeat(43)});
+        assert.equal(first.state.autoApprove, false);
+        first.state.autoApprove = true;
         first.state.whitelistText = 'pwd\nls';
         second.state.whitelistText = 'Get-Location';
         assert.equal(first.state.whitelistText, 'pwd\nls');
         assert.equal(second.state.whitelistText, 'Get-Location');
+        assert.equal(second.state.autoApprove, false);
         first.disconnect({cancel: false});
+        assert.equal(first.state.autoApprove, false);
         await first.connect({...connection, url: 'http://127.0.0.1:32102', token: 'c'.repeat(43)});
         assert.equal(first.state.whitelistText, '');
+        assert.equal(first.state.autoApprove, false);
         assert.equal(second.state.whitelistText, 'Get-Location');
     } finally { first.dispose(); second.dispose(); globalThis.fetch = originalFetch; }
 });

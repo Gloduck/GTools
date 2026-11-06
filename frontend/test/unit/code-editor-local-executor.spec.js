@@ -151,6 +151,75 @@ test('场景：低风险白名单命令直接执行，重新连接自动回填�
     await expect(panel.getByLabel('AI 白名单主命令')).toHaveValue('printf');
 });
 
+test('场景：免审批直接执行白名单外高风险命令，未保存文件保持原样，重新连接恢复审批', async ({page}) => {
+    // 使用无副作用的命令并申报高风险，验证审批分支而不执行危险操作。
+    await setup(page, "printf '免审批执行成功'", {high_risk: true});
+    await page.evaluate(() => Object.defineProperty(navigator.storage, 'persisted', {configurable: true, value: async () => true}));
+    await page.getByRole('button', {name: '资源管理器', exact: true}).click();
+    await page.getByRole('button', {name: '打开浏览器文件夹', exact: true}).click();
+    await page.locator('.file-tree').dispatchEvent('contextmenu', {clientX: 240, clientY: 240});
+    await page.getByRole('menuitem', {name: '新建文件', exact: true}).click();
+    const createDialog = page.getByRole('dialog', {name: '新建文件', exact: true});
+    await createDialog.getByRole('textbox').fill('未保存.txt');
+    await createDialog.getByRole('checkbox', {name: '立即应用到磁盘'}).uncheck();
+    await createDialog.getByRole('button', {name: '新建文件', exact: true}).click();
+    await expect(page.locator('.tab[title="未保存.txt"] .dirty-dot')).toHaveText('•');
+    await page.getByRole('button', {name: 'AI 助手', exact: true}).click();
+    const panel = await connect(page);
+    const autoApprove = panel.getByRole('checkbox', {name: '执行命令免审批', exact: true});
+    await expect(autoApprove).not.toBeChecked();
+    await panel.getByLabel('AI 白名单主命令').fill('pwd');
+    await autoApprove.check();
+    await expect(panel.getByLabel('AI 白名单主命令')).toBeDisabled();
+    await ask(page);
+    await expect(page.locator('.ai-message-assistant')).toContainText('本机命令请求已处理');
+    await expect(page.getByRole('dialog', {name: '执行命令', exact: true})).toHaveCount(0);
+    const result = JSON.parse(requests[1].input.find((item) => item.type === 'function_call_output').output);
+    expect(result).toMatchObject({ok: true, status: 'completed', exit_code: 0});
+    expect(result.output).toContain('免审批执行成功');
+    await expect(page.locator('.tab[title="未保存.txt"] .dirty-dot')).toHaveText('•');
+    expect(await page.evaluate(async () => {
+        const root = await navigator.storage.getDirectory();
+        for await (const name of root.keys()) if (name === '未保存.txt') return true;
+        return false;
+    })).toBe(false);
+
+    await page.getByRole('button', {name: '执行器连接', exact: true}).click();
+    await expect(autoApprove).toBeChecked();
+    await expect(panel.getByLabel('AI 白名单主命令')).toHaveValue('pwd');
+    await panel.getByRole('button', {name: '断开并请求取消任务'}).click();
+    await panel.getByLabel('终端显示的连接 JSON').fill(JSON.stringify(connection));
+    await panel.getByRole('button', {name: '连接执行器', exact: true}).click();
+    await expect(autoApprove).not.toBeChecked();
+    await expect(panel.getByLabel('AI 白名单主命令')).toBeEnabled();
+    await expect(panel.getByLabel('AI 白名单主命令')).toHaveValue('pwd');
+});
+
+for (const scenario of [
+    {name: '白名单外命令', whitelist: 'pwd', highRisk: false},
+    {name: '高风险命令', whitelist: 'printf', highRisk: true},
+]) {
+    test(`场景：取消免审批后${scenario.name}恢复确认，模型参数不能开启免审批`, async ({page}) => {
+        await setup(page, "printf '不应执行'", {high_risk: scenario.highRisk, auto_approve: true});
+        let submissions = 0;
+        page.on('request', (request) => {
+            if (request.url() === connection.url + '/v1/tasks' && request.method() === 'POST') submissions++;
+        });
+        const panel = await connect(page);
+        await panel.getByLabel('AI 白名单主命令').fill(scenario.whitelist);
+        const autoApprove = panel.getByRole('checkbox', {name: '执行命令免审批', exact: true});
+        await autoApprove.check();
+        await autoApprove.uncheck();
+        await expect(panel.getByLabel('AI 白名单主命令')).toHaveValue(scenario.whitelist);
+        await ask(page);
+        const approval = page.getByRole('dialog', {name: '执行命令', exact: true});
+        await expect(approval).toContainText(scenario.name);
+        await approval.getByRole('button', {name: '取消', exact: true}).click();
+        await expect(page.locator('.ai-message-assistant')).toContainText('本机命令请求已处理');
+        expect(submissions).toBe(0);
+    });
+}
+
 
 test('场景：AI Agent 顶部按钮打开配置，关闭弹窗保持连接，服务不可达时显示异常状态', async ({page}) => {
     await setup(page, 'pwd');
@@ -272,6 +341,7 @@ test('场景：设置链接只携带白名单，导入后重新连接直接回�
     await setup(page, 'pwd');
     const panel = await connect(page);
     await panel.getByLabel('AI 白名单主命令').fill('pwd\nls\npwd');
+    await panel.getByRole('checkbox', {name: '执行命令免审批', exact: true}).check();
     await panel.getByRole('button', {name: '关闭', exact: true}).click();
     await page.evaluate(() => Object.defineProperty(navigator, 'clipboard', {configurable: true, value: {
         writeText: async (value) => { window.exportedSettingsUrl = value; },
@@ -288,7 +358,7 @@ test('场景：设置链接只携带白名单，导入后重新连接直接回�
 
     // 即使外部设置带入了连接状态，也只能导入可复用白名单。
     snapshot.localExecutor = {whitelist: ['Get-WinEvent', 'Get-NetTCPConnection'], ...connection,
-        connected: true, shell: 'cmd', bindWorkspace: true, tasks: [{id: '不应保存'}]};
+        connected: true, shell: 'cmd', autoApprove: true, bindWorkspace: true, tasks: [{id: '不应保存'}]};
     const importUrl = '/codeEditor#settings=' + deflateRawSync(Buffer.from(JSON.stringify(snapshot))).toString('base64url');
     await page.goto(importUrl);
     // 只修改 hash 属于同页导航；实际导入在打开页面时检查。
@@ -300,6 +370,7 @@ test('场景：设置链接只携带白名单，导入后重新连接直接回�
     await expect(page.locator('.local-status-button')).toHaveClass(/local-status-disconnected/);
     await connect(page);
     await expect(panel.getByLabel('AI 白名单主命令')).toHaveValue('Get-WinEvent\nGet-NetTCPConnection');
+    await expect(panel.getByRole('checkbox', {name: '执行命令免审批', exact: true})).not.toBeChecked();
 });
 
 

@@ -5,6 +5,7 @@
 命令使用启动服务的当前用户权限执行。
 """
 import argparse
+import base64
 import codecs
 import ctypes
 import hashlib
@@ -30,6 +31,17 @@ MAX_BODY = 128 * 1024
 MAX_OUTPUT_CHARS = 256 * 1024
 TASK_ID = re.compile(r"^[a-zA-Z0-9_-]{8,80}$")
 FINAL = {"completed", "failed", "cancelled"}
+
+
+def powershell_arguments(command):
+    # 使用终端默认格式化管道，确保对象和后续文本在退出前完成输出。
+    # 文本模式保留错误和警告；关闭非交互进度，避免 CLIXML 混入任务日志。
+    script = ("[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false); "
+              "$env:PYTHONIOENCODING='utf-8'; $ProgressPreference='SilentlyContinue'; "
+              "$global:LASTEXITCODE=0; & {\n" + command
+              + "\n} | Out-Default; if (-not $?) { exit 1 }; exit $LASTEXITCODE")
+    return ["-NoLogo", "-NoProfile", "-NonInteractive", "-OutputFormat", "Text",
+            "-EncodedCommand", base64.b64encode(script.encode("utf-16le")).decode()]
 
 
 class ApiError(Exception):
@@ -250,7 +262,6 @@ class Task:
                     if key.startswith("GTOOLS_LOCAL_"):
                         del env[key]
                 if os.name == "nt":
-                    import base64
                     system = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32")
                     if self.shell == "cmd":
                         # 批处理文件原样保存多行命令，避免再次经过 Python 的 argv 引号转换。
@@ -261,8 +272,7 @@ class Task:
                         argv = '"%s" /d /s /c ""%s""' % (executable, self.script_path)
                     else:
                         executable = os.path.join(system, "WindowsPowerShell", "v1.0", "powershell.exe")
-                        script = "[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false); $env:PYTHONIOENCODING='utf-8'; $global:LASTEXITCODE=0; & {\n" + self.command + "\n}; if (-not $?) { exit 1 }; exit $LASTEXITCODE"
-                        argv = [executable, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", base64.b64encode(script.encode("utf-16le")).decode()]
+                        argv = [executable, *powershell_arguments(self.command)]
                     self.process = subprocess.Popen(argv, executable=executable, cwd=self.cwd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, creationflags=0x4 | 0x08000000, bufsize=0)
                     self.job = WindowsJob(self.process)
                 else:

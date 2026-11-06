@@ -201,6 +201,14 @@ try { $listener.Start() } catch {
 $tasks = @{}
 $utf8 = New-Object Text.UTF8Encoding($false)
 
+function New-PowerShellTaskArguments([string]$Command) {
+    # 显式完成终端默认格式化，避免退出时丢失对象及后续文本。
+    # 普通文本保留错误和警告，非交互进度不写入任务日志。
+    $scriptText = '[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false); $env:PYTHONIOENCODING="utf-8"; $ProgressPreference="SilentlyContinue"; $global:LASTEXITCODE=0; & {' + "`n" + $Command + "`n" + '} | Out-Default; if (-not $?) { exit 1 }; exit $LASTEXITCODE'
+    $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($scriptText))
+    return '-NoLogo -NoProfile -NonInteractive -OutputFormat Text -EncodedCommand '+$encoded
+}
+
 function Fail-Request([int]$Status, [string]$Message) {
     $ex = New-Object Exception($Message)
     $ex.Data['HttpStatus'] = $Status
@@ -315,10 +323,8 @@ try {
                         $application = Join-Path $env:SystemRoot 'System32/cmd.exe'
                         $arguments = '/d /s /c ""'+$task.ScriptPath+'""'
                     } else {
-                        $scriptText = '[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false); $env:PYTHONIOENCODING="utf-8"; $global:LASTEXITCODE=0; & {' + "`n" + $body.command + "`n" + '}; if (-not $?) { exit 1 }; exit $LASTEXITCODE'
-                        $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($scriptText))
                         $application = Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/powershell.exe'
-                        $arguments = '-NoLogo -NoProfile -NonInteractive -EncodedCommand '+$encoded
+                        $arguments = New-PowerShellTaskArguments $body.command
                     }
                     $tasks[$body.id]=$task
                     $task.Start($application,$arguments)

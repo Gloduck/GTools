@@ -85,6 +85,21 @@ try {
             [void](Request-Api GET /v1/info -Status 401 -Token wrong)
             [void](Request-Api GET /v1/info -Status 403 -RequestOrigin 'https://evil.example')
             [void](Request-Api POST /v1/tasks @{id='invalid-shell'; command='echo hello'; shell=@()} -Status 400)
+            # 覆盖目录查询的对象输出，避免只测试 Write-Output 而漏掉默认格式化丢失。
+            $fixture = Join-Path $directory 'gtools-object-check.txt'
+            [IO.File]::WriteAllText($fixture,'测试对象输出',$utf8)
+            $id = [Guid]::NewGuid().ToString('N')
+            $command = "Get-ChildItem -LiteralPath . -Force | Select-Object Name,Mode; Write-Output ('FILE_EXISTS=' + (Test-Path -LiteralPath './gtools-object-check.txt')); Write-Progress -Activity '不应显示的进度' -Status '执行中'; Write-Warning '中文警告'; Write-Error '中文错误'; Write-Output '后续文本'"
+            [void](Request-Api POST /v1/tasks @{id=$id; command=$command; shell='powershell'; cwd=$directory})
+            $task = Wait-Task $id
+            Assert-True ($task.exit_code -eq 0 -and $task.status -eq 'completed') '对象输出任务正常结束'
+            foreach ($text in @('Name','Mode','gtools-object-check.txt','FILE_EXISTS=True','中文警告','中文错误','后续文本')) {
+                Assert-True ($task.output.Contains($text)) "对象及普通文本完整输出：$text"
+            }
+            foreach ($text in @('#< CLIXML','<Objs ','不应显示的进度',[string][char]0xFFFD)) {
+                Assert-True (-not $task.output.Contains($text)) "输出不包含序列化进度或乱码：$text"
+            }
+            Write-Output "场景通过：$runtime 对象格式化、后续文本、中文错误及进度处理"
             foreach ($shell in @('powershell','cmd')) {
                 $id = [Guid]::NewGuid().ToString('N')
                 $command = if ($shell -eq 'cmd') {

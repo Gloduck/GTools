@@ -86,7 +86,7 @@ export function normalizeLocalCommand({command, cwd = '', reason, shell = '', wa
     return Object.freeze({command, cwd, reason: reason.trim(), shell, commands: Object.freeze(normalizeMainCommands(commands)), high_risk, wait_seconds: normalizeLocalWaitSeconds(wait_seconds)});
 }
 
-export function buildLocalStartupCommand({platform, assetBase, origin, terminal = 'powershell', androidRoot = false, token = '', listenAddress = '127.0.0.1', port = 0, publicUrl = ''}) {
+export function buildLocalStartupCommand({platform, assetBase, origin, terminal = 'powershell', token = '', listenAddress = '127.0.0.1', port = 0, publicUrl = ''}) {
     const base = new URL(assetBase);
     if (base.protocol !== 'https:' && !(base.protocol === 'http:' && ['127.0.0.1', 'localhost'].includes(base.hostname))) throw new Error('Serve startup scripts over HTTPS (or localhost for development)');
     const listen = normalizeExecutorListenAddress(listenAddress);
@@ -116,9 +116,7 @@ export function buildLocalStartupCommand({platform, assetBase, origin, terminal 
         if (advertised || customToken) args.push(sh(advertised));
         if (customToken) args.push(sh(customToken));
         const launch = `sh -s -- ${args.join(' ')}`;
-        // su -c 增加一层 Shell 解析，转义外层双引号，保持 URL 和参数原样传入。
-        const runner = androidRoot === true ? `su -c "${launch.replace(/["\\$`]/g, '\\$&')}"` : launch;
-        return `curl -fsSL ${sh(`${url}/bootstrap-android.sh`)} | ${runner}`;
+        return `curl -fsSL ${sh(`${url}/bootstrap-android.sh`)} | ${launch}`;
     }
     // 启动参数只来自页面配置，不拼接模型提供的命令。
     return `curl -fsSL ${sh(`${url}/bootstrap.sh`)} | sh -s -- ${sh(url)} ${sh(webOrigin)} ${sh(listen)} ${port} ${sh(advertised)}${customToken ? ` ${sh(customToken)}` : ''}`;

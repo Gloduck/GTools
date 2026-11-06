@@ -699,7 +699,6 @@
             <label v-if="localDialog.platform === 'windows'">{{ tr('local.startupTerminal') }}
               <select v-model="localDialog.terminal"><option value="powershell">PowerShell</option><option value="cmd">CMD</option></select>
             </label>
-            <label v-if="localDialog.platform === 'android'" class="local-check"><input v-model="localDialog.androidRoot" type="checkbox" />{{ tr('local.androidRoot') }}</label>
             <label>{{ tr('local.listenAddress') }}<input v-model="localDialog.listenAddress" type="text" autocomplete="off" spellcheck="false" placeholder="127.0.0.1" /></label>
             <label>{{ tr('local.port') }}<input v-model.number="localDialog.port" type="number" min="0" max="65535" step="1" /></label>
             <label>{{ tr('local.token') }}<input v-model="localDialog.token" type="password" autocomplete="off" spellcheck="false" :placeholder="tr('local.tokenPlaceholder')" /></label>
@@ -1175,7 +1174,7 @@ const previewContentRevision = ref(0);
 const activeView = ref("explorer");
 const localExecutor = createLocalExecutorSession({ onFinished: refreshAfterLocalTask });
 const localIsWindows = /Windows/i.test(navigator.userAgent);
-const localDialog = reactive({ visible: false, platform: localIsWindows ? 'windows' : /Android/i.test(navigator.userAgent) ? 'android' : 'unix', terminal: 'powershell', androidRoot: false, token: '', listenAddress: '127.0.0.1', port: 0, template: localIsWindows ? 'powershell' : 'sh', connection: '', copied: false });
+const localDialog = reactive({ visible: false, platform: localIsWindows ? 'windows' : /Android/i.test(navigator.userAgent) ? 'android' : 'unix', terminal: 'powershell', token: '', listenAddress: '127.0.0.1', port: 0, template: localIsWindows ? 'powershell' : 'sh', connection: '', copied: false });
 const localDialogElement = ref(null);
 const localStatusButton = ref(null);
 const localActiveTasks = computed(() => localExecutor.state.tasks.filter((task) => !isLocalTaskFinished(task)));
@@ -1187,11 +1186,11 @@ const localConnectionStatus = computed(() => localExecutor.state.connecting ? 'c
 const localStartup = computed(() => {
   try {
     if (['0.0.0.0', '::'].includes(localDialog.listenAddress.trim())) throw new Error(tr('local.specificAddress'));
-    return { command: buildLocalStartupCommand({ platform: localDialog.platform, terminal: localDialog.terminal, androidRoot: localDialog.androidRoot, token: localDialog.token, origin: location.origin, listenAddress: localDialog.listenAddress, port: localDialog.port,
+    return { command: buildLocalStartupCommand({ platform: localDialog.platform, terminal: localDialog.terminal, token: localDialog.token, origin: location.origin, listenAddress: localDialog.listenAddress, port: localDialog.port,
       assetBase: new URL(`${import.meta.env.BASE_URL}local-executor/v1/`, location.origin).href }), error: '' };
   } catch (error) { return { command: '', error: error.message }; }
 });
-watch(() => [localDialog.platform, localDialog.terminal, localDialog.androidRoot, localDialog.listenAddress, localDialog.port, localDialog.token], () => { localDialog.copied = false; });
+watch(() => [localDialog.platform, localDialog.terminal, localDialog.listenAddress, localDialog.port, localDialog.token], () => { localDialog.copied = false; });
 watch(() => localExecutor.state.shell, (shell) => { if (Object.hasOwn(COMMAND_WHITELIST_TEMPLATES, shell)) localDialog.template = shell; });
 const sidePanelVisible = ref(true);
 const sidebarResizing = ref(false);

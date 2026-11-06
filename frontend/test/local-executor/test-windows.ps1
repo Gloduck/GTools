@@ -8,6 +8,7 @@ $ErrorActionPreference = 'Stop'
 if ($env:OS -ne 'Windows_NT') { throw '此测试需要真实 Windows；其他系统请运行 check-powershell.ps1 和 test-download.ps1。' }
 $ExecutorRoot = (Resolve-Path -LiteralPath $ExecutorRoot).ProviderPath
 & ([scriptblock]::Create([IO.File]::ReadAllText((Join-Path $TestRoot 'check-powershell.ps1')))) -ExecutorRoot $ExecutorRoot -TestRoot $TestRoot
+& ([scriptblock]::Create([IO.File]::ReadAllText((Join-Path $TestRoot 'test-powershell-lifecycle.ps1')))) -ExecutorRoot $ExecutorRoot
 & ([scriptblock]::Create([IO.File]::ReadAllText((Join-Path $TestRoot 'test-download.ps1')))) -ExecutorRoot $ExecutorRoot
 $utf8 = New-Object Text.UTF8Encoding($false)
 $origin = 'https://local-executor-test.example'
@@ -100,6 +101,25 @@ try {
                 Assert-True (-not $task.output.Contains($text)) "输出不包含序列化进度或乱码：$text"
             }
             Write-Output "场景通过：$runtime 对象格式化、后续文本、中文错误及进度处理"
+            # 任务状态遵循原生 PowerShell CLI，不用历史 LASTEXITCODE 推断最后一条命令。
+            $nativeFailure = '& '+(Quote-Ps (Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/powershell.exe'))+" -NoLogo -NoProfile -NonInteractive -Command 'exit 9'"
+            $resultCases = @(
+                @{Name='最后读取失败'; Command="Get-Content -LiteralPath './gtools-does-not-exist'"; Code=1; Text='gtools-does-not-exist'},
+                @{Name='非终止错误后继续成功'; Command="Write-Error '预期错误'; Write-Output '恢复成功'"; Code=0; Text='恢复成功'},
+                @{Name='静默失败仍返回失败'; Command="`$ErrorActionPreference='SilentlyContinue'; Get-Content -LiteralPath './gtools-does-not-exist'"; Code=1; Text=''},
+                @{Name='外部失败遵循CLI状态'; Command=$nativeFailure; Code=1; Text=''},
+                @{Name='显式传出外部原始退出码'; Command=$nativeFailure+'; exit $LASTEXITCODE'; Code=9; Text=''},
+                @{Name='外部失败后继续成功'; Command=$nativeFailure+"; Write-Output '恢复成功'"; Code=0; Text='恢复成功'}
+            )
+            foreach ($case in $resultCases) {
+                $id = [Guid]::NewGuid().ToString('N')
+                [void](Request-Api POST /v1/tasks @{id=$id; command=$case.Command; shell='powershell'; cwd=$directory})
+                $task = Wait-Task $id
+                $expectedStatus = if ($case.Code -eq 0) { 'completed' } else { 'failed' }
+                Assert-True ($task.exit_code -eq $case.Code -and $task.status -eq $expectedStatus) ("PowerShell 状态："+$case.Name)
+                if ($case.Text) { Assert-True ($task.output.Contains($case.Text)) ("PowerShell 输出："+$case.Name) }
+            }
+            Write-Output "场景通过：$runtime PowerShell 原生退出状态及用户错误策略"
             foreach ($shell in @('powershell','cmd')) {
                 $id = [Guid]::NewGuid().ToString('N')
                 $command = if ($shell -eq 'cmd') {

@@ -8,6 +8,7 @@ import argparse
 import base64
 import codecs
 import ctypes
+from collections import deque
 import hashlib
 import hmac
 import json
@@ -29,17 +30,18 @@ from urllib.parse import parse_qs, urlsplit
 VERSION = 1
 MAX_BODY = 128 * 1024
 MAX_OUTPUT_CHARS = 256 * 1024
+MAX_LOG_CHARS = 256 * 1024
 TASK_ID = re.compile(r"^[a-zA-Z0-9_-]{8,80}$")
 FINAL = {"completed", "failed", "cancelled"}
 
 
 def powershell_arguments(command):
-    # 使用终端默认格式化管道，确保对象和后续文本在退出前完成输出。
-    # 文本模式保留错误和警告；关闭非交互进度，避免 CLIXML 混入任务日志。
+    # 正文在顶层原样执行，由 PowerShell 自己完成格式化并确定最终退出状态。
+    # 不追加命令或外层脚本块，避免覆盖 $?、沿用残留 LASTEXITCODE 或提前退出。
+    # 原生程序非零结果按 CLI 返回 1；用户可用 exit $LASTEXITCODE 显式传出原值。
     script = ("[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false); "
               "$env:PYTHONIOENCODING='utf-8'; $ProgressPreference='SilentlyContinue'; "
-              "$global:LASTEXITCODE=0; & {\n" + command
-              + "\n} | Out-Default; if (-not $?) { exit 1 }; exit $LASTEXITCODE")
+              "\n" + command)
     return ["-NoLogo", "-NoProfile", "-NonInteractive", "-OutputFormat", "Text",
             "-EncodedCommand", base64.b64encode(script.encode("utf-16le")).decode()]
 
@@ -47,6 +49,70 @@ def powershell_arguments(command):
 class ApiError(Exception):
     def __init__(self, status, message):
         self.status, self.message = status, message
+
+
+class TerminalLog:
+    """终端只是输出副本；有界队列避免慢终端阻塞任务或无限占用内存。"""
+    def __init__(self, get_stream):
+        self.get_stream = get_stream
+        self.condition = threading.Condition()
+        self.pending = deque()
+        self.pending_chars = 0
+        self.dropped_chars = 0
+        self.writing = False
+        self.closed = False
+        self.worker = threading.Thread(target=self.run, daemon=True)
+        self.worker.start()
+
+    def append(self, text):
+        with self.condition:
+            if self.closed:
+                return
+            if len(text) > MAX_LOG_CHARS:
+                self.dropped_chars += len(text) - MAX_LOG_CHARS
+                text = text[-MAX_LOG_CHARS:]
+            while self.pending and self.pending_chars + len(text) > MAX_LOG_CHARS:
+                removed = self.pending.popleft()
+                self.pending_chars -= len(removed)
+                self.dropped_chars += len(removed)
+            self.pending.append(text)
+            self.pending_chars += len(text)
+            self.condition.notify_all()
+
+    def run(self):
+        while True:
+            with self.condition:
+                while not self.pending and not self.closed:
+                    self.condition.wait()
+                if not self.pending:
+                    return
+                text = self.pending.popleft()
+                self.pending_chars -= len(text)
+                dropped, self.dropped_chars = self.dropped_chars, 0
+                self.writing = True
+            try:
+                stream = self.get_stream()
+                if dropped:
+                    stream.write('[GTools] 终端日志积压，已省略 %d 字符；任务输出请以接口缓存为准。\n' % dropped)
+                stream.write(text)
+                stream.flush()
+            except (OSError, ValueError, UnicodeError):
+                pass  # 日志失败不改变命令结果，也不能中断后续输出采集。
+            finally:
+                with self.condition:
+                    self.writing = False
+                    self.condition.notify_all()
+
+    def flush(self, timeout=1):
+        # 仅供退出时尽力排空及测试同步，任务完成不依赖终端写入速度。
+        with self.condition:
+            return self.condition.wait_for(lambda: not self.pending and not self.writing, timeout)
+
+    def close(self):
+        with self.condition:
+            self.closed = True
+            self.condition.notify_all()
+        self.worker.join(timeout=1)
 
 
 class WindowsJob:
@@ -106,19 +172,13 @@ class Executor:
         self.closed = False
         self.shells = ["powershell", "cmd"] if os.name == "nt" else ["sh"]
         self.log_stream = log_stream if log_stream is not None else sys.stderr
-        self.log_lock = threading.Lock()
+        self.terminal_log = TerminalLog(lambda: self.log_stream)
 
     def log(self, task_id, text):
         # 每条终端记录带任务编号，便于区分并发命令及对应的 AI 工具结果。
-        # 日志输出异常不改变命令执行结果。
         if not text:
             return
-        try:
-            with self.log_lock:
-                self.log_stream.write("[%s] %s%s" % (task_id, text, "" if text.endswith("\n") else "\n"))
-                self.log_stream.flush()
-        except (OSError, ValueError, UnicodeError):
-            pass
+        self.terminal_log.append("[%s] %s%s" % (task_id, text, "" if text.endswith("\n") else "\n"))
 
     def info(self):
         return {"protocol_version": VERSION, "runtime": "python", "platform": sys.platform,
@@ -173,6 +233,7 @@ class Executor:
             task.stop("cancelled")
         for task in tasks:
             task.done.wait(5)
+        self.terminal_log.close()
 
 
 class Task:
@@ -242,6 +303,10 @@ class Task:
                     text = decoder.decode(chunk)
                     self.append_output(text)
                 self.executor.log(self.id, text)
+        except Exception as exc:
+            with self.lock:
+                self.error = 'Output collection failed; output may be incomplete: ' + str(exc)
+                self.kill_tree()  # 读取已失效时不能让写满管道的子进程一直阻塞。
         finally:
             with self.lock:
                 text = decoder.decode(b"", final=True)
@@ -250,11 +315,11 @@ class Task:
 
     def run(self):
         reader = None
+        reader_started = False
         self.executor.log(self.id, "开始执行 | Shell: %s | 目录: %s\n%s" % (self.shell, self.cwd, self.command))
         try:
             with self.lock:
                 if self.stop_reason:
-                    self.status = self.stop_reason
                     return
                 env = os.environ.copy()
                 # 不通过子进程环境变量传递本机连接凭据。
@@ -281,35 +346,39 @@ class Task:
                 self.status = "running"
             reader = threading.Thread(target=self.read_output, daemon=True)
             reader.start()
+            reader_started = True
             self.process.wait()
-            with self.lock:
-                self.kill_tree()  # 前台任务退出时清理同组后台进程。
-            reader.join(timeout=3)
-            with self.lock:
-                self.exit_code = self.process.returncode
-                self.status = self.stop_reason or ("completed" if self.exit_code == 0 else "failed")
         except Exception as exc:
             with self.lock:
-                self.kill_tree()
-                self.status = self.stop_reason or "failed"
-                self.error = str(exc)
+                self.error = self.error or str(exc)
         finally:
+            # 每个收尾步骤独立尝试，资源清理失败也必须形成可查询的失败结果。
+            def cleanup(action):
+                try:
+                    action()
+                except Exception as exc:
+                    with self.lock:
+                        self.error = self.error or 'Task cleanup failed: ' + str(exc)
+
+            with self.lock:
+                cleanup(self.kill_tree)  # 前台结束或启动失败时都清理同组后台进程。
             if self.process:
-                try:
-                    self.process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    pass
-                if reader is None or not reader.is_alive():
-                    self.process.stdout.close()
+                cleanup(lambda: self.process.wait(timeout=5))
+                # 终态意味着不会再新增输出，不能用超时等待冒充已经读到 EOF。
+                if reader_started:
+                    cleanup(reader.join)
+                cleanup(self.process.stdout.close)
                 if os.name == "nt" and self.process.returncode is not None:
-                    self.process._handle.Close()
+                    cleanup(self.process._handle.Close)
             if self.script_path:
-                try:
-                    os.unlink(self.script_path)
-                except OSError as exc:
-                    self.error = self.error or "Cannot remove temporary command script: " + str(exc)
-            self.executor.log(self.id, "执行结束 | 状态: %s | 退出码: %s%s" % (self.status, self.exit_code, " | " + self.error if self.error else ""))
-            self.done.set()
+                cleanup(lambda: os.unlink(self.script_path))
+            with self.lock:
+                self.exit_code = self.process.returncode if self.process else None
+                self.status = self.stop_reason or ("completed" if self.exit_code == 0 and not self.error else "failed")
+            try:
+                self.executor.log(self.id, "执行结束 | 状态: %s | 退出码: %s%s" % (self.status, self.exit_code, " | " + self.error if self.error else ""))
+            finally:
+                self.done.set()
 
 
 def validate_public_url(value):

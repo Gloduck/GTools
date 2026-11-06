@@ -269,6 +269,58 @@ test('场景：同步结果超过前端输出缓存时明确标记截断并保�
     } finally { session.disconnect({cancel: false}); globalThis.fetch = originalFetch; }
 });
 
+test('场景：执行端输出滚动后丢弃不连续的旧片段，保留后续分页及丢失标记', async () => {
+    const originalFetch = globalThis.fetch;
+    let id;
+    const cursors = [];
+    globalThis.fetch = async (url, options) => {
+        if (url.endsWith('/info')) return response(info);
+        if (options.method === 'POST') {
+            id = JSON.parse(options.body).id;
+            return response({id, status: 'running', output: '旧输出', cursor: 3, has_more: false});
+        }
+        cursors.push(Number(new URL(url).searchParams.get('cursor')));
+        return response(cursors.length === 1
+            ? {id, status: 'completed', output: '保留片段\n', cursor: 300006, has_more: true, output_lost: true, truncated: true, exit_code: 0}
+            : {id, status: 'completed', output: '末尾中文😀', cursor: 300011, has_more: false, output_lost: false, truncated: true, exit_code: 0});
+    };
+    const session = createLocalExecutorSession();
+    try {
+        await session.connect(connection);
+        const result = await session.execute({command: '持续输出直到缓冲滚动'}, {sessionId: 'a'});
+        assert.equal(result.output, '保留片段\n末尾中文😀');
+        assert.equal(result.output_lost, true);
+        assert.equal(result.truncated, true);
+        assert.equal(result.has_more, false);
+        assert.equal(result.cursor, 300011);
+        assert.deepEqual(cursors, [3, 300006]);
+    } finally { session.disconnect({cancel: false}); globalThis.fetch = originalFetch; }
+});
+
+test('场景：任务记录消失时明确表示结果无法确认，不把已有文本或零退出码当成成功', async () => {
+    const originalFetch = globalThis.fetch;
+    let submissions = 0;
+    globalThis.fetch = async (url, options) => {
+        if (url.endsWith('/info')) return response(info);
+        if (options.method === 'POST') {
+            submissions++;
+            return response({id: JSON.parse(options.body).id, status: 'running', output: '已开始检查', cursor: 5, has_more: false, exit_code: null});
+        }
+        return response({error: 'Task not found'}, 404);
+    };
+    const session = createLocalExecutorSession();
+    try {
+        await session.connect(connection);
+        const result = await session.execute({command: '只执行一次的检查'}, {sessionId: 'a'});
+        assert.equal(result.status, 'failed');
+        assert.equal(result.exit_code, null);
+        assert.equal(result.output, '已开始检查');
+        assert.match(result.error, /执行结果无法确认/);
+        assert.equal(result.has_more, false);
+        assert.equal(submissions, 1);
+    } finally { session.disconnect({cancel: false}); globalThis.fetch = originalFetch; }
+});
+
 test('场景：连接之间的白名单和免审批设置相互独立，切换连接后不会继承上一条授权', async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = async () => response(info);

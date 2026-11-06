@@ -107,11 +107,15 @@ class ExecutorTest(unittest.TestCase):
             self.assertEqual(self.request('POST', '/v1/tasks', {'id': 'invalid-shell', 'command': 'echo hello', 'shell': 'cmd'})[0], 400)
 
     def test_任意命令中文输出与退出码(self):
-        task_id, _ = self.submit(self.python("import sys; print('中文', flush=True); print('error', file=sys.stderr, flush=True); sys.exit(7)"))
+        command = self.python("import sys; print('中文', flush=True); print('error', file=sys.stderr, flush=True); sys.exit(7)")
+        if os.name == 'nt':
+            command += '; exit $LASTEXITCODE'  # PowerShell CLI 默认将外部失败归为 1，显式保留原值。
+        task_id, _ = self.submit(command)
         task = self.wait_task(task_id)
         self.assertEqual(task['status'], 'failed')
         self.assertEqual(task['exit_code'], 7)
         self.executor.get_task(task_id).done.wait(2)
+        self.assertTrue(self.executor.terminal_log.flush(2))
         log = self.console.getvalue()
         self.assertIn('[%s]' % task_id, log)
         self.assertIn('中文', log)

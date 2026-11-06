@@ -31,15 +31,63 @@ if ($wildcard -and -not $PublicUrl) { throw 'PublicUrl is required when listenin
 # 使用系统作业对象管理任务进程树。先创建挂起进程并加入作业，
 # 再执行用户命令，避免后台子进程抢先脱离任务管理。
 # 辅助类型带版本，重新启动时不会复用当前 PowerShell 会话中旧版的已编译类型。
-if (-not ('GToolsLocalTaskV2' -as [type])) {
+if (-not ('GToolsLocalTaskV3' -as [type])) {
 Add-Type -TypeDefinition @'
 using System;
 using System.IO;
 using System.Text;
 using System.Threading;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
-public sealed class GToolsLocalTaskV2 : IDisposable {
+// 终端日志只是结果副本，独立线程和有界队列避免慢终端阻塞请求及输出采集。
+public static class GToolsTerminalLogV3 {
+    static readonly object gate=new object();
+    static readonly Queue<string> pending=new Queue<string>();
+    const int Limit=262144;
+    static int pendingChars;
+    static long droppedChars;
+    static bool writing;
+    static GToolsTerminalLogV3() {
+        var worker=new Thread(WriteLoop); worker.IsBackground=true; worker.Start();
+    }
+    public static void Append(string text) {
+        lock(gate) {
+            if(text.Length>Limit) { droppedChars+=text.Length-Limit; text=text.Substring(text.Length-Limit); }
+            while(pending.Count>0 && pendingChars+text.Length>Limit) {
+                string removed=pending.Dequeue(); pendingChars-=removed.Length; droppedChars+=removed.Length;
+            }
+            pending.Enqueue(text); pendingChars+=text.Length; Monitor.PulseAll(gate);
+        }
+    }
+    static void WriteLoop() {
+        while(true) {
+            string text; long dropped;
+            lock(gate) {
+                while(pending.Count==0) Monitor.Wait(gate);
+                text=pending.Dequeue(); pendingChars-=text.Length;
+                dropped=droppedChars; droppedChars=0; writing=true;
+            }
+            try {
+                if(dropped>0) Console.Error.WriteLine("[GTools] 终端日志积压，已省略 "+dropped+" 字符；任务输出请以接口缓存为准。");
+                Console.Error.Write(text); Console.Error.Flush();
+            } catch(IOException) {} catch(ObjectDisposedException) {} catch(EncoderFallbackException) {}
+            finally { lock(gate) { writing=false; Monitor.PulseAll(gate); } }
+        }
+    }
+    public static bool Flush(int milliseconds) {
+        var clock=System.Diagnostics.Stopwatch.StartNew();
+        lock(gate) {
+            while(pending.Count>0 || writing) {
+                long left=milliseconds-clock.ElapsedMilliseconds;
+                if(left<=0) return false;
+                Monitor.Wait(gate,(int)left);
+            }
+            return true;
+        }
+    }
+}
+public sealed class GToolsLocalTaskV3 : IDisposable {
     [StructLayout(LayoutKind.Sequential)] struct Security { public int size; public IntPtr descriptor; public int inherit; }
     [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)] struct Startup {
         public int cb; public string reserved, desktop, title;
@@ -73,12 +121,10 @@ public sealed class GToolsLocalTaskV2 : IDisposable {
     public string Status = "queued", Error = "";
     public int? ExitCode; public bool Truncated; public double CreatedAt;
     const int Limit = 262144;
-    static readonly object consoleGate = new object();
-    bool completionLogged;
+    bool completionLogged, processExited, outputFinished, readerStarted;
     void Log(string text) {
         if(String.IsNullOrEmpty(text)) return;
-        // 直接写入启动执行器的终端，不依赖网页是否正在查询任务。
-        try { lock(consoleGate) { Console.Error.Write("["+Id+"] "+text); if(!text.EndsWith("\n")) Console.Error.WriteLine(); Console.Error.Flush(); } } catch(IOException) {} catch(ObjectDisposedException) {}
+        GToolsTerminalLogV3.Append("["+Id+"] "+text+(text.EndsWith("\n") ? "" : "\n"));
     }
     void LogCompletion() {
         if(completionLogged) return;
@@ -88,6 +134,7 @@ public sealed class GToolsLocalTaskV2 : IDisposable {
     public void Start(string application, string arguments) {
         Log("开始执行 | Shell: "+Shell+" | 目录: "+Cwd+"\n"+Command);
         IntPtr read=IntPtr.Zero,write=IntPtr.Zero,input=IntPtr.Zero;
+        Stream outputStream=null;
         ProcessInfo pi = new ProcessInfo();
         var security = new Security { size=Marshal.SizeOf(typeof(Security)), inherit=1 };
         try {
@@ -104,9 +151,15 @@ public sealed class GToolsLocalTaskV2 : IDisposable {
             if(!AssignProcessToJobObject(job,process)) throw new Exception("Cannot assign process job");
             if(ResumeThread(pi.thread)==0xffffffff) throw new Exception("Cannot resume task");
             Status="running";
-            var stream=new FileStream(new SafeFileHandle(read,true),FileAccess.Read,4096,false); read=IntPtr.Zero;
-            reader=new Thread(()=>ReadOutput(stream)); reader.IsBackground=true; reader.Start();
-        } catch(Exception e) { Error=e.Message; Status="failed"; if(process!=IntPtr.Zero) { TerminateProcess(process,1); CloseHandle(process); process=IntPtr.Zero; } Kill(); CleanupScript(); LogCompletion(); }
+            outputStream=new FileStream(new SafeFileHandle(read,true),FileAccess.Read,4096,false); read=IntPtr.Zero;
+            reader=new Thread(()=>ReadOutput(outputStream)); reader.IsBackground=true; reader.Start(); readerStarted=true;
+        } catch(Exception e) {
+            Error=e.Message; Status="failed";
+            if(process!=IntPtr.Zero) { TerminateProcess(process,1); CloseHandle(process); process=IntPtr.Zero; }
+            Kill();
+            if(!readerStarted && outputStream!=null) outputStream.Dispose();
+            CleanupScript(); LogCompletion();
+        }
         finally {
             if(pi.thread!=IntPtr.Zero) CloseHandle(pi.thread);
             if(write!=IntPtr.Zero) CloseHandle(write);
@@ -122,8 +175,14 @@ public sealed class GToolsLocalTaskV2 : IDisposable {
                     AppendOutput(chars,decoder.GetChars(bytes,0,n,chars,0,false));
                 }
             }}
-            lock(gate) { AppendOutput(chars,decoder.GetChars(new byte[0],0,0,chars,0,true)); }
-        } catch(Exception e) { lock(gate) { Error=e.Message; } }
+        } catch(Exception e) {
+            lock(gate) { Error="Output collection failed; output may be incomplete: "+e.Message; Kill(); }
+        } finally {
+            lock(gate) {
+                AppendOutput(chars,decoder.GetChars(new byte[0],0,0,chars,0,true));
+                outputFinished=true;
+            }
+        }
     }
     void AppendOutput(char[] chars,int count) {
         // 缓存只保留最近输出，达到容量后继续读取，不终止任务。
@@ -142,15 +201,20 @@ public sealed class GToolsLocalTaskV2 : IDisposable {
         }
     }
     public void Tick() {
-        bool ended=false;
         lock(gate) {
-            if(process==IntPtr.Zero || (Status!="running" && Status!="cancelling")) return;
-            if(WaitForSingleObject(process,0)==0) { uint code; GetExitCodeProcess(process,out code); ExitCode=unchecked((int)code); Kill(); CloseHandle(process); process=IntPtr.Zero; ended=true; }
-        }
-        if(ended) {
-            if(reader!=null) reader.Join(1000);
-            CleanupScript();
-            lock(gate) { Status=stopReason ?? (ExitCode==0 ? "completed" : "failed"); LogCompletion(); }
+            if(Status!="running" && Status!="cancelling") return;
+            if(process!=IntPtr.Zero && WaitForSingleObject(process,0)==0) {
+                uint code;
+                if(GetExitCodeProcess(process,out code)) ExitCode=unchecked((int)code);
+                else Error="Cannot read process exit code";
+                Kill(); CloseHandle(process); process=IntPtr.Zero; processExited=true;
+            }
+            // HTTP 主循环不等待读线程；EOF 和解码收尾完成后才发布稳定终态。
+            if(processExited && outputFinished) {
+                CleanupScript();
+                Status=stopReason ?? (ExitCode==0 && String.IsNullOrEmpty(Error) ? "completed" : "failed");
+                LogCompletion();
+            }
         }
     }
     public object Snapshot(long cursor) {
@@ -163,7 +227,12 @@ public sealed class GToolsLocalTaskV2 : IDisposable {
                          exit_code=ExitCode,truncated=Truncated,error=Error,created_at=CreatedAt };
         }
     }
-    public void Dispose() { Stop("cancelled"); if(process!=IntPtr.Zero) { WaitForSingleObject(process,5000); CloseHandle(process); process=IntPtr.Zero; } if(reader!=null) reader.Join(1000); CleanupScript(); if(Status=="cancelling") Status="cancelled"; LogCompletion(); }
+    public void Dispose() {
+        Stop("cancelled");
+        if(process!=IntPtr.Zero) WaitForSingleObject(process,5000);
+        if(readerStarted) reader.Join();
+        Tick(); CleanupScript(); LogCompletion();
+    }
 }
 '@
 }
@@ -202,9 +271,10 @@ $tasks = @{}
 $utf8 = New-Object Text.UTF8Encoding($false)
 
 function New-PowerShellTaskArguments([string]$Command) {
-    # 显式完成终端默认格式化，避免退出时丢失对象及后续文本。
-    # 普通文本保留错误和警告，非交互进度不写入任务日志。
-    $scriptText = '[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false); $env:PYTHONIOENCODING="utf-8"; $ProgressPreference="SilentlyContinue"; $global:LASTEXITCODE=0; & {' + "`n" + $Command + "`n" + '} | Out-Default; if (-not $?) { exit 1 }; exit $LASTEXITCODE'
+    # 顶层原样执行正文，让 PowerShell 自行确定最终状态和完成格式化。
+    # 不追加 exit，也不读取可能由更早外部程序残留的 LASTEXITCODE。
+    # 原生程序非零结果按 CLI 返回 1；需要原值时由用户显式 exit $LASTEXITCODE。
+    $scriptText = '[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false); $env:PYTHONIOENCODING="utf-8"; $ProgressPreference="SilentlyContinue";' + "`n" + $Command
     $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($scriptText))
     return '-NoLogo -NoProfile -NonInteractive -OutputFormat Text -EncodedCommand '+$encoded
 }
@@ -312,7 +382,7 @@ try {
                     if ($tasks[$body.id].Fingerprint -cne $fingerprint) { Fail-Request 409 'Task id already belongs to different execution content' }
                     $result = $tasks[$body.id].Snapshot(0)
                 } else {
-                    $task = New-Object GToolsLocalTaskV2
+                    $task = New-Object GToolsLocalTaskV3
                     $task.Shell=$shellName; $task.Id=$body.id; $task.Command=$body.command; $task.Cwd=$directory; $task.Fingerprint=$fingerprint
                     $task.CreatedAt=([DateTime]::UtcNow-[DateTime]'1970-01-01').TotalSeconds
                     if ($shellName -eq 'cmd') {
@@ -351,5 +421,6 @@ try {
 } finally {
     $listener.Close()
     foreach ($task in $tasks.Values) { $task.Dispose() }
+    [void][GToolsTerminalLogV3]::Flush(1000)
     [Console]::Error.WriteLine('Local executor stopped.')
 }

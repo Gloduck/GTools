@@ -39,3 +39,10 @@ build/
 
 ### local
 .local/
+
+# Android 执行器由独立构建脚本生成，测试产物不发布到前端。
+frontend/public/local-executor/v1/executor.dex
+frontend/public/local-executor/v1/executor.dex.sha256
+frontend/public/local-executor/v1/bootstrap-android.sh
+frontend/public/local-executor/v1/executor.NOTICE.txt
+frontend/public/local-executor/v1/executor-tests.dex

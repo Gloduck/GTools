@@ -69,7 +69,7 @@ export function normalizeLocalCommand({command, cwd = '', reason, shell = '', wa
     return Object.freeze({command, cwd, reason: reason.trim(), shell, commands: Object.freeze(normalizeMainCommands(commands)), high_risk, wait_seconds: normalizeLocalWaitSeconds(wait_seconds)});
 }
 
-export function buildLocalStartupCommand({platform, assetBase, origin, terminal = 'powershell', listenAddress = '127.0.0.1', port = 0, publicUrl = ''}) {
+export function buildLocalStartupCommand({platform, assetBase, origin, terminal = 'powershell', androidRoot = false, listenAddress = '127.0.0.1', port = 0, publicUrl = ''}) {
     const base = new URL(assetBase);
     if (base.protocol !== 'https:' && !(base.protocol === 'http:' && ['127.0.0.1', 'localhost'].includes(base.hostname))) throw new Error('Serve startup scripts over HTTPS (or localhost for development)');
     const listen = normalizeExecutorListenAddress(listenAddress);
@@ -89,6 +89,17 @@ export function buildLocalStartupCommand({platform, assetBase, origin, terminal 
             return `powershell.exe -NoLogo -NoProfile -EncodedCommand ${btoa(String.fromCharCode(...bytes))}`;
         }
         return script;
+    }
+    if (platform === 'android') {
+        // 页面只负责下载入口，默认参数由启动脚本提供。
+        const args = [sh(url), sh(webOrigin)];
+        if (listen !== '127.0.0.1' || port !== 0 || advertised) args.push(sh(listen));
+        if (port !== 0 || advertised) args.push(String(port));
+        if (advertised) args.push(sh(advertised));
+        const launch = `sh -s -- ${args.join(' ')}`;
+        // su -c 增加一层 Shell 解析，转义外层双引号，保持 URL 和参数原样传入。
+        const runner = androidRoot === true ? `su -c "${launch.replace(/["\\$`]/g, '\\$&')}"` : launch;
+        return `curl -fsSL ${sh(`${url}/bootstrap-android.sh`)} | ${runner}`;
     }
     // 启动参数只来自页面配置，不拼接模型提供的命令。
     return `curl -fsSL ${sh(`${url}/bootstrap.sh`)} | sh -s -- ${sh(url)} ${sh(webOrigin)} ${sh(listen)} ${port} ${sh(advertised)}`;
@@ -128,7 +139,7 @@ export class LocalExecutorClient {
     }
     async info(signal) {
         const info = await this.request('/v1/info', {signal});
-        if (info.protocol_version !== 1 || typeof info.default_cwd !== 'string' || !['python', 'powershell'].includes(info.runtime)) throw new Error('Unsupported executor protocol');
+        if (info.protocol_version !== 1 || typeof info.default_cwd !== 'string' || !['python', 'powershell', 'android'].includes(info.runtime)) throw new Error('Unsupported executor protocol');
         return info;
     }
     submit(task, signal) { return this.request('/v1/tasks', {method: 'POST', body: task, signal}); }

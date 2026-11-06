@@ -74,6 +74,56 @@ test('场景：连接握手拒绝不兼容的协议', async () => {
     await assert.rejects(client.info(), /Unsupported/);
 });
 
+test('场景：Android 使用独立 DEX 启动入口并兼容现有协议', async () => {
+    const command = buildLocalStartupCommand({platform: 'android', assetBase: 'https://tools.example/sub/local-executor/v1/', origin: 'https://tools.example', listenAddress: '192.168.1.25', port: 8321});
+    assert.match(command, /\/sub\/local-executor\/v1\/bootstrap-android.sh/);
+    assert.match(command, /^curl -fsSL /);
+    assert.doesNotMatch(command, /command -v|then|else/);
+    assert.match(command, /'192\.168\.1\.25' 8321/);
+    assert.doesNotMatch(command, /\bsu\b|python|powershell/);
+    const info = {protocol_version: 1, runtime: 'android', platform: 'android', shell: 'sh', shells: ['sh'], default_cwd: '/data/local/tmp'};
+    const client = new LocalExecutorClient(connection, {fetchImpl: async () => ({ok: true, json: async () => info})});
+    assert.deepEqual(await client.info(), info);
+});
+
+test('场景：Android 启动省略默认参数，自定义配置仍按正确位置传递', () => {
+    const args = {platform: 'android', assetBase: 'https://tools.example/local-executor/v1', origin: 'https://tools.example'};
+    assert.equal(buildLocalStartupCommand(args), "curl -fsSL 'https://tools.example/local-executor/v1/bootstrap-android.sh' | sh -s -- 'https://tools.example/local-executor/v1' 'https://tools.example'");
+    assert.ok(buildLocalStartupCommand({...args, listenAddress: '192.168.1.25'}).endsWith("'192.168.1.25'"));
+    assert.ok(buildLocalStartupCommand({...args, port: 8321}).endsWith("'127.0.0.1' 8321"));
+    assert.ok(buildLocalStartupCommand({...args, listenAddress: '0.0.0.0', publicUrl: 'http://192.168.1.25:8321'}).endsWith("'0.0.0.0' 0 'http://192.168.1.25:8321'"));
+});
+
+test('场景：Android root 选项显式启用，双层 Shell 解析仍保留原始参数', async () => {
+    const {mkdtempSync, writeFileSync, existsSync, rmSync} = await import('node:fs');
+    const {tmpdir} = await import('node:os');
+    const {join, delimiter} = await import('node:path');
+    const {spawnSync} = await import('node:child_process');
+    const directory = mkdtempSync(join(tmpdir(), 'executor-root-test-'));
+    const marker = join(directory, 'su-called');
+    const source = join(directory, 'startup.sh');
+    try {
+        // 替换下载与 su，仅验证真实 Shell 解析，不联网、不申请 root。
+        writeFileSync(source, 'printf "%s\\n" "$@"\n');
+        writeFileSync(join(directory, 'curl'), '#!/bin/sh\ncat "$EXECUTOR_TEST_SOURCE"\n', {mode: 0o700});
+        writeFileSync(join(directory, 'su'), '#!/bin/sh\n[ "$#" -eq 2 ] && [ "$1" = -c ] || exit 2\n: > "$EXECUTOR_TEST_SU_MARKER"\nexec /bin/sh -c "$2"\n', {mode: 0o700});
+        const args = {platform: 'android', assetBase: "https://tools.example/path'$(id)/local-executor/v1", origin: 'https://tools.example', listenAddress: '192.168.1.25', port: 8321};
+        for (const androidRoot of [false, 'true', true]) {
+            const command = buildLocalStartupCommand({...args, androidRoot});
+            const result = spawnSync('/bin/sh', ['-c', command], {
+                encoding: 'utf8', timeout: 5000,
+                env: {...process.env, PATH: directory + delimiter + process.env.PATH, EXECUTOR_TEST_SOURCE: source, EXECUTOR_TEST_SU_MARKER: marker},
+            });
+            assert.equal(result.status, 0, result.stderr);
+            assert.deepEqual(result.stdout.trimEnd().split('\n'), [new URL(args.assetBase).href, args.origin, args.listenAddress, String(args.port)]);
+            assert.equal(existsSync(marker), androidRoot === true);
+        }
+        for (const platform of ['unix', 'windows']) {
+            assert.equal(buildLocalStartupCommand({...args, platform, androidRoot: true}), buildLocalStartupCommand({...args, platform}));
+        }
+    } finally { rmSync(directory, {recursive: true, force: true}); }
+});
+
 test('场景：CMD 启动入口解码后与 PowerShell 相同，下载脚本使用原始 UTF-8 字节', () => {
     const args = {platform: 'windows', assetBase: "https://tools.example/path's%20test/local-executor/v1", origin: 'https://tools.example'};
     const powershell = buildLocalStartupCommand(args);

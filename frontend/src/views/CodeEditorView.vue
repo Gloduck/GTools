@@ -722,7 +722,7 @@
               <select v-model="localExecutor.state.shell"><option v-for="shell in (localExecutor.state.info.shells || [localExecutor.state.info.shell])" :key="shell" :value="shell">{{ shell }}</option></select>
             </label>
             <h3>{{ tr('local.connectionApproval') }}</h3>
-            <label class="local-check"><input v-model="localExecutor.state.autoApprove" type="checkbox" aria-describedby="local-auto-approve-hint" />{{ tr('commandApproval.autoApprove') }}</label>
+            <label class="local-check"><input v-model="localAutoApprove" type="checkbox" aria-describedby="local-auto-approve-hint" />{{ tr('commandApproval.autoApprove') }}</label>
             <p id="local-auto-approve-hint">{{ tr('local.autoApproveHint') }}</p>
             <label>{{ tr('local.whitelistTemplate') }}
               <select v-model="localDialog.template" :disabled="localExecutor.state.autoApprove">
@@ -847,7 +847,7 @@ import { computed, defineComponent, h, markRaw, nextTick, onBeforeUnmount, onMou
 import { createLocalExecutorSession } from "@/shared/local-executor/session.js";
 import { COMMAND_WHITELIST_TEMPLATES } from "@/shared/command-presets.js";
 import { normalizeCommandWhitelist, normalizeMainCommands, getCommandApprovalReason } from "@/shared/command-whitelist.js";
-import { normalizeLocalCommand, isLocalTaskFinished, buildLocalStartupCommand } from "@/shared/local-executor/client.js";
+import { normalizeLocalCommand, isLocalTaskFinished, buildLocalStartupCommand, normalizeExecutorListenAddress, normalizeLocalExecutorSettings } from "@/shared/local-executor/client.js";
 import { runAiNodeWorker } from "@/shared/ai-node-worker.js";
 import { runFilterScript } from "@/shared/filter-script-worker.js";
 import {
@@ -905,7 +905,7 @@ const PREVIEW_MIN_WIDTH = 280;
 const PREVIEW_MAX_WIDTH = 900;
 const DEFAULT_PREVIEW_WIDTH = 480;
 const AI_MESSAGES_BOTTOM_TOLERANCE_PX = 2;
-const defaultSettings = { theme: "vs-dark", locale: "zh-CN", fontSize: 14, wordWrap: false, minimap: true, maxMemoryReadBytes: DEFAULT_MAX_MEMORY_READ_BYTES, maxMemoryWriteBytes: DEFAULT_MAX_MEMORY_WRITE_BYTES, shortcuts: { ...vscodeShortcuts }, ai: { ...defaultAiSettings }, backend: { ...defaultBackendSettings }, ssh: { ...defaultSshSettings }, localExecutor: { whitelist: [] } };
+const defaultSettings = { theme: "vs-dark", locale: "zh-CN", fontSize: 14, wordWrap: false, minimap: true, maxMemoryReadBytes: DEFAULT_MAX_MEMORY_READ_BYTES, maxMemoryWriteBytes: DEFAULT_MAX_MEMORY_WRITE_BYTES, shortcuts: { ...vscodeShortcuts }, ai: { ...defaultAiSettings }, backend: { ...defaultBackendSettings }, ssh: { ...defaultSshSettings }, localExecutor: normalizeLocalExecutorSettings() };
 
 class AiSessionStore {
   constructor() {
@@ -1183,6 +1183,22 @@ const dialogOptionInput = ref(null);
 const dialogPrimaryButton = ref(null);
 const dialogState = reactive({ visible: false, mode: "alert", title: "", message: "", value: "", inputLabel: "", placeholder: "", selectOptions: [], optionLabel: "", optionHint: "", optionChecked: false, optionDisabled: false, confirmLabel: "", cancelLabel: "", tone: "default", selectOnFocus: false, closeOnBackdrop: true });
 const settings = reactive(loadSettings());
+applyLocalExecutorSettings();
+watch(() => [localDialog.listenAddress, localDialog.port], ([listenAddress, port]) => {
+  // 输入过程允许暂时为空或不完整，仅将合法值写入设置，避免覆盖上次配置。
+  try {
+    const address = normalizeExecutorListenAddress(listenAddress);
+    if (!['0.0.0.0', '::'].includes(address)) settings.localExecutor.listenAddress = address;
+  } catch { /* 启动命令区域负责展示参数错误。 */ }
+  if (Number.isSafeInteger(port) && port >= 0 && port <= 65535) settings.localExecutor.port = port;
+});
+const localAutoApprove = computed({
+  get: () => localExecutor.state.autoApprove,
+  set: (value) => {
+    localExecutor.state.autoApprove = value === true;
+    settings.localExecutor.autoApprove = value === true;
+  },
+});
 const localWhitelistText = computed({
   get: () => localExecutor.state.whitelistText,
   set: (value) => {
@@ -7195,14 +7211,14 @@ function normalizeSettings(value = {}) {
   if (!sshTerminalThemes[ssh.terminalTheme]) ssh.terminalTheme = defaultSshSettings.terminalTheme;
   ssh.whitelistTemplate = String(ssh.whitelistTemplate || DEFAULT_SSH_WHITELIST_TEMPLATE).trim();
   ssh.connections = Array.isArray(ssh.connections) ? ssh.connections.map(normalizeStoredSshConfig).filter(Boolean) : [];
-  // 执行器配置严格只接收白名单，不导入或持久化凭据、地址与运行状态。
-  const localExecutor = { whitelist: normalizeCommandWhitelist(savedSettings.localExecutor?.whitelist) };
+  const localExecutor = normalizeLocalExecutorSettings(savedSettings.localExecutor);
   return { ...defaultSettings, ...savedSettings, shortcuts, ai, backend, ssh, localExecutor };
 }
 
 function applySettingsSnapshot(value) {
   Object.keys(settings).forEach((key) => { delete settings[key]; });
   Object.assign(settings, value);
+  applyLocalExecutorSettings();
   settings.locale = getCurrentLocale();
   document.documentElement.lang = getCurrentLocale();
   if (monaco) applyTheme();
@@ -8695,14 +8711,23 @@ async function connectLocalExecutor() {
   try {
     await localExecutor.connect(localDialog.connection);
     if (!localExecutor.state.connected) return;
-    // 保存的白名单是用户配置，连接成功后直接回填，无需再当作模板选择。
-    localExecutor.state.whitelistText = settings.localExecutor.whitelist.join('\n');
+    applyLocalExecutorSettings();
     localDialog.template = localExecutor.state.shell;
     localDialog.connection = '';
     // 连接后表单被替换，恢复弹窗焦点以继续使用 Esc 和 Tab。
     if (localDialog.visible && localExecutor.state.connected) { await nextTick(); localDialogElement.value?.focus(); }
   }
   catch { /* 连接错误由会话展示，不回显凭据。 */ }
+}
+
+function applyLocalExecutorSettings() {
+  const saved = settings.localExecutor;
+  localDialog.listenAddress = saved.listenAddress;
+  localDialog.port = saved.port;
+  if (localExecutor.state.connected) {
+    localExecutor.state.whitelistText = saved.whitelist.join('\n');
+    localExecutor.state.autoApprove = saved.autoApprove;
+  }
 }
 
 function applyLocalWhitelistTemplate() {

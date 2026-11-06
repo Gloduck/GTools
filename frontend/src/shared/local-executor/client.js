@@ -1,4 +1,4 @@
-import { normalizeMainCommands } from "../command-whitelist.js";
+import { normalizeCommandWhitelist, normalizeMainCommands } from "../command-whitelist.js";
 
 const TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled']);
 const TASK_ID = /^[a-zA-Z0-9_-]{8,80}$/;
@@ -27,6 +27,22 @@ export function normalizeExecutorListenAddress(value = '127.0.0.1') {
         try { return new URL(`http://[${address}]/`).hostname.slice(1, -1); } catch { /* 使用统一的参数错误。 */ }
     }
     throw new Error('Listen address must be an IPv4 or IPv6 address');
+}
+
+// 设置只保存可复用配置，不接收连接凭据或任务状态；兼容仅包含白名单的旧设置。
+export function normalizeLocalExecutorSettings(value) {
+    const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+    let listenAddress = '127.0.0.1';
+    try {
+        const address = normalizeExecutorListenAddress(source.listenAddress);
+        if (!['0.0.0.0', '::'].includes(address)) listenAddress = address;
+    } catch { /* 非法或缺失地址回退到本机默认值。 */ }
+    return {
+        whitelist: normalizeCommandWhitelist(source.whitelist),
+        listenAddress,
+        port: Number.isSafeInteger(source.port) && source.port >= 0 && source.port <= 65535 ? source.port : 0,
+        autoApprove: source.autoApprove === true,
+    };
 }
 
 export function parseLocalConnection(value) {

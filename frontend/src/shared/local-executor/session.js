@@ -115,7 +115,7 @@ export function createLocalExecutorSession({onFinished = () => {}, heartbeatMs =
         client = null;
         owners.clear();
         finished.clear();
-        // 免审批仅属于本次连接，主动断开后不沿用授权。
+        // 清理当前连接的授权状态；重新配对时由页面应用用户保存的配置。
         Object.assign(state, {connected: false, connecting: false, reachable: false, shell: '', info: null, url: '', error: '', whitelistText: '', autoApprove: false, bindWorkspace: false, tasks: []});
     }
     return {

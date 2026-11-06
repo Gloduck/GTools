@@ -151,7 +151,7 @@ test('场景：低风险白名单命令直接执行，重新连接自动回填�
     await expect(panel.getByLabel('AI 白名单主命令')).toHaveValue('printf');
 });
 
-test('场景：免审批直接执行白名单外高风险命令，未保存文件保持原样，重新连接恢复审批', async ({page}) => {
+test('场景：免审批直接执行白名单外高风险命令，未保存文件保持原样，重新连接恢复已保存的开关', async ({page}) => {
     // 使用无副作用的命令并申报高风险，验证审批分支而不执行危险操作。
     await setup(page, "printf '免审批执行成功'", {high_risk: true});
     await page.evaluate(() => Object.defineProperty(navigator.storage, 'persisted', {configurable: true, value: async () => true}));
@@ -190,9 +190,16 @@ test('场景：免审批直接执行白名单外高风险命令，未保存文�
     await panel.getByRole('button', {name: '断开并请求取消任务'}).click();
     await panel.getByLabel('终端显示的连接 JSON').fill(JSON.stringify(connection));
     await panel.getByRole('button', {name: '连接执行器', exact: true}).click();
+    await expect(autoApprove).toBeChecked();
+    await expect(panel.getByLabel('AI 白名单主命令')).toBeDisabled();
+    await expect(panel.getByLabel('AI 白名单主命令')).toHaveValue('pwd');
+    await autoApprove.uncheck();
+    await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('browser-code-editor-settings')).localExecutor.autoApprove)).toBe(false);
+    await panel.getByRole('button', {name: '断开并请求取消任务'}).click();
+    await panel.getByLabel('终端显示的连接 JSON').fill(JSON.stringify(connection));
+    await panel.getByRole('button', {name: '连接执行器', exact: true}).click();
     await expect(autoApprove).not.toBeChecked();
     await expect(panel.getByLabel('AI 白名单主命令')).toBeEnabled();
-    await expect(panel.getByLabel('AI 白名单主命令')).toHaveValue('pwd');
 });
 
 for (const scenario of [
@@ -337,8 +344,8 @@ test('场景：预置模板只复制到当前连接，手动修改不污染模�
 });
 
 
-test('场景：设置链接只携带白名单，导入后重新连接直接回填', async ({page}) => {
-    await setup(page, 'pwd');
+test('场景：设置链接导出白名单、IP、端口和免审批，导入后回填并生效且不恢复凭据', async ({page}) => {
+    await setup(page, "printf '导入免审批成功'", {high_risk: true}, {localExecutor: {listenAddress: '192.168.1.25', port: 8321}});
     const panel = await connect(page);
     await panel.getByLabel('AI 白名单主命令').fill('pwd\nls\npwd');
     await panel.getByRole('checkbox', {name: '执行命令免审批', exact: true}).check();
@@ -352,29 +359,40 @@ test('场景：设置链接只携带白名单，导入后重新连接直接回�
     const exported = await page.evaluate(() => window.exportedSettingsUrl);
     const encoded = new URLSearchParams(new URL(exported).hash.slice(1)).get('settings');
     const snapshot = JSON.parse(inflateRawSync(Buffer.from(encoded, 'base64url')));
-    expect(snapshot.localExecutor).toEqual({whitelist: ['pwd', 'ls']});
+    expect(snapshot.localExecutor).toEqual({whitelist: ['pwd', 'ls'], listenAddress: '192.168.1.25', port: 8321, autoApprove: true});
     expect(JSON.stringify(snapshot)).not.toContain(connection.token);
     expect(JSON.stringify(snapshot)).not.toContain(connection.url);
 
-    // 即使外部设置带入了连接状态，也只能导入可复用白名单。
-    snapshot.localExecutor = {whitelist: ['Get-WinEvent', 'Get-NetTCPConnection'], ...connection,
-        connected: true, shell: 'cmd', autoApprove: true, bindWorkspace: true, tasks: [{id: '不应保存'}]};
+    // 可复用配置正常导入，外部设置夹带的凭据和运行状态被过滤。
+    const imported = {whitelist: ['Get-WinEvent', 'Get-NetTCPConnection'], listenAddress: '::1', port: 0, autoApprove: true};
+    snapshot.localExecutor = {...imported, ...connection,
+        connected: true, shell: 'cmd', bindWorkspace: true, tasks: [{id: '不应保存'}]};
     const importUrl = '/codeEditor#settings=' + deflateRawSync(Buffer.from(JSON.stringify(snapshot))).toString('base64url');
     await page.goto(importUrl);
     // 只修改 hash 属于同页导航；实际导入在打开页面时检查。
     await page.reload();
     await page.getByRole('dialog', {name: '发现导入设置'}).getByRole('button', {name: '覆盖配置', exact: true}).click();
     await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('browser-code-editor-settings')).localExecutor))
-        .toEqual({whitelist: ['Get-WinEvent', 'Get-NetTCPConnection']});
+        .toEqual(imported);
     await page.getByRole('button', {name: 'AI 助手', exact: true}).click();
     await expect(page.locator('.local-status-button')).toHaveClass(/local-status-disconnected/);
-    await connect(page);
+    await page.getByRole('button', {name: '执行器连接', exact: true}).click();
+    await expect(panel.getByLabel('监听 IP', {exact: true})).toHaveValue('::1');
+    await expect(panel.getByLabel('监听端口（0 为自动分配）', {exact: true})).toHaveValue('0');
+    await expect(panel.getByLabel('终端显示的连接 JSON')).toHaveValue('');
+    await panel.getByLabel('终端显示的连接 JSON').fill(JSON.stringify(connection));
+    await panel.getByRole('button', {name: '连接执行器', exact: true}).click();
     await expect(panel.getByLabel('AI 白名单主命令')).toHaveValue('Get-WinEvent\nGet-NetTCPConnection');
-    await expect(panel.getByRole('checkbox', {name: '执行命令免审批', exact: true})).not.toBeChecked();
+    await expect(panel.getByRole('checkbox', {name: '执行命令免审批', exact: true})).toBeChecked();
+    await ask(page);
+    await expect(page.locator('.ai-message-assistant')).toContainText('本机命令请求已处理');
+    const result = JSON.parse(requests[1].input.find((item) => item.type === 'function_call_output').output);
+    expect(result).toMatchObject({ok: true, status: 'completed', exit_code: 0});
+    expect(result.output).toContain('导入免审批成功');
 });
 
 
-test('场景：局域网连接只需配置监听 IP 和端口，网络配置不会持久化', async ({page}) => {
+test('场景：监听 IP 和端口修改后自动保存，刷新回填，非法输入不覆盖配置', async ({page}) => {
     await setup(page, 'pwd');
     await page.getByRole('button', {name: '执行器连接', exact: true}).click();
     const dialog = page.locator('.local-executor-dialog');
@@ -392,8 +410,39 @@ test('场景：局域网连接只需配置监听 IP 和端口，网络配置不�
     await page.reload();
     await page.getByRole('button', {name: 'AI 助手', exact: true}).click();
     await page.getByRole('button', {name: '执行器连接', exact: true}).click();
-    await expect(ip).toHaveValue('127.0.0.1');
-    await expect(port).toHaveValue('0');
+    await expect(ip).toHaveValue('192.168.1.25');
+    await expect(port).toHaveValue('8321');
+    await ip.fill('0.0.0.0');
+    await port.fill('65536');
+    await expect(dialog.getByRole('button', {name: '复制启动命令', exact: true})).toBeDisabled();
+    expect(await page.evaluate(() => JSON.parse(localStorage.getItem('browser-code-editor-settings')).localExecutor))
+        .toEqual({whitelist: [], listenAddress: '192.168.1.25', port: 8321, autoApprove: false});
+    await page.reload();
+    await page.getByRole('button', {name: 'AI 助手', exact: true}).click();
+    await page.getByRole('button', {name: '执行器连接', exact: true}).click();
+    await expect(ip).toHaveValue('192.168.1.25');
+    await expect(port).toHaveValue('8321');
+});
+
+test('场景：刷新页面后重新连接恢复保存的免审批，关闭开关后下次连接需要审批', async ({page}) => {
+    await setup(page, "printf '恢复审批测试'", {high_risk: true});
+    const panel = await connect(page);
+    const autoApprove = panel.getByRole('checkbox', {name: '执行命令免审批', exact: true});
+    await autoApprove.check();
+    await page.reload();
+    await page.getByRole('button', {name: 'AI 助手', exact: true}).click();
+    await connect(page);
+    await expect(autoApprove).toBeChecked();
+    await autoApprove.uncheck();
+    await page.reload();
+    await page.getByRole('button', {name: 'AI 助手', exact: true}).click();
+    await connect(page);
+    await expect(autoApprove).not.toBeChecked();
+    await ask(page);
+    const approval = page.getByRole('dialog', {name: '执行命令', exact: true});
+    await expect(approval).toContainText('高风险命令');
+    await approval.getByRole('button', {name: '取消', exact: true}).click();
+    await expect(page.locator('.ai-message-assistant')).toContainText('本机命令请求已处理');
 });
 
 

@@ -1,8 +1,28 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {buildLocalStartupCommand, LocalExecutorClient, normalizeLocalCommand, parseLocalConnection} from '../../src/shared/local-executor/client.js';
+import {buildLocalStartupCommand, LocalExecutorClient, normalizeLocalCommand, normalizeLocalExecutorSettings, parseLocalConnection} from '../../src/shared/local-executor/client.js';
 
 const connection = {url: 'http://127.0.0.1:32100', token: 'a'.repeat(43)};
+
+test('场景：执行器设置兼容旧白名单，保存网络和免审批配置但不导入凭据或任务', () => {
+    const defaults = {whitelist: [], listenAddress: '127.0.0.1', port: 0, autoApprove: false};
+    for (const value of [undefined, null, [], '旧数据']) assert.deepEqual(normalizeLocalExecutorSettings(value), defaults);
+    assert.deepEqual(normalizeLocalExecutorSettings({whitelist: ['pwd', 'pwd']}), {...defaults, whitelist: ['pwd']});
+    assert.deepEqual(normalizeLocalExecutorSettings({
+        whitelist: 'pwd\ncat\npwd', listenAddress: ' 192.168.1.25 ', port: 8321, autoApprove: true,
+        ...connection, connected: true, shell: 'cmd', bindWorkspace: true, tasks: [{id: '不应导入'}],
+    }), {whitelist: ['pwd', 'cat'], listenAddress: '192.168.1.25', port: 8321, autoApprove: true});
+    assert.deepEqual(normalizeLocalExecutorSettings({listenAddress: '0:0:0:0:0:0:0:1', port: 65535}), {...defaults, listenAddress: '::1', port: 65535});
+});
+
+test('场景：非法网络配置回退到默认值，免审批仅接受明确的布尔值', () => {
+    for (const listenAddress of ['', null, 123, '0.0.0.0', '::', '0:0:0:0:0:0:0:0', '999.1.1.1', 'localhost', '127.0.0.1;id']) {
+        assert.equal(normalizeLocalExecutorSettings({listenAddress}).listenAddress, '127.0.0.1');
+    }
+    for (const port of [-1, 65536, 1.5, '8321', null, Infinity]) assert.equal(normalizeLocalExecutorSettings({port}).port, 0);
+    for (const autoApprove of [undefined, null, false, 'true', 'false', 1]) assert.equal(normalizeLocalExecutorSettings({autoApprove}).autoApprove, false);
+    assert.equal(normalizeLocalExecutorSettings({port: 0, autoApprove: true}).autoApprove, true);
+});
 
 test('场景：允许用户配置本机、局域网和远程入口，但拒绝地址内的凭据或路径', () => {
     assert.deepEqual(parseLocalConnection(JSON.stringify(connection)), connection);

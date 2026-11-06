@@ -28,7 +28,7 @@ foreach ($name in @('test-download.ps1', 'test-windows.ps1')) {
 }
 
 # 只验证输出缓存与终端日志，不调用 Windows 原生进程 API。
-$task = New-Object GToolsLocalTaskV3
+$task = New-Object ExecutorTaskV3
 $task.Id = 'console-test'
 $capture = New-Object IO.StringWriter
 $previousError = [Console]::Error
@@ -38,12 +38,12 @@ try {
     $arguments = New-Object object[] 2
     $arguments[0] = $characters
     $arguments[1] = $characters.Length
-    $append = [GToolsLocalTaskV3].GetMethod('AppendOutput', [Reflection.BindingFlags]'Instance,NonPublic')
+    $append = [ExecutorTaskV3].GetMethod('AppendOutput', [Reflection.BindingFlags]'Instance,NonPublic')
     [void]$append.Invoke($task,$arguments)
     $task.Status = 'completed'
     $task.ExitCode = 0
-    [void][GToolsLocalTaskV3].GetMethod('LogCompletion', [Reflection.BindingFlags]'Instance,NonPublic').Invoke($task,@())
-    if (-not [GToolsTerminalLogV3]::Flush(3000)) { throw '场景失败：终端日志未完成写入' }
+    [void][ExecutorTaskV3].GetMethod('LogCompletion', [Reflection.BindingFlags]'Instance,NonPublic').Invoke($task,@())
+    if (-not [ExecutorTerminalLogV3]::Flush(3000)) { throw '场景失败：终端日志未完成写入' }
     if (-not $capture.ToString().Contains('[console-test] 中文日志')) { throw '场景失败：命令输出未写入终端' }
     if (-not $capture.ToString().Contains('执行结束 | 状态: completed | 退出码: 0')) { throw '场景失败：结束状态未写入终端' }
     if ($task.Snapshot(0).output -cne '中文日志') { throw '场景失败：终端输出影响了 AI 工具结果' }

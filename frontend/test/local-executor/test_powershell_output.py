@@ -10,33 +10,33 @@ import tempfile
 import unittest
 
 
-POWERSHELL = os.environ.get('GTOOLS_TEST_POWERSHELL') or shutil.which('powershell') or shutil.which('pwsh')
+POWERSHELL = os.environ.get('EXECUTOR_TEST_POWERSHELL') or shutil.which('powershell') or shutil.which('pwsh')
 ROOT = Path(__file__).resolve().parents[2] / 'public/local-executor/v1'
-spec = importlib.util.spec_from_file_location('gtools_executor_output', ROOT / 'executor.py')
+spec = importlib.util.spec_from_file_location('executor_output', ROOT / 'executor.py')
 executor = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(executor)
 
 
-@unittest.skipUnless(POWERSHELL, '未找到 PowerShell，可通过 GTOOLS_TEST_POWERSHELL 指定已有环境')
+@unittest.skipUnless(POWERSHELL, '未找到 PowerShell，可通过 EXECUTOR_TEST_POWERSHELL 指定已有环境')
 class PowerShellOutputTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         # 只加载降级端生成启动参数的函数，测试不监听端口，也不调用 Windows API。
         source = r"""
 $tokens = $null; $errors = $null
-$ast = [System.Management.Automation.Language.Parser]::ParseFile($env:GTOOLS_TEST_EXECUTOR_PS1, [ref]$tokens, [ref]$errors)
+$ast = [System.Management.Automation.Language.Parser]::ParseFile($env:EXECUTOR_TEST_EXECUTOR_PS1, [ref]$tokens, [ref]$errors)
 if ($errors.Count) { throw '执行端语法错误' }
 $function = $ast.Find({ param($node)
     $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'New-PowerShellTaskArguments'
 }, $true)
 if (-not $function) { throw '未找到命令包装函数' }
 . ([scriptblock]::Create($function.Extent.Text))
-New-PowerShellTaskArguments '__GTOOLS_OUTPUT_TEST_COMMAND__'
+New-PowerShellTaskArguments '__EXECUTOR_OUTPUT_TEST_COMMAND__'
 """
         result = subprocess.run(
             [POWERSHELL, '-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand',
              base64.b64encode(source.encode('utf-16le')).decode()],
-            env={**os.environ, 'GTOOLS_TEST_EXECUTOR_PS1': str(ROOT / 'executor.ps1')},
+            env={**os.environ, 'EXECUTOR_TEST_EXECUTOR_PS1': str(ROOT / 'executor.ps1')},
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20)
         if result.returncode:
             raise RuntimeError('加载命令包装函数失败：' + result.stderr.decode('utf-8', errors='replace'))
@@ -44,12 +44,12 @@ New-PowerShellTaskArguments '__GTOOLS_OUTPUT_TEST_COMMAND__'
         cls.fallback_script = base64.b64decode(cls.fallback_arguments[-1]).decode('utf-16le')
 
     def setUp(self):
-        self.directory = tempfile.TemporaryDirectory(prefix='gtools-output-')
+        self.directory = tempfile.TemporaryDirectory(prefix='executor-output-')
         self.addCleanup(self.directory.cleanup)
         (Path(self.directory.name) / 'config.toml').write_text('name = "测试"', encoding='utf-8')
 
     def command_arguments(self, command):
-        fallback_script = self.fallback_script.replace('__GTOOLS_OUTPUT_TEST_COMMAND__', command)
+        fallback_script = self.fallback_script.replace('__EXECUTOR_OUTPUT_TEST_COMMAND__', command)
         return {
             'Python 执行端': executor.powershell_arguments(command),
             'PowerShell 执行端': self.fallback_arguments[:-1] + [base64.b64encode(fallback_script.encode('utf-16le')).decode()],
@@ -165,11 +165,11 @@ New-PowerShellTaskArguments '__GTOOLS_OUTPUT_TEST_COMMAND__'
                     process.stdout.close()
 
     def test_最后一条命令失败返回原生非零退出码(self):
-        self.check_native_result("Get-Content -LiteralPath './gtools-does-not-exist'",
-                                 ['gtools-does-not-exist'], exit_code=1)
+        self.check_native_result("Get-Content -LiteralPath './executor-does-not-exist'",
+                                 ['executor-does-not-exist'], exit_code=1)
 
     def test_不存在的命令返回原生失败状态(self):
-        self.check_native_result('gtools-command-does-not-exist', ['gtools-command-does-not-exist'], exit_code=1)
+        self.check_native_result('executor-command-does-not-exist', ['executor-command-does-not-exist'], exit_code=1)
 
     def test_非终止错误结束时失败但用户继续成功时恢复成功(self):
         self.check_native_result("Write-Error '非终止错误'", ['非终止错误'], exit_code=1)
@@ -177,16 +177,16 @@ New-PowerShellTaskArguments '__GTOOLS_OUTPUT_TEST_COMMAND__'
                                  ['非终止错误', '继续成功'], exit_code=0)
 
     def test_静默错误保留用户策略且最终状态仍表示失败(self):
-        self.check_native_result("$ErrorActionPreference='SilentlyContinue'; Get-Content -LiteralPath './gtools-does-not-exist'",
+        self.check_native_result("$ErrorActionPreference='SilentlyContinue'; Get-Content -LiteralPath './executor-does-not-exist'",
                                  [], exit_code=1, exact='')
 
     def test_用户忽略错误后继续执行不会被强制终止(self):
-        self.check_native_result("Get-Content -LiteralPath './gtools-does-not-exist' -ErrorAction Ignore; Write-Output '用户继续'",
-                                 ['用户继续'], exit_code=0, absent=['gtools-does-not-exist'])
+        self.check_native_result("Get-Content -LiteralPath './executor-does-not-exist' -ErrorAction Ignore; Write-Output '用户继续'",
+                                 ['用户继续'], exit_code=0, absent=['executor-does-not-exist'])
 
     def test_用户指定Stop后停止执行并返回失败(self):
-        self.check_native_result("Get-Content -LiteralPath './gtools-does-not-exist' -ErrorAction Stop; Write-Output '不应执行'",
-                                 ['gtools-does-not-exist'], exit_code=1, absent=['不应执行\n'])
+        self.check_native_result("Get-Content -LiteralPath './executor-does-not-exist' -ErrorAction Stop; Write-Output '不应执行'",
+                                 ['executor-does-not-exist'], exit_code=1, absent=['不应执行\n'])
 
 
 if __name__ == '__main__':

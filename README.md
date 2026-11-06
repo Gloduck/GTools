@@ -282,7 +282,7 @@ The code editor is available at `/codeEditor` and includes:
 - OpenAI-compatible AI completion and agent sessions
 - Isolated JavaScript execution, HTTP proxying, and image generation
 - SSH terminals, SFTP transfers, and AI remote-command tools
-- Executor connections: AI Agent can connect to this computer, a LAN host or a remote host, with command approval and terminal logs; no GTools backend required
+- Executor connections: AI Agent can connect to this computer, a LAN host or a remote host, with command approval and terminal logs; no application backend required
 - Settings URL import/export and PWA installation
 
 Files created or changed by AI remain in editor memory until the user reviews and saves them. Exported settings URLs may contain API keys, passwords, or private keys and must not be shared publicly.

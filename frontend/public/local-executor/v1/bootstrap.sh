@@ -23,7 +23,7 @@ exec python3 - "$base" "$origin" "$listen_address" "$port" "$public_url" <<'PY'
 import os, pathlib, signal, subprocess, sys, tempfile, urllib.request
 base, origin, listen_address, port, public_url = sys.argv[1:]
 url = base.rstrip('/') + '/executor.py'
-with tempfile.TemporaryDirectory(prefix='gtools-local-') as directory:
+with tempfile.TemporaryDirectory(prefix='executor-bootstrap-') as directory:
     path = pathlib.Path(directory) / 'executor.py'
     with urllib.request.urlopen(url, timeout=30) as response:
         if not (response.url.startswith('https://') or response.url.startswith(('http://127.0.0.1:', 'http://localhost:'))):

@@ -84,7 +84,7 @@ test('场景：CMD 启动入口解码后与 PowerShell 相同，下载脚本使�
     assert.doesNotMatch(powershell, /\)\.Content/);
 });
 
-test('场景：真实 PowerShell 执行网页生成的命令，二进制响应和中文不会变成数字列表', {skip: !process.env.GTOOLS_TEST_POWERSHELL}, async () => {
+test('场景：真实 PowerShell 执行网页生成的命令，二进制响应和中文不会变成数字列表', {skip: !process.env.EXECUTOR_TEST_POWERSHELL}, async () => {
     const {spawnSync} = await import('node:child_process');
     const command = buildLocalStartupCommand({platform: 'windows', assetBase: 'https://tools.example/local-executor/v1', origin: 'https://tools.example'});
     const fixture = `
@@ -98,7 +98,7 @@ function Invoke-WebRequest {
 }
 ${command}
 `;
-    const result = spawnSync(process.env.GTOOLS_TEST_POWERSHELL, ['-NoProfile', '-EncodedCommand', Buffer.from(fixture, 'utf16le').toString('base64')], {encoding: 'utf8', timeout: 30000});
+    const result = spawnSync(process.env.EXECUTOR_TEST_POWERSHELL, ['-NoProfile', '-EncodedCommand', Buffer.from(fixture, 'utf16le').toString('base64')], {encoding: 'utf8', timeout: 30000});
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /中文启动成功/);
 });

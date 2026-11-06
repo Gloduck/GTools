@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""GTools 命令执行端，仅依赖 Python 3.8 及以上版本的标准库。
+"""通用命令执行端，仅依赖 Python 3.8 及以上版本的标准库。
 
 不连接远程后端，凭据只输出到终端，每个任务使用独立进程组。
 命令使用启动服务的当前用户权限执行。
@@ -93,7 +93,7 @@ class TerminalLog:
             try:
                 stream = self.get_stream()
                 if dropped:
-                    stream.write('[GTools] 终端日志积压，已省略 %d 字符；任务输出请以接口缓存为准。\n' % dropped)
+                    stream.write('[Executor] 终端日志积压，已省略 %d 字符；任务输出请以接口缓存为准。\n' % dropped)
                 stream.write(text)
                 stream.flush()
             except (OSError, ValueError, UnicodeError):
@@ -324,13 +324,13 @@ class Task:
                 env = os.environ.copy()
                 # 不通过子进程环境变量传递本机连接凭据。
                 for key in list(env):
-                    if key.startswith("GTOOLS_LOCAL_"):
+                    if key.startswith("LOCAL_EXECUTOR_"):
                         del env[key]
                 if os.name == "nt":
                     system = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32")
                     if self.shell == "cmd":
                         # 批处理文件原样保存多行命令，避免再次经过 Python 的 argv 引号转换。
-                        with tempfile.NamedTemporaryFile(mode="w", suffix=".cmd", prefix="gtools-task-", encoding="utf-8", newline="", delete=False) as script_file:
+                        with tempfile.NamedTemporaryFile(mode="w", suffix=".cmd", prefix="executor-task-", encoding="utf-8", newline="", delete=False) as script_file:
                             self.script_path = script_file.name
                             script_file.write('@echo off\r\nchcp 65001 >nul\r\nset "PYTHONIOENCODING=utf-8"\r\n' + self.command.replace("\r\n", "\n").replace("\n", "\r\n") + "\r\n")
                         executable = os.path.join(system, "cmd.exe")
@@ -445,7 +445,7 @@ class Server(ThreadingHTTPServer):
 
 
 class Handler(BaseHTTPRequestHandler):
-    server_version = "GToolsLocal/1"
+    server_version = "LocalExecutor/1"
     protocol_version = "HTTP/1.0"
 
     def setup(self):
@@ -562,7 +562,7 @@ def main():
     except (ValueError, OSError, subprocess.SubprocessError) as exc:
         parser.exit(1, str(exc) + "\n")
     connection = {"url": server.connection_url, "token": executor.token}
-    print("GTools executor — keep this terminal open. Ctrl+C disconnects.", file=sys.stderr, flush=True)
+    print("Command executor — keep this terminal open. Ctrl+C disconnects.", file=sys.stderr, flush=True)
     print("命令使用当前用户权限执行，默认目录：%s。执行日志在此终端显示。" % executor.cwd, file=sys.stderr, flush=True)
     print("Paste this connection into the AI Agent Executor connection dialog:", file=sys.stderr, flush=True)
     print("监听地址：%s；浏览器访问地址：%s" % (server.listen_url, server.connection_url), file=sys.stderr, flush=True)

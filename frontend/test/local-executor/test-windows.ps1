@@ -12,7 +12,7 @@ $ExecutorRoot = (Resolve-Path -LiteralPath $ExecutorRoot).ProviderPath
 & ([scriptblock]::Create([IO.File]::ReadAllText((Join-Path $TestRoot 'test-download.ps1')))) -ExecutorRoot $ExecutorRoot
 $utf8 = New-Object Text.UTF8Encoding($false)
 $origin = 'https://local-executor-test.example'
-$directory = Join-Path ([IO.Path]::GetTempPath()) ('gtools 测试 & '+[Guid]::NewGuid().ToString('N'))
+$directory = Join-Path ([IO.Path]::GetTempPath()) ('executor 测试 & '+[Guid]::NewGuid().ToString('N'))
 [void][IO.Directory]::CreateDirectory($directory)
 function Quote-Ps([string]$Value) { return "'"+$Value.Replace("'","''")+"'" }
 function Assert-True($Value, [string]$Message) { if (-not $Value) { throw "场景失败：$Message" } }
@@ -87,14 +87,14 @@ try {
             [void](Request-Api GET /v1/info -Status 403 -RequestOrigin 'https://evil.example')
             [void](Request-Api POST /v1/tasks @{id='invalid-shell'; command='echo hello'; shell=@()} -Status 400)
             # 覆盖目录查询的对象输出，避免只测试 Write-Output 而漏掉默认格式化丢失。
-            $fixture = Join-Path $directory 'gtools-object-check.txt'
+            $fixture = Join-Path $directory 'executor-object-check.txt'
             [IO.File]::WriteAllText($fixture,'测试对象输出',$utf8)
             $id = [Guid]::NewGuid().ToString('N')
-            $command = "Get-ChildItem -LiteralPath . -Force | Select-Object Name,Mode; Write-Output ('FILE_EXISTS=' + (Test-Path -LiteralPath './gtools-object-check.txt')); Write-Progress -Activity '不应显示的进度' -Status '执行中'; Write-Warning '中文警告'; Write-Error '中文错误'; Write-Output '后续文本'"
+            $command = "Get-ChildItem -LiteralPath . -Force | Select-Object Name,Mode; Write-Output ('FILE_EXISTS=' + (Test-Path -LiteralPath './executor-object-check.txt')); Write-Progress -Activity '不应显示的进度' -Status '执行中'; Write-Warning '中文警告'; Write-Error '中文错误'; Write-Output '后续文本'"
             [void](Request-Api POST /v1/tasks @{id=$id; command=$command; shell='powershell'; cwd=$directory})
             $task = Wait-Task $id
             Assert-True ($task.exit_code -eq 0 -and $task.status -eq 'completed') '对象输出任务正常结束'
-            foreach ($text in @('Name','Mode','gtools-object-check.txt','FILE_EXISTS=True','中文警告','中文错误','后续文本')) {
+            foreach ($text in @('Name','Mode','executor-object-check.txt','FILE_EXISTS=True','中文警告','中文错误','后续文本')) {
                 Assert-True ($task.output.Contains($text)) "对象及普通文本完整输出：$text"
             }
             foreach ($text in @('#< CLIXML','<Objs ','不应显示的进度',[string][char]0xFFFD)) {
@@ -104,9 +104,9 @@ try {
             # 任务状态遵循原生 PowerShell CLI，不用历史 LASTEXITCODE 推断最后一条命令。
             $nativeFailure = '& '+(Quote-Ps (Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/powershell.exe'))+" -NoLogo -NoProfile -NonInteractive -Command 'exit 9'"
             $resultCases = @(
-                @{Name='最后读取失败'; Command="Get-Content -LiteralPath './gtools-does-not-exist'"; Code=1; Text='gtools-does-not-exist'},
+                @{Name='最后读取失败'; Command="Get-Content -LiteralPath './executor-does-not-exist'"; Code=1; Text='executor-does-not-exist'},
                 @{Name='非终止错误后继续成功'; Command="Write-Error '预期错误'; Write-Output '恢复成功'"; Code=0; Text='恢复成功'},
-                @{Name='静默失败仍返回失败'; Command="`$ErrorActionPreference='SilentlyContinue'; Get-Content -LiteralPath './gtools-does-not-exist'"; Code=1; Text=''},
+                @{Name='静默失败仍返回失败'; Command="`$ErrorActionPreference='SilentlyContinue'; Get-Content -LiteralPath './executor-does-not-exist'"; Code=1; Text=''},
                 @{Name='外部失败遵循CLI状态'; Command=$nativeFailure; Code=1; Text=''},
                 @{Name='显式传出外部原始退出码'; Command=$nativeFailure+'; exit $LASTEXITCODE'; Code=9; Text=''},
                 @{Name='外部失败后继续成功'; Command=$nativeFailure+"; Write-Output '恢复成功'"; Code=0; Text='恢复成功'}

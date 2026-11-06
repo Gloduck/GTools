@@ -53,9 +53,9 @@ async function setup(page, command, options = {}, settingsOverrides = {}) {
             ...settingsOverrides,
         }));
     }, settingsOverrides);
-    // 模型使用固定响应，命令由真实执行器连接端处理；禁止访问 GTools API。
+    // 模型使用固定响应，命令由真实执行器连接端处理；禁止访问 应用后端 API。
     await page.route('**/api/**', async (route) => {
-        throw new Error(`不应访问 GTools 后端：${route.request().url()}`);
+        throw new Error(`不应访问 应用后端：${route.request().url()}`);
     });
     await page.route('https://api.openai.com/v1/responses', async (route) => {
         const body = route.request().postDataJSON();

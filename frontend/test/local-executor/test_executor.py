@@ -16,7 +16,7 @@ import unittest
 import uuid
 
 SOURCE = Path(__file__).resolve().parents[2] / 'public/local-executor/v1/executor.py'
-spec = importlib.util.spec_from_file_location('gtools_executor', SOURCE)
+spec = importlib.util.spec_from_file_location('local_executor', SOURCE)
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 ORIGIN = 'https://tools.example.test'
@@ -24,7 +24,7 @@ ORIGIN = 'https://tools.example.test'
 
 class ExecutorTest(unittest.TestCase):
     def setUp(self):
-        self.directory = tempfile.TemporaryDirectory(prefix='gtools-executor-test-')
+        self.directory = tempfile.TemporaryDirectory(prefix='executor-test-')
         self.console = io.StringIO()
         self.executor = module.Executor(ORIGIN, self.directory.name, log_stream=self.console)
         self.server = module.Server(self.executor, 0)
@@ -94,7 +94,7 @@ class ExecutorTest(unittest.TestCase):
     def test_固定路由与请求参数校验(self):
         self.assertEqual(self.request('GET', '/../../etc/passwd')[0], 404)
         self.assertEqual(self.request('GET', '/v1/tasks')[0], 405)
-        for body in ([], {'id': '../outside', 'command': 'pwd'}, {'id': 'test-task', 'command': ''}, {'id': 'test-task', 'command': 'pwd', 'cwd': []}, {'id': 'test-task', 'command': 'pwd', 'cwd': '/definitely-missing-gtools'}):
+        for body in ([], {'id': '../outside', 'command': 'pwd'}, {'id': 'test-task', 'command': ''}, {'id': 'test-task', 'command': 'pwd', 'cwd': []}, {'id': 'test-task', 'command': 'pwd', 'cwd': '/definitely-missing-executor'}):
             self.assertEqual(self.request('POST', '/v1/tasks', body)[0], 400)
         self.assertEqual(self.request('POST', '/v1/tasks', {'x': 'a' * (module.MAX_BODY + 1)})[0], 413)
         self.assertEqual(self.request('POST', '/v1/tasks', {}, {'Content-Type': 'text/plain'})[0], 415)
@@ -204,7 +204,7 @@ class BootstrapTest(unittest.TestCase):
         thread.start()
         process = None
         try:
-            with tempfile.TemporaryDirectory(prefix='gtools-bootstrap-test-') as directory:
+            with tempfile.TemporaryDirectory(prefix='executor-bootstrap-test-') as directory:
                 cache = Path(directory, 'cache')
                 cache.mkdir()
                 process = subprocess.Popen(['sh', str(SOURCE.with_name('bootstrap.sh')),

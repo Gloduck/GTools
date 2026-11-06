@@ -21,7 +21,7 @@ foreach ($candidate in @('python3','python','py')) {
         if ($LASTEXITCODE -eq 0) { $python=$command.Source; $pythonArgs=$testArgs; break }
     } catch {}
 }
-$directory=Join-Path ([IO.Path]::GetTempPath()) ('gtools-local-'+[Guid]::NewGuid().ToString('N'))
+$directory=Join-Path ([IO.Path]::GetTempPath()) ('executor-bootstrap-'+[Guid]::NewGuid().ToString('N'))
 [void][IO.Directory]::CreateDirectory($directory)
 try {
     $file=if($python){'executor.py'}else{'executor.ps1'}

@@ -31,7 +31,7 @@ if ($wildcard -and -not $PublicUrl) { throw 'PublicUrl is required when listenin
 # 使用系统作业对象管理任务进程树。先创建挂起进程并加入作业，
 # 再执行用户命令，避免后台子进程抢先脱离任务管理。
 # 辅助类型带版本，重新启动时不会复用当前 PowerShell 会话中旧版的已编译类型。
-if (-not ('GToolsLocalTaskV3' -as [type])) {
+if (-not ('ExecutorTaskV3' -as [type])) {
 Add-Type -TypeDefinition @'
 using System;
 using System.IO;
@@ -41,14 +41,14 @@ using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
 // 终端日志只是结果副本，独立线程和有界队列避免慢终端阻塞请求及输出采集。
-public static class GToolsTerminalLogV3 {
+public static class ExecutorTerminalLogV3 {
     static readonly object gate=new object();
     static readonly Queue<string> pending=new Queue<string>();
     const int Limit=262144;
     static int pendingChars;
     static long droppedChars;
     static bool writing;
-    static GToolsTerminalLogV3() {
+    static ExecutorTerminalLogV3() {
         var worker=new Thread(WriteLoop); worker.IsBackground=true; worker.Start();
     }
     public static void Append(string text) {
@@ -69,7 +69,7 @@ public static class GToolsTerminalLogV3 {
                 dropped=droppedChars; droppedChars=0; writing=true;
             }
             try {
-                if(dropped>0) Console.Error.WriteLine("[GTools] 终端日志积压，已省略 "+dropped+" 字符；任务输出请以接口缓存为准。");
+                if(dropped>0) Console.Error.WriteLine("[Executor] 终端日志积压，已省略 "+dropped+" 字符；任务输出请以接口缓存为准。");
                 Console.Error.Write(text); Console.Error.Flush();
             } catch(IOException) {} catch(ObjectDisposedException) {} catch(EncoderFallbackException) {}
             finally { lock(gate) { writing=false; Monitor.PulseAll(gate); } }
@@ -87,7 +87,7 @@ public static class GToolsTerminalLogV3 {
         }
     }
 }
-public sealed class GToolsLocalTaskV3 : IDisposable {
+public sealed class ExecutorTaskV3 : IDisposable {
     [StructLayout(LayoutKind.Sequential)] struct Security { public int size; public IntPtr descriptor; public int inherit; }
     [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)] struct Startup {
         public int cb; public string reserved, desktop, title;
@@ -124,7 +124,7 @@ public sealed class GToolsLocalTaskV3 : IDisposable {
     bool completionLogged, processExited, outputFinished, readerStarted;
     void Log(string text) {
         if(String.IsNullOrEmpty(text)) return;
-        GToolsTerminalLogV3.Append("["+Id+"] "+text+(text.EndsWith("\n") ? "" : "\n"));
+        ExecutorTerminalLogV3.Append("["+Id+"] "+text+(text.EndsWith("\n") ? "" : "\n"));
     }
     void LogCompletion() {
         if(completionLogged) return;
@@ -303,7 +303,7 @@ function Send-Json($Context, [int]$Status, $Body) {
     try { $response.OutputStream.Write($bytes,0,$bytes.Length) } finally { $response.Close() }
 }
 
-[Console]::Error.WriteLine('GTools executor (PowerShell fallback). Keep this terminal open; Ctrl+C disconnects.')
+[Console]::Error.WriteLine('Command executor (PowerShell fallback). Keep this terminal open; Ctrl+C disconnects.')
 [Console]::Error.WriteLine("命令使用当前用户权限执行，默认目录：$Cwd。执行日志在此终端显示。")
 [Console]::Error.WriteLine('Paste this connection into the AI Agent Executor connection dialog:')
 [Console]::Error.WriteLine("监听地址：$listenUrl；浏览器访问地址：$baseUrl")
@@ -382,12 +382,12 @@ try {
                     if ($tasks[$body.id].Fingerprint -cne $fingerprint) { Fail-Request 409 'Task id already belongs to different execution content' }
                     $result = $tasks[$body.id].Snapshot(0)
                 } else {
-                    $task = New-Object GToolsLocalTaskV3
+                    $task = New-Object ExecutorTaskV3
                     $task.Shell=$shellName; $task.Id=$body.id; $task.Command=$body.command; $task.Cwd=$directory; $task.Fingerprint=$fingerprint
                     $task.CreatedAt=([DateTime]::UtcNow-[DateTime]'1970-01-01').TotalSeconds
                     if ($shellName -eq 'cmd') {
                         # CMD 使用原始批处理文件，保留引号、管道、百分号和多行语义。
-                        $task.ScriptPath = Join-Path ([IO.Path]::GetTempPath()) ('gtools-task-'+[Guid]::NewGuid().ToString('N')+'.cmd')
+                        $task.ScriptPath = Join-Path ([IO.Path]::GetTempPath()) ('executor-task-'+[Guid]::NewGuid().ToString('N')+'.cmd')
                         $scriptText = "@echo off`r`nchcp 65001 >nul`r`nset `"PYTHONIOENCODING=utf-8`"`r`n" + $body.command.Replace("`r`n","`n").Replace("`n","`r`n") + "`r`n"
                         [IO.File]::WriteAllText($task.ScriptPath,$scriptText,$utf8)
                         $application = Join-Path $env:SystemRoot 'System32/cmd.exe'
@@ -421,6 +421,6 @@ try {
 } finally {
     $listener.Close()
     foreach ($task in $tasks.Values) { $task.Dispose() }
-    [void][GToolsTerminalLogV3]::Flush(1000)
+    [void][ExecutorTerminalLogV3]::Flush(1000)
     [Console]::Error.WriteLine('Local executor stopped.')
 }

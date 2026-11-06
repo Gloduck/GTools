@@ -12,16 +12,16 @@ import threading
 import time
 import unittest
 
-POWERSHELL = os.environ.get('GTOOLS_TEST_POWERSHELL') or shutil.which('powershell') or shutil.which('pwsh')
+POWERSHELL = os.environ.get('EXECUTOR_TEST_POWERSHELL') or shutil.which('powershell') or shutil.which('pwsh')
 SOURCE = Path(__file__).resolve().parents[2] / 'public/local-executor/v1/executor.ps1'
 ORIGIN = 'https://tools.example.test'
 
 
-@unittest.skipUnless(POWERSHELL, '未找到 PowerShell，可通过 GTOOLS_TEST_POWERSHELL 指定已有运行环境')
+@unittest.skipUnless(POWERSHELL, '未找到 PowerShell，可通过 EXECUTOR_TEST_POWERSHELL 指定已有运行环境')
 class PowerShellApiTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.directory = tempfile.TemporaryDirectory(prefix='gtools-powershell-test-')
+        cls.directory = tempfile.TemporaryDirectory(prefix='executor-powershell-test-')
         # 用显式回环 IP 和模拟 HTTPS 入口验证代理部署，不需要暴露测试端口到外网。
         with socket.socket() as probe:
             probe.bind(('127.0.0.2', 0))

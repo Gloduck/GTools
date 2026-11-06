@@ -43,13 +43,13 @@ class ShellOutputTest(unittest.TestCase):
         self.assertEqual(Path(self.directory.name, 'result.txt').read_text(), output)
 
     def test_失败命令保留错误输出与非零状态(self):
-        for command in ("cat ./gtools-file-does-not-exist", 'gtools-command-does-not-exist'):
+        for command in ("cat ./executor-file-does-not-exist", 'executor-command-does-not-exist'):
             with self.subTest(command=command):
                 task_id, _ = self.submit(command)
                 task, output = self.read_all(task_id)
                 self.assertEqual(task['status'], 'failed')
                 self.assertNotEqual(task['exit_code'], 0)
-                self.assertIn('gtools-', output)
+                self.assertIn('executor-', output)
 
     def test_任务运行期间可以读取输出且末尾不会重复(self):
         task_id, _ = self.submit("printf '开始\\n'; sleep 1.5; printf '结束\\n'")

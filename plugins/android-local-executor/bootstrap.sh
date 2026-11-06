@@ -6,6 +6,7 @@ origin=${2:?Browser origin is required}
 listen=${3:-127.0.0.1}
 port=${4:-0}
 public_url=${5:-}
+token=${6:-}
 base=${base%/}
 case "$base" in https://*|http://*) ;; *) echo 'Expected an HTTP(S) asset URL' >&2; exit 1 ;; esac
 [ -x /system/bin/app_process ] || { echo 'This launcher requires Android app_process' >&2; exit 1; }
@@ -42,7 +43,7 @@ actual=$(/system/bin/toybox sha256sum "$work/executor.dex")
 # Android 新版本要求动态加载的代码为只读；下载目录仅当前用户可访问。
 chmod 400 "$work/executor.dex"
 CLASSPATH="$work/executor.dex" /system/bin/app_process / dev.executor.android.Main \
-  --origin "$origin" --listen-address "$listen" --port "$port" --public-url "$public_url" --cwd "$PWD" &
+  --origin "$origin" --listen-address "$listen" --port "$port" --public-url "$public_url" --cwd "$PWD" --token "$token" &
 child=$!
 wait "$child"
 child=

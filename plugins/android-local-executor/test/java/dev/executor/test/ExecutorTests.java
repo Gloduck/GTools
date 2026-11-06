@@ -67,6 +67,7 @@ public final class ExecutorTests {
                     : "测试环境：Linux JVM 共享协议；不代表 Android 实机通过。");
             tests.run("连接信息不泄露凭据", tests::testInfo);
             tests.run("认证来源与 Host 校验", tests::testAuthorization);
+            tests.run("自定义 token 校验与真实请求鉴权", tests::testCustomToken);
             tests.run("跨域预检及禁止额外请求头", tests::testPreflight);
             tests.run("任务参数路由和请求体校验", tests::testParameters);
             tests.run("重复提交不重复执行", tests::testIdempotency);
@@ -116,6 +117,31 @@ public final class ExecutorTests {
         raw("GET", "/v1/info", headers("Host", "untrusted.example"), null).expect(403);
         raw("GET", "/v1/info", headers("Origin", "null"), null).expect(403);
         raw("GET", "/v1/info", headers("Authorization", ""), null).expect(401);
+    }
+
+    private void testCustomToken() throws Exception {
+        for (String invalid : new String[]{repeat("a", 32) + "\n", repeat("中", 32), repeat("a", 32) + "'"}) {
+            boolean rejected = false;
+            try { new ExecutorConfig(ORIGIN, "127.0.0.1", 0, directory, "", invalid); }
+            catch (IllegalArgumentException expected) { rejected = true; }
+            check(rejected, "非法自定义 token 未被拒绝");
+        }
+        String previousEndpoint = endpoint;
+        String previousToken = token;
+        for (String customToken : new String[]{"a", "short", "-a", repeat("x", 256)}) {
+            ExecutorConfig config = ExecutorConfig.parse(new String[]{"--origin", ORIGIN, "--cwd", directory.getPath(), "--token", customToken});
+            try (ExecutorServer custom = new ExecutorServer(config, shell, new PrintStream(terminal, true, "UTF-8"))) {
+                custom.startExecutor();
+                endpoint = custom.connection().getString("url");
+                token = custom.connection().getString("token");
+                check(token.equals(customToken), "自定义 token 被替换");
+                request("GET", "/v1/info", null).expect(200);
+                request("GET", "/v1/info", null, headers("Authorization", "Bearer wrong")).expect(401);
+                JSONObject info = request("GET", "/v1/info", null).expect(200);
+                // 单字符 token 可能出现在普通字段值中，按字段检查凭据不进入响应。
+                check(!info.has("token") && !info.has("authorization"), "信息接口泄露凭据字段");
+            } finally { endpoint = previousEndpoint; token = previousToken; }
+        }
     }
 
     private void testPreflight() throws Exception {

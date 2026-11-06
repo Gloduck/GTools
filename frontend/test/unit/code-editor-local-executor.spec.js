@@ -424,8 +424,8 @@ test('场景：预置模板只复制到当前连接，手动修改不污染模�
 });
 
 
-test('场景：设置链接导出白名单、IP、端口和免审批，导入后回填并生效且不恢复凭据', async ({page}) => {
-    await setup(page, "printf '导入免审批成功'", {high_risk: true}, {localExecutor: {listenAddress: '192.168.1.25', port: 8321}});
+test('场景：设置链接明文导出自定义 token，导入后回填并生效但不恢复会话', async ({page}) => {
+    await setup(page, "printf '导入免审批成功'", {high_risk: true}, {localExecutor: {listenAddress: '192.168.1.25', port: 8321, token: 'custom-token-'.repeat(4)}});
     const panel = await connect(page);
     await panel.getByLabel('AI 白名单主命令').fill('pwd\nls\npwd');
     await panel.getByRole('checkbox', {name: '执行命令免审批', exact: true}).check();
@@ -439,12 +439,12 @@ test('场景：设置链接导出白名单、IP、端口和免审批，导入后
     const exported = await page.evaluate(() => window.exportedSettingsUrl);
     const encoded = new URLSearchParams(new URL(exported).hash.slice(1)).get('settings');
     const snapshot = JSON.parse(inflateRawSync(Buffer.from(encoded, 'base64url')));
-    expect(snapshot.localExecutor).toEqual({whitelist: ['pwd', 'ls'], listenAddress: '192.168.1.25', port: 8321, autoApprove: true});
+    expect(snapshot.localExecutor).toEqual({token: 'custom-token-'.repeat(4), whitelist: ['pwd', 'ls'], listenAddress: '192.168.1.25', port: 8321, autoApprove: true});
     expect(JSON.stringify(snapshot)).not.toContain(connection.token);
     expect(JSON.stringify(snapshot)).not.toContain(connection.url);
 
-    // 可复用配置正常导入，外部设置夹带的凭据和运行状态被过滤。
-    const imported = {whitelist: ['Get-WinEvent', 'Get-NetTCPConnection'], listenAddress: '::1', port: 0, autoApprove: true};
+    // 自定义凭据正常导入，连接地址和运行状态不从设置恢复。
+    const imported = {token: connection.token, whitelist: ['Get-WinEvent', 'Get-NetTCPConnection'], listenAddress: '::1', port: 0, autoApprove: true};
     snapshot.localExecutor = {...imported, ...connection,
         connected: true, shell: 'cmd', bindWorkspace: true, tasks: [{id: '不应保存'}]};
     const importUrl = '/codeEditor#settings=' + deflateRawSync(Buffer.from(JSON.stringify(snapshot))).toString('base64url');
@@ -459,7 +459,9 @@ test('场景：设置链接导出白名单、IP、端口和免审批，导入后
     await page.getByRole('button', {name: '执行器连接', exact: true}).click();
     await expect(panel.getByLabel('监听 IP', {exact: true})).toHaveValue('::1');
     await expect(panel.getByLabel('监听端口（0 为自动分配）', {exact: true})).toHaveValue('0');
-    await expect(panel.getByLabel('终端显示的连接 JSON')).toHaveValue('');
+    await expect(panel.getByLabel('自定义 token', {exact: true})).toHaveAttribute('type', 'password');
+    await expect(panel.getByLabel('自定义 token', {exact: true})).toHaveValue(connection.token);
+    await expect(panel.getByLabel('终端显示的连接 JSON')).toHaveValue(JSON.stringify({url: '', token: connection.token}));
     await panel.getByLabel('终端显示的连接 JSON').fill(JSON.stringify(connection));
     await panel.getByRole('button', {name: '连接执行器', exact: true}).click();
     await expect(panel.getByLabel('AI 白名单主命令')).toHaveValue('Get-WinEvent\nGet-NetTCPConnection');
@@ -496,7 +498,7 @@ test('场景：监听 IP 和端口修改后自动保存，刷新回填，非法�
     await port.fill('65536');
     await expect(dialog.getByRole('button', {name: '复制启动命令', exact: true})).toBeDisabled();
     expect(await page.evaluate(() => JSON.parse(localStorage.getItem('browser-code-editor-settings')).localExecutor))
-        .toEqual({whitelist: [], listenAddress: '192.168.1.25', port: 8321, autoApprove: false});
+        .toEqual({token: '', whitelist: [], listenAddress: '192.168.1.25', port: 8321, autoApprove: false});
     await page.reload();
     await page.getByRole('button', {name: 'AI 助手', exact: true}).click();
     await page.getByRole('button', {name: '执行器连接', exact: true}).click();
@@ -548,4 +550,67 @@ test('场景：局域网 HTTP 地址可配对并执行，审批明确显示目�
     const result = JSON.parse(requests[1].input.find((item) => item.type === 'function_call_output').output);
     expect(result).toMatchObject({ok: true, status: 'completed', exit_code: 0});
     expect(result.output).toContain('远程入口结果');
+});
+
+
+test('场景：设置输入单向覆盖连接 JSON，手动编辑 JSON 不反向修改设置', async ({page}) => {
+    await setup(page, 'pwd');
+    await page.getByRole('button', {name: '执行器连接', exact: true}).click();
+    const panel = page.locator('.local-executor-dialog');
+    const token = panel.getByLabel('自定义 token', {exact: true});
+    const port = panel.getByLabel('监听端口（0 为自动分配）', {exact: true});
+    const json = panel.getByLabel('终端显示的连接 JSON');
+    await expect(token).toHaveAttribute('type', 'password');
+    await token.fill(connection.token);
+    await port.fill(new URL(connection.url).port);
+    await expect(json).toHaveValue(JSON.stringify(connection));
+    await panel.getByRole('button', {name: '关闭', exact: true}).click();
+    await page.getByRole('button', {name: '执行器连接', exact: true}).click();
+    await expect(json).toHaveValue(JSON.stringify(connection));
+    await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('browser-code-editor-settings')).localExecutor.token)).toBe(connection.token);
+    const manual = JSON.stringify({url: 'http://192.168.1.10:9000', token: 'manual-token-'.repeat(4)});
+    await json.fill(manual);
+    await expect(token).toHaveValue(connection.token);
+    await expect(port).toHaveValue(new URL(connection.url).port);
+    await expect(panel.getByLabel('监听 IP', {exact: true})).toHaveValue('127.0.0.1');
+    expect(await page.evaluate(() => localStorage.getItem('browser-code-editor-settings'))).not.toContain('manual-token-');
+    await port.fill('9001');
+    await expect(json).toHaveValue(JSON.stringify({url: 'http://127.0.0.1:9001', token: connection.token}));
+    await panel.getByLabel('监听 IP', {exact: true}).fill('192.168.1.25');
+    await expect(json).toHaveValue(JSON.stringify({url: 'http://192.168.1.25:9001', token: connection.token}));
+    await token.fill('abc');
+    await expect(json).toHaveValue(JSON.stringify({url: 'http://192.168.1.25:9001', token: 'abc'}));
+    await token.fill(connection.token);
+    await panel.getByLabel('监听 IP', {exact: true}).fill('127.0.0.1');
+    await port.fill(new URL(connection.url).port);
+    await page.reload();
+    await page.getByRole('button', {name: 'AI 助手', exact: true}).click();
+    await page.getByRole('button', {name: '执行器连接', exact: true}).click();
+    await expect(token).toHaveValue(connection.token);
+    await expect(json).toHaveValue(JSON.stringify(connection));
+    await panel.getByRole('button', {name: '连接执行器', exact: true}).click();
+    await expect(page.locator('.local-status-button')).toHaveClass(/local-status-connected/);
+});
+
+
+test('场景：自定义 token 不限制长度，逐字输入时启动命令正常更新', async ({page}) => {
+    await setup(page, 'pwd');
+    await page.getByRole('button', {name: '执行器连接', exact: true}).click();
+    const panel = page.locator('.local-executor-dialog');
+    await panel.getByRole('combobox', {name: '系统', exact: true}).selectOption('windows');
+    const token = panel.getByLabel('自定义 token', {exact: true});
+    const startup = panel.getByLabel('启动命令', {exact: true});
+    const copy = panel.getByRole('button', {name: '复制启动命令', exact: true});
+    for (const value of ['a', 'ab', 'abc', 'a'.repeat(256)]) {
+        await token.fill(value);
+        await expect(startup).toHaveValue(new RegExp(`-Token '${value}'$`));
+        await expect(copy).toBeEnabled();
+        await expect(panel.getByLabel('终端显示的连接 JSON')).toHaveValue(JSON.stringify({url: '', token: value}));
+        await expect(panel.getByRole('alert')).toHaveCount(0);
+        await expect.poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('browser-code-editor-settings')).localExecutor.token)).toBe(value);
+    }
+    await token.fill('');
+    await expect(panel.getByLabel('终端显示的连接 JSON')).toHaveValue('');
+    await expect(startup).not.toHaveValue(/-Token/);
+    await expect(copy).toBeEnabled();
 });

@@ -4,9 +4,11 @@ param(
     [string]$Cwd = (Get-Location).Path,
     [int]$Port = 0,
     [string]$ListenAddress = '127.0.0.1',
-    [string]$PublicUrl = ''
+    [string]$PublicUrl = '',
+    [string]$Token = ''
 )
 $ErrorActionPreference = 'Stop'
+if ($Token -and $Token -cnotmatch '\A[A-Za-z0-9_-]+\z') { throw 'Token must contain only letters, digits, underscores or hyphens.' }
 [Console]::OutputEncoding = New-Object Text.UTF8Encoding($false)
 $originUri = [Uri]$Origin
 if ($originUri.Scheme -notin @('http','https') -or $originUri.UserInfo -or $originUri.AbsolutePath -ne '/' -or $originUri.Query -or $originUri.Fragment) { throw 'Origin must be a web origin.' }
@@ -243,11 +245,13 @@ if ($Port -eq 0) {
     $Port = $probe.LocalEndpoint.Port
     $probe.Stop()
 }
-$random = New-Object byte[] 32
-$rng = [Security.Cryptography.RandomNumberGenerator]::Create()
-$rng.GetBytes($random)
-$rng.Dispose()
-$token = [Convert]::ToBase64String($random).TrimEnd('=').Replace('+','-').Replace('/','_')
+if (-not $Token) {
+    $random = New-Object byte[] 32
+    $rng = [Security.Cryptography.RandomNumberGenerator]::Create()
+    $rng.GetBytes($random)
+    $rng.Dispose()
+    $token = [Convert]::ToBase64String($random).TrimEnd('=').Replace('+','-').Replace('/','_')
+}
 $listenHost = if ($listenIp.AddressFamily -eq [Net.Sockets.AddressFamily]::InterNetworkV6) { "[$ListenAddress]" } else { $ListenAddress }
 $listenUrl = "http://${listenHost}:$Port"
 $baseUrl = if ($PublicUrl) { $PublicUrl } else { $listenUrl }

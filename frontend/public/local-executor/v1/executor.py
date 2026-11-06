@@ -161,12 +161,14 @@ def validate_origin(origin):
 
 
 class Executor:
-    def __init__(self, origin, cwd, log_stream=None):
+    def __init__(self, origin, cwd, log_stream=None, token=""):
         self.origin = validate_origin(origin)
         self.cwd = str(Path(cwd).resolve(strict=True))
         if not Path(self.cwd).is_dir():
             raise ValueError("Working directory is not a directory")
-        self.token = secrets.token_urlsafe(32)
+        if not isinstance(token, str) or (token and not re.fullmatch(r"[A-Za-z0-9_-]+", token)):
+            raise ValueError("Token must contain only letters, digits, underscores or hyphens")
+        self.token = token or secrets.token_urlsafe(32)
         self.tasks = {}
         self.lock = threading.RLock()
         self.closed = False
@@ -553,11 +555,12 @@ def main():
     parser.add_argument("--port", type=int, default=0)
     parser.add_argument("--listen-address", default="127.0.0.1")
     parser.add_argument("--public-url", default="")
+    parser.add_argument("--token", default="")
     args = parser.parse_args()
     if not 0 <= args.port <= 65535:
         parser.error("Invalid port")
     try:
-        executor = Executor(args.origin, args.cwd)
+        executor = Executor(args.origin, args.cwd, token=args.token)
         server = Server(executor, args.port, args.listen_address, args.public_url)
     except (ValueError, OSError, subprocess.SubprocessError) as exc:
         parser.exit(1, str(exc) + "\n")

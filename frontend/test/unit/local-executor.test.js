@@ -1,17 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {buildLocalStartupCommand, LocalExecutorClient, normalizeLocalCommand, normalizeLocalExecutorSettings, parseLocalConnection} from '../../src/shared/local-executor/client.js';
+import {buildLocalStartupCommand, LocalExecutorClient, normalizeLocalCommand, normalizeLocalExecutorSettings, normalizeExecutorToken, buildLocalConnectionDraft, parseLocalConnection} from '../../src/shared/local-executor/client.js';
 
 const connection = {url: 'http://127.0.0.1:32100', token: 'a'.repeat(43)};
 
-test('场景：执行器设置兼容旧白名单，保存网络和免审批配置但不导入凭据或任务', () => {
-    const defaults = {whitelist: [], listenAddress: '127.0.0.1', port: 0, autoApprove: false};
+test('场景：执行器设置兼容旧白名单，保存自定义凭据和网络配置但不导入会话或任务', () => {
+    const defaults = {token: '', whitelist: [], listenAddress: '127.0.0.1', port: 0, autoApprove: false};
     for (const value of [undefined, null, [], '旧数据']) assert.deepEqual(normalizeLocalExecutorSettings(value), defaults);
     assert.deepEqual(normalizeLocalExecutorSettings({whitelist: ['pwd', 'pwd']}), {...defaults, whitelist: ['pwd']});
     assert.deepEqual(normalizeLocalExecutorSettings({
         whitelist: 'pwd\ncat\npwd', listenAddress: ' 192.168.1.25 ', port: 8321, autoApprove: true,
         ...connection, connected: true, shell: 'cmd', bindWorkspace: true, tasks: [{id: '不应导入'}],
-    }), {whitelist: ['pwd', 'cat'], listenAddress: '192.168.1.25', port: 8321, autoApprove: true});
+    }), {token: connection.token, whitelist: ['pwd', 'cat'], listenAddress: '192.168.1.25', port: 8321, autoApprove: true});
     assert.deepEqual(normalizeLocalExecutorSettings({listenAddress: '0:0:0:0:0:0:0:1', port: 65535}), {...defaults, listenAddress: '::1', port: 65535});
 });
 
@@ -32,7 +32,7 @@ test('场景：允许用户配置本机、局域网和远程入口，但拒绝�
     for (const url of ['file:///etc/passwd', 'ftp://executor.example', '//executor.example', 'http://127.0.0.1:32100/other', 'http://user@127.0.0.1:32100', 'http://127.0.0.1:32100/#token', 'http://0.0.0.0:32100', 'http://[::]:32100', 'http://localhost:0']) {
         assert.throws(() => parseLocalConnection({...connection, url}));
     }
-    assert.throws(() => parseLocalConnection({...connection, token: 'short'}));
+    assert.equal(parseLocalConnection({...connection, token: 'a'}).token, 'a');
 });
 
 test('场景：不限制命令种类，但校验参数类型、长度和不可变性', () => {
@@ -52,6 +52,34 @@ test('场景：启动命令正确引用前端部署路径且不修改执行策�
     assert.doesNotMatch(ps, /Sandbox/);
     assert.doesNotMatch(ps, /ExecutionPolicy|Set-ExecutionPolicy/);
     assert.throws(() => buildLocalStartupCommand({platform: 'unix', assetBase: 'http://public.example/scripts', origin: 'http://public.example'}));
+});
+
+test('场景：自定义 token 校验、明文设置往返与部分连接信息回填', () => {
+    const saved = normalizeLocalExecutorSettings({listenAddress: '::1', port: 8321, token: connection.token});
+    assert.deepEqual(normalizeLocalExecutorSettings(JSON.parse(JSON.stringify(saved))), saved);
+    assert.deepEqual(JSON.parse(buildLocalConnectionDraft(saved)), {url: 'http://[::1]:8321', token: connection.token});
+    assert.deepEqual(JSON.parse(buildLocalConnectionDraft({token: connection.token})), {url: '', token: connection.token});
+    assert.deepEqual(JSON.parse(buildLocalConnectionDraft({port: 8321})), {url: 'http://127.0.0.1:8321', token: ''});
+    assert.equal(buildLocalConnectionDraft({}), '');
+    assert.equal(normalizeExecutorToken(''), '');
+    for (const token of ['a', 'short', 'a'.repeat(256)]) assert.equal(normalizeExecutorToken(token), token);
+    for (const token of [null, 1, 'a'.repeat(32) + '\n', 'a'.repeat(32) + "'", '中'.repeat(32)]) {
+        assert.throws(() => normalizeExecutorToken(token));
+        assert.equal(normalizeLocalExecutorSettings({token}).token, '');
+    }
+});
+
+test('场景：所有平台启动命令传入自定义 token，留空保持随机生成', () => {
+    const args = {assetBase: 'https://tools.example/local-executor/v1', origin: 'https://tools.example', token: '-a'};
+    for (const platform of ['unix', 'windows', 'android']) {
+        assert.ok(buildLocalStartupCommand({...args, platform}).includes(args.token));
+        assert.throws(() => buildLocalStartupCommand({...args, platform, token: 'bad token'}));
+        assert.doesNotMatch(buildLocalStartupCommand({...args, platform, token: ''}), /-Token/);
+    }
+    assert.ok(buildLocalStartupCommand({...args, platform: 'android'}).endsWith(`'127.0.0.1' 0 '' '${args.token}'`));
+    assert.ok(buildLocalStartupCommand({...args, platform: 'windows'}).endsWith(`-Token '${args.token}'`));
+    const cmd = buildLocalStartupCommand({...args, platform: 'windows', terminal: 'cmd'});
+    assert.equal(Buffer.from(cmd.split(' ').at(-1), 'base64').toString('utf16le'), buildLocalStartupCommand({...args, platform: 'windows'}));
 });
 
 test('场景：凭据仅放请求头，禁止重定向并原样传递输出游标', async () => {
@@ -107,7 +135,7 @@ test('场景：Android root 选项显式启用，双层 Shell 解析仍保留原
         writeFileSync(source, 'printf "%s\\n" "$@"\n');
         writeFileSync(join(directory, 'curl'), '#!/bin/sh\ncat "$EXECUTOR_TEST_SOURCE"\n', {mode: 0o700});
         writeFileSync(join(directory, 'su'), '#!/bin/sh\n[ "$#" -eq 2 ] && [ "$1" = -c ] || exit 2\n: > "$EXECUTOR_TEST_SU_MARKER"\nexec /bin/sh -c "$2"\n', {mode: 0o700});
-        const args = {platform: 'android', assetBase: "https://tools.example/path'$(id)/local-executor/v1", origin: 'https://tools.example', listenAddress: '192.168.1.25', port: 8321};
+        const args = {platform: 'android', assetBase: "https://tools.example/path'$(id)/local-executor/v1", origin: 'https://tools.example', listenAddress: '192.168.1.25', port: 8321, token: '-'.repeat(32)};
         for (const androidRoot of [false, 'true', true]) {
             const command = buildLocalStartupCommand({...args, androidRoot});
             const result = spawnSync('/bin/sh', ['-c', command], {
@@ -115,7 +143,7 @@ test('场景：Android root 选项显式启用，双层 Shell 解析仍保留原
                 env: {...process.env, PATH: directory + delimiter + process.env.PATH, EXECUTOR_TEST_SOURCE: source, EXECUTOR_TEST_SU_MARKER: marker},
             });
             assert.equal(result.status, 0, result.stderr);
-            assert.deepEqual(result.stdout.trimEnd().split('\n'), [new URL(args.assetBase).href, args.origin, args.listenAddress, String(args.port)]);
+            assert.deepEqual(result.stdout.trimEnd().split('\n'), [new URL(args.assetBase).href, args.origin, args.listenAddress, String(args.port), '', args.token]);
             assert.equal(existsSync(marker), androidRoot === true);
         }
         for (const platform of ['unix', 'windows']) {

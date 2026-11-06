@@ -702,6 +702,7 @@
             <label v-if="localDialog.platform === 'android'" class="local-check"><input v-model="localDialog.androidRoot" type="checkbox" />{{ tr('local.androidRoot') }}</label>
             <label>{{ tr('local.listenAddress') }}<input v-model="localDialog.listenAddress" type="text" autocomplete="off" spellcheck="false" placeholder="127.0.0.1" /></label>
             <label>{{ tr('local.port') }}<input v-model.number="localDialog.port" type="number" min="0" max="65535" step="1" /></label>
+            <label>{{ tr('local.token') }}<input v-model="localDialog.token" type="password" autocomplete="off" spellcheck="false" :placeholder="tr('local.tokenPlaceholder')" /></label>
             <p>{{ tr('local.networkHint') }}</p>
             <label>{{ tr('local.startup') }}<textarea :value="localStartup.command" readonly rows="5" spellcheck="false" /></label>
             <button type="button" :disabled="!localStartup.command || !!localStartup.error" @click="copyLocalStartup">{{ tr('local.copy') }}</button>
@@ -873,7 +874,7 @@ import { computed, defineComponent, h, markRaw, nextTick, onBeforeUnmount, onMou
 import { createLocalExecutorSession } from "@/shared/local-executor/session.js";
 import { COMMAND_WHITELIST_TEMPLATES } from "@/shared/command-presets.js";
 import { normalizeCommandWhitelist, normalizeMainCommands, getCommandApprovalReason } from "@/shared/command-whitelist.js";
-import { normalizeLocalCommand, isLocalTaskFinished, buildLocalStartupCommand, normalizeExecutorListenAddress, normalizeLocalExecutorSettings } from "@/shared/local-executor/client.js";
+import { normalizeLocalCommand, isLocalTaskFinished, buildLocalStartupCommand, normalizeExecutorListenAddress, normalizeLocalExecutorSettings, normalizeExecutorToken, buildLocalConnectionDraft } from "@/shared/local-executor/client.js";
 import { runAiNodeWorker } from "@/shared/ai-node-worker.js";
 import { runFilterScript } from "@/shared/filter-script-worker.js";
 import {
@@ -1174,7 +1175,7 @@ const previewContentRevision = ref(0);
 const activeView = ref("explorer");
 const localExecutor = createLocalExecutorSession({ onFinished: refreshAfterLocalTask });
 const localIsWindows = /Windows/i.test(navigator.userAgent);
-const localDialog = reactive({ visible: false, platform: localIsWindows ? 'windows' : /Android/i.test(navigator.userAgent) ? 'android' : 'unix', terminal: 'powershell', androidRoot: false, listenAddress: '127.0.0.1', port: 0, template: localIsWindows ? 'powershell' : 'sh', connection: '', copied: false });
+const localDialog = reactive({ visible: false, platform: localIsWindows ? 'windows' : /Android/i.test(navigator.userAgent) ? 'android' : 'unix', terminal: 'powershell', androidRoot: false, token: '', listenAddress: '127.0.0.1', port: 0, template: localIsWindows ? 'powershell' : 'sh', connection: '', copied: false });
 const localDialogElement = ref(null);
 const localStatusButton = ref(null);
 const localActiveTasks = computed(() => localExecutor.state.tasks.filter((task) => !isLocalTaskFinished(task)));
@@ -1186,11 +1187,11 @@ const localConnectionStatus = computed(() => localExecutor.state.connecting ? 'c
 const localStartup = computed(() => {
   try {
     if (['0.0.0.0', '::'].includes(localDialog.listenAddress.trim())) throw new Error(tr('local.specificAddress'));
-    return { command: buildLocalStartupCommand({ platform: localDialog.platform, terminal: localDialog.terminal, androidRoot: localDialog.androidRoot, origin: location.origin, listenAddress: localDialog.listenAddress, port: localDialog.port,
+    return { command: buildLocalStartupCommand({ platform: localDialog.platform, terminal: localDialog.terminal, androidRoot: localDialog.androidRoot, token: localDialog.token, origin: location.origin, listenAddress: localDialog.listenAddress, port: localDialog.port,
       assetBase: new URL(`${import.meta.env.BASE_URL}local-executor/v1/`, location.origin).href }), error: '' };
   } catch (error) { return { command: '', error: error.message }; }
 });
-watch(() => [localDialog.platform, localDialog.terminal, localDialog.androidRoot, localDialog.listenAddress, localDialog.port], () => { localDialog.copied = false; });
+watch(() => [localDialog.platform, localDialog.terminal, localDialog.androidRoot, localDialog.listenAddress, localDialog.port, localDialog.token], () => { localDialog.copied = false; });
 watch(() => localExecutor.state.shell, (shell) => { if (Object.hasOwn(COMMAND_WHITELIST_TEMPLATES, shell)) localDialog.template = shell; });
 const sidePanelVisible = ref(true);
 const sidebarResizing = ref(false);
@@ -1214,13 +1215,16 @@ const dialogPrimaryButton = ref(null);
 const dialogState = reactive({ visible: false, mode: "alert", title: "", message: "", value: "", inputLabel: "", placeholder: "", selectOptions: [], optionLabel: "", optionHint: "", optionChecked: false, optionDisabled: false, confirmLabel: "", cancelLabel: "", tone: "default", selectOnFocus: false, closeOnBackdrop: true });
 const settings = reactive(loadSettings());
 applyLocalExecutorSettings();
-watch(() => [localDialog.listenAddress, localDialog.port], ([listenAddress, port]) => {
+watch(() => [localDialog.listenAddress, localDialog.port, localDialog.token], ([listenAddress, port, token]) => {
   // 输入过程允许暂时为空或不完整，仅将合法值写入设置，避免覆盖上次配置。
   try {
     const address = normalizeExecutorListenAddress(listenAddress);
     if (!['0.0.0.0', '::'].includes(address)) settings.localExecutor.listenAddress = address;
   } catch { /* 启动命令区域负责展示参数错误。 */ }
   if (Number.isSafeInteger(port) && port >= 0 && port <= 65535) settings.localExecutor.port = port;
+  try { settings.localExecutor.token = normalizeExecutorToken(token); } catch { /* 输入未完成时不覆盖已保存值。 */ }
+  // 设置只单向覆盖连接草稿，编辑草稿不反向修改设置。
+  localDialog.connection = buildLocalConnectionDraft(localDialog);
 });
 const localAutoApprove = computed({
   get: () => localExecutor.state.autoApprove,
@@ -8729,6 +8733,7 @@ async function stopLocalTask(task) {
 }
 
 function openLocalDialog() {
+  localDialog.connection = buildLocalConnectionDraft(localDialog);
   localDialog.visible = true;
   nextTick(() => localDialogElement.value?.focus());
 }
@@ -8748,6 +8753,7 @@ function trapLocalDialogFocus(event) {
 }
 
 async function copyLocalStartup() {
+  if (localStartup.value.error || !localStartup.value.command) return;
   try { await navigator.clipboard.writeText(localStartup.value.command); localDialog.copied = true; }
   catch { localExecutor.state.error = tr('local.copyError'); }
 }
@@ -8769,6 +8775,7 @@ function applyLocalExecutorSettings() {
   const saved = settings.localExecutor;
   localDialog.listenAddress = saved.listenAddress;
   localDialog.port = saved.port;
+  localDialog.token = saved.token;
   if (localExecutor.state.connected) {
     localExecutor.state.whitelistText = saved.whitelist.join('\n');
     localExecutor.state.autoApprove = saved.autoApprove;

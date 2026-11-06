@@ -14,8 +14,15 @@ public final class ExecutorConfig {
     public final int port;
     public final File directory;
     public final String publicUrl;
+    public final String token;
 
     public ExecutorConfig(String origin, String listenAddress, int port, File directory, String publicUrl) throws IOException {
+        this(origin, listenAddress, port, directory, publicUrl, "");
+    }
+
+    public ExecutorConfig(String origin, String listenAddress, int port, File directory, String publicUrl, String token) throws IOException {
+        if (token == null || (!token.isEmpty() && !token.matches("[A-Za-z0-9_-]+"))) throw new IllegalArgumentException("Token must contain only letters, digits, underscores or hyphens");
+        this.token = token;
         this.origin = validateUrl(origin, false);
         if (port < 0 || port > 65535) throw new IllegalArgumentException("Invalid port");
         if (!listenAddress.matches("[0-9a-fA-F:.]+")) throw new IllegalArgumentException("Listen address must be an IP address");
@@ -53,11 +60,11 @@ public final class ExecutorConfig {
     public static ExecutorConfig parse(String[] args) throws IOException {
         Map<String, String> values = new HashMap<>();
         for (int i = 0; i < args.length; i += 2) {
-            if (i + 1 == args.length || !args[i].matches("--(origin|listen-address|port|cwd|public-url)")
+            if (i + 1 == args.length || !args[i].matches("--(origin|listen-address|port|cwd|public-url|token)")
                     || values.put(args[i], args[i + 1]) != null) throw new IllegalArgumentException("Invalid or duplicate argument: " + args[i]);
         }
         if (!values.containsKey("--origin")) throw new IllegalArgumentException("--origin is required");
         return new ExecutorConfig(values.get("--origin"), values.getOrDefault("--listen-address", "127.0.0.1"),
-                Integer.parseInt(values.getOrDefault("--port", "0")), new File(values.getOrDefault("--cwd", ".")), values.getOrDefault("--public-url", ""));
+                Integer.parseInt(values.getOrDefault("--port", "0")), new File(values.getOrDefault("--cwd", ".")), values.getOrDefault("--public-url", ""), values.getOrDefault("--token", ""));
     }
 }

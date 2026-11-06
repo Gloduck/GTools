@@ -29,7 +29,14 @@ export function normalizeExecutorListenAddress(value = '127.0.0.1') {
     throw new Error('Listen address must be an IPv4 or IPv6 address');
 }
 
-// 设置只保存可复用配置，不接收连接凭据或任务状态；兼容仅包含白名单的旧设置。
+// 自定义 token 与其他设置一起保存；自动生成的会话凭据和任务状态不自动写入设置。
+export function normalizeExecutorToken(value = '') {
+    if (typeof value !== 'string' || /[^A-Za-z0-9_-]/.test(value)) {
+        throw new Error('Token must contain only letters, digits, underscores or hyphens');
+    }
+    return value;
+}
+
 export function normalizeLocalExecutorSettings(value) {
     const source = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
     let listenAddress = '127.0.0.1';
@@ -37,7 +44,10 @@ export function normalizeLocalExecutorSettings(value) {
         const address = normalizeExecutorListenAddress(source.listenAddress);
         if (!['0.0.0.0', '::'].includes(address)) listenAddress = address;
     } catch { /* 非法或缺失地址回退到本机默认值。 */ }
+    let token = '';
+    try { token = normalizeExecutorToken(source.token); } catch { /* 忽略无效的导入凭据。 */ }
     return {
+        token,
         whitelist: normalizeCommandWhitelist(source.whitelist),
         listenAddress,
         port: Number.isSafeInteger(source.port) && source.port >= 0 && source.port <= 65535 ? source.port : 0,
@@ -45,12 +55,19 @@ export function normalizeLocalExecutorSettings(value) {
     };
 }
 
+// 已知字段直接回填；随机端口尚未分配时不猜测访问地址。
+export function buildLocalConnectionDraft(value) {
+    const {listenAddress, port, token} = normalizeLocalExecutorSettings(value);
+    const host = listenAddress.includes(':') ? `[${listenAddress}]` : listenAddress;
+    return port || token ? JSON.stringify({url: port ? `http://${host}:${port}` : '', token}) : '';
+}
+
 export function parseLocalConnection(value) {
     let data;
     try { data = typeof value === 'string' ? JSON.parse(value) : value; } catch { throw new Error('Invalid connection JSON'); }
     if (!data || typeof data.url !== 'string' || typeof data.token !== 'string') throw new Error('Connection requires url and token');
     const url = normalizeExecutorUrl(data.url);
-    if (!/^[A-Za-z0-9_-]{32,128}$/.test(data.token)) throw new Error('Invalid connection token');
+    if (!normalizeExecutorToken(data.token)) throw new Error('Invalid connection token');
     return {url, token: data.token};
 }
 
@@ -69,12 +86,13 @@ export function normalizeLocalCommand({command, cwd = '', reason, shell = '', wa
     return Object.freeze({command, cwd, reason: reason.trim(), shell, commands: Object.freeze(normalizeMainCommands(commands)), high_risk, wait_seconds: normalizeLocalWaitSeconds(wait_seconds)});
 }
 
-export function buildLocalStartupCommand({platform, assetBase, origin, terminal = 'powershell', androidRoot = false, listenAddress = '127.0.0.1', port = 0, publicUrl = ''}) {
+export function buildLocalStartupCommand({platform, assetBase, origin, terminal = 'powershell', androidRoot = false, token = '', listenAddress = '127.0.0.1', port = 0, publicUrl = ''}) {
     const base = new URL(assetBase);
     if (base.protocol !== 'https:' && !(base.protocol === 'http:' && ['127.0.0.1', 'localhost'].includes(base.hostname))) throw new Error('Serve startup scripts over HTTPS (or localhost for development)');
     const listen = normalizeExecutorListenAddress(listenAddress);
     if (!Number.isSafeInteger(port) || port < 0 || port > 65535) throw new Error('Port must be an integer from 0 to 65535');
     const advertised = publicUrl ? normalizeExecutorUrl(publicUrl) : '';
+    const customToken = normalizeExecutorToken(token);
     if (['0.0.0.0', '::'].includes(listen) && !advertised) throw new Error('An access URL is required when listening on all interfaces');
     const webOrigin = new URL(origin).origin;
     const url = base.href.replace(/\/$/, '');
@@ -82,7 +100,7 @@ export function buildLocalStartupCommand({platform, assetBase, origin, terminal 
     const ps = (text) => `'${text.replace(/'/g, "''")}'`;
     if (platform === 'windows') {
         // 从原始响应流按 UTF-8 解码，不能将可能为 byte[] 的 Content 转成字符串。
-        const script = `& ([scriptblock]::Create([Text.Encoding]::UTF8.GetString((Invoke-WebRequest -UseBasicParsing ${ps(`${url}/bootstrap.ps1`)}).RawContentStream.ToArray()))) -BaseUrl ${ps(url)} -Origin ${ps(webOrigin)} -ListenAddress ${ps(listen)} -Port ${port}${advertised ? ` -PublicUrl ${ps(advertised)}` : ''}`;
+        const script = `& ([scriptblock]::Create([Text.Encoding]::UTF8.GetString((Invoke-WebRequest -UseBasicParsing ${ps(`${url}/bootstrap.ps1`)}).RawContentStream.ToArray()))) -BaseUrl ${ps(url)} -Origin ${ps(webOrigin)} -ListenAddress ${ps(listen)} -Port ${port}${advertised ? ` -PublicUrl ${ps(advertised)}` : ''}${customToken ? ` -Token ${ps(customToken)}` : ''}`;
         if (terminal === 'cmd') {
             // 编码的是固定启动脚本，避免 CMD 再次解释 URL 中的引号、百分号和连接符。
             const bytes = Uint8Array.from({length: script.length * 2}, (_, index) => script.charCodeAt(index >> 1) >> ((index & 1) * 8) & 255);
@@ -93,16 +111,17 @@ export function buildLocalStartupCommand({platform, assetBase, origin, terminal 
     if (platform === 'android') {
         // 页面只负责下载入口，默认参数由启动脚本提供。
         const args = [sh(url), sh(webOrigin)];
-        if (listen !== '127.0.0.1' || port !== 0 || advertised) args.push(sh(listen));
-        if (port !== 0 || advertised) args.push(String(port));
-        if (advertised) args.push(sh(advertised));
+        if (listen !== '127.0.0.1' || port !== 0 || advertised || customToken) args.push(sh(listen));
+        if (port !== 0 || advertised || customToken) args.push(String(port));
+        if (advertised || customToken) args.push(sh(advertised));
+        if (customToken) args.push(sh(customToken));
         const launch = `sh -s -- ${args.join(' ')}`;
         // su -c 增加一层 Shell 解析，转义外层双引号，保持 URL 和参数原样传入。
         const runner = androidRoot === true ? `su -c "${launch.replace(/["\\$`]/g, '\\$&')}"` : launch;
         return `curl -fsSL ${sh(`${url}/bootstrap-android.sh`)} | ${runner}`;
     }
     // 启动参数只来自页面配置，不拼接模型提供的命令。
-    return `curl -fsSL ${sh(`${url}/bootstrap.sh`)} | sh -s -- ${sh(url)} ${sh(webOrigin)} ${sh(listen)} ${port} ${sh(advertised)}`;
+    return `curl -fsSL ${sh(`${url}/bootstrap.sh`)} | sh -s -- ${sh(url)} ${sh(webOrigin)} ${sh(listen)} ${port} ${sh(advertised)}${customToken ? ` ${sh(customToken)}` : ''}`;
 }
 
 export class LocalExecutorClient {

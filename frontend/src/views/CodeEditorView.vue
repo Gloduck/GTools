@@ -127,6 +127,10 @@
             <span class="ai-context-length">{{ tr('ai.contextLength', { count: aiContextLength }) }}</span>
           </div>
           <div class="ai-header-actions">
+            <button ref="localStatusButton" type="button" class="icon-button local-status-button" :class="`local-status-${localConnectionStatus}`" :title="`${tr('local.title')} · ${tr(`local.status.${localConnectionStatus}`)}`" :aria-label="tr('local.title')" :aria-description="tr(`local.status.${localConnectionStatus}`)" :aria-expanded="localDialog.visible" aria-haspopup="dialog" @click="openLocalDialog">
+              <span class="codicon codicon-device-desktop" aria-hidden="true"></span>
+              <span class="local-status-dot" aria-hidden="true"></span>
+            </button>
             <button class="icon-button" :title="tr('ai.switchSession')" :aria-label="tr('ai.switchSession')" @click.stop="openAiHistory">
               <span class="codicon codicon-history" aria-hidden="true"></span>
             </button>
@@ -678,6 +682,67 @@
       </form>
     </div>
 
+    <div v-if="localDialog.visible" class="editor-dialog-backdrop" role="presentation" @click.self="closeLocalDialog">
+      <section ref="localDialogElement" class="editor-dialog local-executor-dialog" role="dialog" aria-modal="true" aria-labelledby="local-executor-title" tabindex="-1" @keydown.esc.prevent.stop="closeLocalDialog" @keydown.tab="trapLocalDialogFocus">
+        <div class="editor-dialog-header">
+          <span class="codicon codicon-device-desktop" aria-hidden="true"></span>
+          <h2 id="local-executor-title">{{ tr('local.title') }}</h2>
+          <button type="button" class="icon-button" :aria-label="tr('action.close')" @click="closeLocalDialog">×</button>
+        </div>
+        <div class="local-executor-content">
+          <p>{{ tr('local.intro') }}</p>
+          <p>{{ tr('local.consoleHint') }}</p>
+          <template v-if="!localExecutor.state.connected">
+            <label>{{ tr('local.platform') }}
+              <select v-model="localDialog.platform"><option value="unix">macOS / Linux</option><option value="windows">Windows</option></select>
+            </label>
+            <label v-if="localDialog.platform === 'windows'">{{ tr('local.startupTerminal') }}
+              <select v-model="localDialog.terminal"><option value="powershell">PowerShell</option><option value="cmd">CMD</option></select>
+            </label>
+            <label>{{ tr('local.listenAddress') }}<input v-model="localDialog.listenAddress" type="text" autocomplete="off" spellcheck="false" placeholder="127.0.0.1" /></label>
+            <label>{{ tr('local.port') }}<input v-model.number="localDialog.port" type="number" min="0" max="65535" step="1" /></label>
+            <p>{{ tr('local.networkHint') }}</p>
+            <label>{{ tr('local.startup') }}<textarea :value="localStartup.command" readonly rows="5" spellcheck="false" /></label>
+            <button type="button" :disabled="!localStartup.command || !!localStartup.error" @click="copyLocalStartup">{{ tr('local.copy') }}</button>
+            <p v-if="localDialog.copied" role="status">{{ tr('local.copied') }}</p>
+            <p v-if="localStartup.error" role="alert">{{ localStartup.error }}</p>
+            <p>{{ tr('local.pythonHint') }}</p>
+            <form @submit.prevent="connectLocalExecutor">
+              <label>{{ tr('local.connection') }}<textarea v-model="localDialog.connection" rows="3" autocomplete="off" spellcheck="false" :placeholder="tr('local.connectionPlaceholder')" /></label>
+              <button type="submit" :disabled="localExecutor.state.connecting || !localDialog.connection.trim()">{{ tr(localExecutor.state.connecting ? 'local.connecting' : 'local.connect') }}</button>
+            </form>
+          </template>
+          <template v-else>
+            <div class="workspace-card">
+              <strong>{{ localExecutor.state.url }}</strong>
+              <small>{{ localExecutor.state.info.platform }} · {{ localExecutor.state.info.runtime }} · {{ localExecutor.state.info.shell }}</small>
+              <small>{{ tr('local.defaultDirectory') }}: {{ localExecutor.state.info.default_cwd }}</small>
+            </div>
+            <label>{{ tr('local.executionShell') }}
+              <select v-model="localExecutor.state.shell"><option v-for="shell in (localExecutor.state.info.shells || [localExecutor.state.info.shell])" :key="shell" :value="shell">{{ shell }}</option></select>
+            </label>
+            <h3>{{ tr('local.connectionApproval') }}</h3>
+            <label>{{ tr('local.whitelistTemplate') }}
+              <select v-model="localDialog.template">
+                <option v-for="(_, name) in COMMAND_WHITELIST_TEMPLATES" :key="name" :value="name">{{ tr(`local.template.${name}`) }}</option>
+              </select>
+            </label>
+            <div class="local-whitelist-field">
+              <div class="setting-title-row"><label for="local-command-whitelist">{{ tr('ssh.whitelist') }}</label><button type="button" :disabled="!localExecutor.state.reachable" @click="applyLocalWhitelistTemplate">{{ tr('ssh.applyWhitelistTemplate') }}</button></div>
+              <textarea id="local-command-whitelist" v-model="localWhitelistText" rows="3" spellcheck="false" :placeholder="tr('ssh.whitelistPlaceholder')" />
+            </div>
+            <p>{{ tr('local.templateHint') }}</p>
+            <p>{{ tr('local.approvalHint') }}</p>
+            <label v-if="localWorkspaceName" class="local-check"><input v-model="localExecutor.state.bindWorkspace" type="checkbox" />{{ tr('local.bindWorkspace') }}: {{ localWorkspaceName }}</label>
+            <p v-if="localExecutor.state.bindWorkspace">{{ tr('local.bindHint') }}</p>
+            <button type="button" @click="localExecutor.disconnect()">{{ tr('local.disconnect') }}</button>
+            <p>{{ tr('local.disconnectHint') }}</p>
+          </template>
+          <p v-if="localExecutor.state.error" role="alert" class="local-warning">{{ localExecutor.state.error }}</p>
+        </div>
+      </section>
+    </div>
+
     <div v-if="sshDialog.visible" class="editor-dialog-backdrop" role="presentation" @click.self="closeSshDialog">
       <form class="editor-dialog ssh-dialog" role="dialog" aria-modal="true" aria-labelledby="ssh-dialog-title" @submit.prevent="saveSshDialog" @keydown.esc.prevent.stop="closeSshDialog" @click.stop>
         <div class="editor-dialog-header">
@@ -772,6 +837,10 @@
 
 <script setup>
 import { computed, defineComponent, h, markRaw, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch } from "vue";
+import { createLocalExecutorSession } from "@/shared/local-executor/session.js";
+import { COMMAND_WHITELIST_TEMPLATES } from "@/shared/command-presets.js";
+import { normalizeCommandWhitelist, normalizeMainCommands, areMainCommandsWhitelisted } from "@/shared/command-whitelist.js";
+import { normalizeLocalCommand, isLocalTaskFinished, buildLocalStartupCommand } from "@/shared/local-executor/client.js";
 import { runAiNodeWorker } from "@/shared/ai-node-worker.js";
 import { runFilterScript } from "@/shared/filter-script-worker.js";
 import {
@@ -820,16 +889,7 @@ const LEGACY_UNFOLD_ALL_SHORTCUT = "Ctrl+K Ctrl+J";
 const vscodeShortcuts = { save: "Ctrl+S", format: "Shift+Alt+F", commandPalette: "Ctrl+P", search: "Ctrl+Shift+F", findReferences: "Shift+F12", preview: "Ctrl+Shift+V", toggleSidebar: "Ctrl+B", fold: "Ctrl+Shift+[", unfold: "Ctrl+Shift+]", foldAll: "Ctrl+Alt+[", unfoldAll: "Ctrl+Alt+]", aiComplete: "Ctrl+Alt+Enter" };
 const defaultAiSettings = { apiKey: "", baseUrl: "https://api.openai.com/v1", npmRegistryUrl: "", completionModel: "gpt-5.4-mini", imageModel: "gpt-image-1", agentModels: "gpt-5.5,gpt-5.4-mini", globalPrompt: "", reasoningEffort: "default", autoSaveSessions: false };
 const defaultBackendSettings = { enabled: false, baseUrl: getCurrentBackendBaseUrl() };
-const DEFAULT_SSH_WHITELIST_TEMPLATE = [
-  "pwd", "ls", "cat", "less", "more", "head", "tail", "grep", "egrep", "fgrep", "awk", "sed", "sort", "uniq", "wc", "cut", "tr", "tee", "xargs", "find", "stat", "file", "readlink", "realpath", "basename", "dirname", "tree",
-  "env", "printenv", "set", "locale", "which", "whereis", "type", "command", "history", "alias",
-  "whoami", "id", "groups", "who", "w", "last", "lastlog", "date", "uptime", "hostname", "uname", "arch", "lscpu", "lsmem", "lsblk", "lspci", "lsusb", "dmidecode", "dmesg",
-  "ps", "pstree", "pgrep", "top", "htop", "free", "vmstat", "iostat", "mpstat", "sar", "pidstat", "pmap", "lsof", "strace",
-  "df", "du", "mount", "findmnt", "blkid", "lsattr", "getfacl",
-  "ip", "ss", "netstat", "ping", "traceroute", "tracepath", "dig", "nslookup", "host", "curl", "wget", "nc", "telnet", "arp", "route",
-  "systemctl", "service", "journalctl", "loginctl", "timedatectl", "resolvectl", "crontab",
-  "apt-cache",
-].join("\n");
+const DEFAULT_SSH_WHITELIST_TEMPLATE = COMMAND_WHITELIST_TEMPLATES.sh;
 const defaultSshSettings = { securityKey: "", terminalTheme: "dark", whitelistTemplate: DEFAULT_SSH_WHITELIST_TEMPLATE, connections: [] };
 const SIDEBAR_MIN_WIDTH = 180;
 const SIDEBAR_MAX_WIDTH = 640;
@@ -838,7 +898,7 @@ const PREVIEW_MIN_WIDTH = 280;
 const PREVIEW_MAX_WIDTH = 900;
 const DEFAULT_PREVIEW_WIDTH = 480;
 const AI_MESSAGES_BOTTOM_TOLERANCE_PX = 2;
-const defaultSettings = { theme: "vs-dark", locale: "zh-CN", fontSize: 14, wordWrap: false, minimap: true, maxMemoryReadBytes: DEFAULT_MAX_MEMORY_READ_BYTES, maxMemoryWriteBytes: DEFAULT_MAX_MEMORY_WRITE_BYTES, shortcuts: { ...vscodeShortcuts }, ai: { ...defaultAiSettings }, backend: { ...defaultBackendSettings }, ssh: { ...defaultSshSettings } };
+const defaultSettings = { theme: "vs-dark", locale: "zh-CN", fontSize: 14, wordWrap: false, minimap: true, maxMemoryReadBytes: DEFAULT_MAX_MEMORY_READ_BYTES, maxMemoryWriteBytes: DEFAULT_MAX_MEMORY_WRITE_BYTES, shortcuts: { ...vscodeShortcuts }, ai: { ...defaultAiSettings }, backend: { ...defaultBackendSettings }, ssh: { ...defaultSshSettings }, localExecutor: { whitelist: [] } };
 
 class AiSessionStore {
   constructor() {
@@ -1079,6 +1139,22 @@ const previewType = ref("");
 const dirtyRevision = ref(0);
 const previewContentRevision = ref(0);
 const activeView = ref("explorer");
+const localExecutor = createLocalExecutorSession({ onFinished: refreshAfterLocalTask });
+const localIsWindows = /Windows/i.test(navigator.userAgent);
+const localDialog = reactive({ visible: false, platform: localIsWindows ? 'windows' : 'unix', terminal: 'powershell', listenAddress: '127.0.0.1', port: 0, template: localIsWindows ? 'powershell' : 'sh', connection: '', copied: false });
+const localDialogElement = ref(null);
+const localStatusButton = ref(null);
+const localWorkspaceName = computed(() => rootKind.value === 'local' ? rootName.value : '');
+const localConnectionStatus = computed(() => localExecutor.state.connecting ? 'connecting' : localExecutor.state.connected ? (localExecutor.state.reachable ? 'connected' : 'unreachable') : 'disconnected');
+const localStartup = computed(() => {
+  try {
+    if (['0.0.0.0', '::'].includes(localDialog.listenAddress.trim())) throw new Error(tr('local.specificAddress'));
+    return { command: buildLocalStartupCommand({ platform: localDialog.platform, terminal: localDialog.terminal, origin: location.origin, listenAddress: localDialog.listenAddress, port: localDialog.port,
+      assetBase: new URL(`${import.meta.env.BASE_URL}local-executor/v1/`, location.origin).href }), error: '' };
+  } catch (error) { return { command: '', error: error.message }; }
+});
+watch(() => [localDialog.platform, localDialog.terminal, localDialog.listenAddress, localDialog.port], () => { localDialog.copied = false; });
+watch(() => localExecutor.state.shell, (shell) => { if (Object.hasOwn(COMMAND_WHITELIST_TEMPLATES, shell)) localDialog.template = shell; });
 const sidePanelVisible = ref(true);
 const sidebarResizing = ref(false);
 const previewResizing = ref(false);
@@ -1100,6 +1176,14 @@ const dialogOptionInput = ref(null);
 const dialogPrimaryButton = ref(null);
 const dialogState = reactive({ visible: false, mode: "alert", title: "", message: "", value: "", inputLabel: "", placeholder: "", selectOptions: [], optionLabel: "", optionHint: "", optionChecked: false, optionDisabled: false, confirmLabel: "", cancelLabel: "", tone: "default", selectOnFocus: false, closeOnBackdrop: true });
 const settings = reactive(loadSettings());
+const localWhitelistText = computed({
+  get: () => localExecutor.state.whitelistText,
+  set: (value) => {
+    localExecutor.state.whitelistText = value;
+    // 输入即保存；断开连接清理会话时不删除用户配置。
+    settings.localExecutor.whitelist = normalizeCommandWhitelist(value);
+  },
+});
 settings.locale = getCurrentLocale();
 const maxMemoryReadMb = computed({
   get: () => bytesToMegabytes(settings.maxMemoryReadBytes),
@@ -1256,6 +1340,8 @@ const dialogIconClass = computed(() => {
   return dialogState.tone === "danger" ? "codicon-error" : "codicon-info";
 });
 
+watch(fileSession, () => { localExecutor.state.bindWorkspace = false; });
+
 watch(currentLocale, (locale, previousLocale) => {
   const previousMessages = codeEditorMessages[previousLocale]?.codeEditor || {};
   if (status.left === previousMessages["status.ready"] && status.right === previousMessages["status.loaded"]) {
@@ -1362,6 +1448,7 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  localExecutor.dispose();
   disableEditorPwa?.();
   formatterDisposables.splice(0).forEach((disposable) => disposable.dispose());
   workspaceFileActionDisposables.splice(0).forEach((disposable) => disposable.dispose());
@@ -1860,13 +1947,8 @@ function normalizeSshConfig(value = {}) {
     privateKey: value.authType === "privateKey" ? String(value.privateKey || "") : "",
     passphrase: value.authType === "privateKey" ? String(value.passphrase || "") : "",
     exposeToAi: Boolean(value.exposeToAi),
-    whitelist: normalizeSshWhitelist(value.whitelistText ?? value.whitelist),
+    whitelist: normalizeCommandWhitelist(value.whitelistText ?? value.whitelist),
   };
-}
-
-function normalizeSshWhitelist(value) {
-  const items = Array.isArray(value) ? value : String(value || "").split(/[\n,]/);
-  return uniqueStrings(items).slice(0, 100);
 }
 
 function createSshConfigId() {
@@ -6116,7 +6198,7 @@ function buildAgentWorkspaceContext() {
 }
 
 function formatAiRequirementStatusLines() {
-  return ["workspace", "backend", "ssh_exposed", "preview", "preview_capture"].map((requirement) => {
+  return ["workspace", "backend", "ssh_exposed", "executor", "preview", "preview_capture"].map((requirement) => {
     const status = getAiRequirementStatus(requirement);
     return `- ${requirement}: ${status.met ? "available" : `unavailable (${status.reason})`}`;
   });
@@ -6414,6 +6496,17 @@ function getAiAllToolDefinitions() {
       filter_script: { type: "string", description: "Optional JavaScript async function body used to filter only the response body before returning it. input is the response body string." },
       max_chars: { type: "number", description: aiToolOutputLimitDescription() }
     }, required: ["url"] } },
+    { type: "function", name: "get_executor_info", requirements: ["executor"], description: "Get the user-selected executor environment (on this computer, a LAN host or a remote host), default directory, shell and the user-configured main-command whitelist. This is independent of the remote GTools backend. Browser workspace files and executor disk files are not automatically the same; unsaved editor changes are not on disk.", parameters: { type: "object", properties: {} } },
+    { type: "function", name: "execute_executor_command", requirements: ["executor"], description: "Execute a non-interactive shell command on the user-selected executor host. This may be a different computer from the browser; check get_executor_info for its endpoint and directory. Provide a reason and explicit cwd when relevant. Each task has a fresh shell; cd and environment changes do not persist across calls. Provide commands listing every main command in chains, pipes and substitutions, and high_risk based on your risk assessment. Commands outside the user whitelist and all high-risk commands require approval. Commands run with the executor user permissions, like an SSH shell. Never bypass rejected approval through other tools or alternate commands. The command reads disk files, not unsaved editor changes or OPFS. Wait up to wait_seconds (10 by default) and return collected output plus the exit code when finished; short tasks need no separate read call. For tasks still running or with has_more output, use read_executor_task with the returned task_id and cursor. The wait window never terminates a command. If delivery is uncertain, inspect the existing task; never automatically re-run the command. Do not start detached daemons; descendants are cleaned up when the task ends.", parameters: { type: "object", properties: {
+      commands: { type: "array", items: { type: "string" }, description: "Required list of every main command in command, including chains, pipes and substitutions, without arguments." },
+      high_risk: { type: "boolean", description: "Required AI-assessed risk flag; high-risk commands always require approval." },
+      wait_seconds: { type: "integer", minimum: 0, description: "Seconds to wait for completion, default 10. Return as soon as the command finishes and its output is collected. Use 0 to submit without waiting. This only controls when the tool returns; commands keep running after the wait window." },
+      shell: { type: "string", enum: ["sh", "powershell", "cmd"], description: "Use a shell listed by get_executor_info; defaults to the user-selected shell. Windows supports PowerShell and CMD." },
+      command: { type: "string" }, cwd: { type: "string", description: "Absolute or default-directory-relative local filesystem path. Defaults to the executor's startup directory." },
+      reason: { type: "string", description: "Why this command on the selected executor is necessary." }
+    }, required: ["command", "commands", "high_risk", "reason"] } },
+    { type: "function", name: "read_executor_task", requirements: ["executor"], description: "Read status and incremental output for an executor task belonging to this AI session. Supply the opaque cursor from the previous result to avoid repeating output. Terminal statuses are completed, failed and cancelled. There is no execution timeout; request cancellation when needed. If output_lost is true, older output has rolled out of the buffer. Drain has_more even after completion. Do not busy-poll tasks when no next step depends on the result.", parameters: { type: "object", properties: { task_id: { type: "string" }, cursor: { type: "integer", minimum: 0 } }, required: ["task_id"] } },
+    { type: "function", name: "cancel_executor_task", requirements: ["executor"], description: "Request cancellation of an executor task belonging to this AI session. Cancellation is not complete until the returned or subsequently read status confirms it.", parameters: { type: "object", properties: { task_id: { type: "string" } }, required: ["task_id"] } },
     { type: "function", name: "get_ssh_connections", requirements: ["backend", "ssh_exposed"], description: aiToolDescription("Get SSH settings exposed to AI.", "Returns id, name, host, port, active state, and command whitelist. Secrets are never returned. Use this before opening or choosing an SSH connection when the target is ambiguous."), parameters: { type: "object", properties: {} } },
     { type: "function", name: "open_ssh_connection", requirements: ["backend", "ssh_exposed"], description: aiToolDescription("Open an exposed SSH connection by id, name, or host.", "The backend SSH WebSocket performs the actual SSH connection. Reuse active connections when possible instead of reconnecting.", "Open a connection only for a task that explicitly targets or inherently depends on that remote host."), parameters: { type: "object", properties: { connection: { type: "string", description: "SSH setting id, name, or host." } }, required: ["connection"] } },
     { type: "function", name: "activate_ssh_terminal", requirements: ["backend", "ssh_exposed"], description: aiToolDescription("Switch the visible editor tab to an already active exposed SSH terminal.", "This does not execute any SSH command. It requires the connection to already be active."), parameters: { type: "object", properties: { connection: { type: "string", description: "SSH setting id, name, or host." } }, required: ["connection"] } },
@@ -6462,7 +6555,7 @@ function aiToolGetToolAvailability({ names } = {}) {
   });
   return {
     summary: `${tools.filter((tool) => tool.found !== false && tool.available).length}/${tools.length} tool(s) available`,
-    requirements: ["workspace", "backend", "ssh_exposed", "preview", "preview_capture"].map((requirement) => {
+    requirements: ["workspace", "backend", "ssh_exposed", "executor", "preview", "preview_capture"].map((requirement) => {
       const status = getAiRequirementStatus(requirement);
       return { name: requirement, available: status.met, reason: status.met ? "" : status.reason };
     }),
@@ -6537,6 +6630,7 @@ function getAiToolDefinitionByName(name) {
 
 function getAiRequirementStatus(requirement) {
   switch (requirement) {
+    case "executor": return { met: localExecutor.state.connected && localExecutor.state.reachable, description: "requires an executor explicitly connected by the user; no GTools backend is needed", reason: "Connect an executor using the Executor connection button in the AI Agent header" };
     case "workspace": return { met: isWorkspaceLoaded(), description: "requires an open workspace folder", reason: "No workspace folder is open" };
     case "backend": return { met: isBackendEnabled(), description: "requires backend server enabled", reason: "Backend server setting is disabled" };
     case "ssh_exposed": return { met: getAiExposedSshConfigs().length > 0, description: "requires at least one SSH setting exposed to AI", reason: "No SSH setting is exposed to AI" };
@@ -6602,6 +6696,10 @@ async function runAiToolCall(call, args = {}, session = getActiveAiSession(), si
       case "sftp_download_file": return okTool(await aiToolSftpDownloadFile(args));
       case "sftp_list_tasks": return okTool(aiToolSftpListTasks(args));
       case "sftp_cancel_task": return okTool(aiToolSftpCancelTask(args));
+      case "get_executor_info": return okTool({ summary: "Connected executor", endpoint: localExecutor.state.url, ...localExecutor.state.info, selected_shell: localExecutor.state.shell, whitelist: normalizeCommandWhitelist(localExecutor.state.whitelistText), workspace_linked: localExecutor.state.bindWorkspace });
+      case "execute_executor_command": return okTool(await aiToolExecuteLocalCommand(args, signal, session));
+      case "read_executor_task": return okTool(await localExecutor.read(args.task_id, args.cursor ?? 0, {sessionId: session.id}, signal));
+      case "cancel_executor_task": return okTool(await localExecutor.cancel(args.task_id, {sessionId: session.id}));
       case "execute_ssh_command": return okTool(await aiToolExecuteSshCommand(args, signal, session));
       case "ask_user": return okTool(await aiToolAskUser(args, signal, session));
       case "get_current_file": return okTool(aiToolGetCurrentFile());
@@ -6979,13 +7077,14 @@ function formatFileOperationError(error) {
 
 function beforeUnload(event) {
   if (!shouldConfirmLeaveEditor()) return;
-  const message = tr("confirm.leaveWithSsh");
+  const message = tr(localExecutor.state.tasks.some((task) => !isLocalTaskFinished(task)) ? "local.leave" : "confirm.leaveWithSsh");
   event.preventDefault();
   event.returnValue = message;
   return message;
 }
 
 function handlePageHide() {
+  localExecutor.dispose();
   queuePersistSavedAiSessions();
   cancelRunningSftpTasks();
   closeAllSshSessions({ disposeTerminal: true });
@@ -6996,7 +7095,7 @@ function hasUnsavedFiles() {
 }
 
 function shouldConfirmLeaveEditor() {
-  return hasUnsavedFiles() || hasActiveSshSessions() || hasRunningSftpTasks();
+  return hasUnsavedFiles() || hasActiveSshSessions() || hasRunningSftpTasks() || localExecutor.state.tasks.some((task) => !isLocalTaskFinished(task));
 }
 
 function hasRunningSftpTasks() {
@@ -7086,7 +7185,9 @@ function normalizeSettings(value = {}) {
   if (!sshTerminalThemes[ssh.terminalTheme]) ssh.terminalTheme = defaultSshSettings.terminalTheme;
   ssh.whitelistTemplate = String(ssh.whitelistTemplate || DEFAULT_SSH_WHITELIST_TEMPLATE).trim();
   ssh.connections = Array.isArray(ssh.connections) ? ssh.connections.map(normalizeStoredSshConfig).filter(Boolean) : [];
-  return { ...defaultSettings, ...savedSettings, shortcuts, ai, backend, ssh };
+  // 执行器配置严格只接收白名单，不导入或持久化凭据、地址与运行状态。
+  const localExecutor = { whitelist: normalizeCommandWhitelist(savedSettings.localExecutor?.whitelist) };
+  return { ...defaultSettings, ...savedSettings, shortcuts, ai, backend, ssh, localExecutor };
 }
 
 function applySettingsSnapshot(value) {
@@ -8564,11 +8665,116 @@ function aiToolSftpCancelTask({ task_id: taskId } = {}) {
   return { ...formatSftpTaskForTool(task, cancelled ? "SFTP task cancelled" : "SFTP task was not cancelled"), cancelled };
 }
 
+function openLocalDialog() {
+  localDialog.visible = true;
+  nextTick(() => localDialogElement.value?.focus());
+}
+
+function closeLocalDialog() {
+  localDialog.visible = false;
+  localDialog.connection = '';
+  nextTick(() => localStatusButton.value?.focus());
+}
+
+function trapLocalDialogFocus(event) {
+  const elements = Array.from(localDialogElement.value?.querySelectorAll('button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex="0"]') || []).filter((element) => element.getClientRects().length);
+  const first = elements[0], last = elements[elements.length - 1];
+  if (!first) return;
+  if (event.shiftKey && (document.activeElement === first || document.activeElement === localDialogElement.value)) { event.preventDefault(); last.focus(); }
+  else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+}
+
+async function copyLocalStartup() {
+  try { await navigator.clipboard.writeText(localStartup.value.command); localDialog.copied = true; }
+  catch { localExecutor.state.error = tr('local.copyError'); }
+}
+
+async function connectLocalExecutor() {
+  try {
+    await localExecutor.connect(localDialog.connection);
+    if (!localExecutor.state.connected) return;
+    // 保存的白名单是用户配置，连接成功后直接回填，无需再当作模板选择。
+    localExecutor.state.whitelistText = settings.localExecutor.whitelist.join('\n');
+    localDialog.template = localExecutor.state.shell;
+    localDialog.connection = '';
+    // 连接后表单被替换，恢复弹窗焦点以继续使用 Esc 和 Tab。
+    if (localDialog.visible && localExecutor.state.connected) { await nextTick(); localDialogElement.value?.focus(); }
+  }
+  catch { /* 连接错误由会话展示，不回显凭据。 */ }
+}
+
+function applyLocalWhitelistTemplate() {
+  if (!localExecutor.state.connected || !localExecutor.state.reachable) return;
+  // 系统预置模板只是填写白名单的快捷入口。
+  localWhitelistText.value = COMMAND_WHITELIST_TEMPLATES[localDialog.template] || '';
+}
+
+async function aiToolExecuteLocalCommand(input, signal, session) {
+  const args = normalizeLocalCommand({ ...input, shell: input.shell || localExecutor.state.shell });
+  const version = localExecutor.generation;
+  const info = localExecutor.state.info;
+  if (!info || !localExecutor.state.reachable) throw new Error(tr("local.notConnected"));
+  const workspace = localExecutor.state.bindWorkspace ? captureWorkspace() : null;
+  const dirtyHint = dirtyFiles.value.length ? tr("local.dirtyHint", { count: dirtyFiles.value.length }) : "";
+  const whitelisted = areMainCommandsWhitelisted(localExecutor.state.whitelistText, args.commands);
+  // 与 SSH 使用同一白名单匹配规则；高风险和未保存文件仍需逐次确认。
+  if (args.high_risk || !whitelisted || dirtyFiles.value.length) {
+    const approved = await showAiInteraction(session, {
+      mode: "confirm", title: tr("local.run"), tone: "danger",
+      message: tr(args.high_risk ? "local.confirmHighRiskCommand" : !whitelisted ? "local.confirmUnauthorizedCommand" : "local.approve", {
+        command: args.command, commands: args.commands.join(", "), shell: args.shell, endpoint: localExecutor.state.url, cwd: args.cwd || info.default_cwd, reason: args.reason, dirty: dirtyHint }),
+      confirmLabel: tr("local.run"), cancelLabel: tr("dialog.cancel"),
+    }, signal);
+    throwIfAiAborted(signal);
+    if (!approved) throw new Error(tr("local.rejected"));
+  }
+  throwIfAiAborted(signal);
+  if (version !== localExecutor.generation) throw new Error(tr("local.connectionChanged"));
+  return { ...await localExecutor.execute(args, { sessionId: session.id, workspace }, signal), command: args.command, commands: args.commands, high_risk: args.high_risk, reason: args.reason };
+}
+
+async function refreshAfterLocalTask(task, owner) {
+  const workspace = owner?.workspace;
+  if (!workspace?.session || !isCurrentWorkspace(workspace)) return;
+  await refreshTree({ workspace });
+  if (!isCurrentWorkspace(workspace)) return;
+  // 保留未保存内容及原有冲突基线；仅刷新没有修改的文本文件，
+  // 二进制文件由用户重新打开，避免覆盖编辑中的内容。
+  const paths = Array.from(openFiles.values()).filter((file) => !file.dirty && isTextFileState(file)).map((file) => file.path);
+  for (const path of paths) {
+    if (!isCurrentWorkspace(workspace)) return;
+    const file = openFiles.get(path);
+    if (!file || file.dirty) continue;
+    try {
+      const opened = await workspace.session.fileSystem.openRead(path);
+      workspace.session.policy.assertMemoryRead(path, opened.size);
+      const blob = opened.blob || await FileUtils.streamToBlob(opened.stream);
+      workspace.session.policy.assertMemoryRead(path, blob.size);
+      const content = await FileUtils.blobToText(blob);
+      if (!isCurrentWorkspace(workspace) || openFiles.get(path) !== file || file.dirty) continue;
+      workspace.session.forgetBase(path);
+      file.suppressStage = true;
+      try { file.model.setValue(content); } finally { file.suppressStage = false; }
+      file.savedValue = content;
+      file.lastLegalValue = content;
+      file.lastStagedValue = content;
+      file.originalModel?.setValue(content);
+      file.version = opened.version;
+    } catch (error) {
+      if (error?.code === "FILE_NOT_FOUND" && isCurrentWorkspace(workspace) && !file.dirty) removeFileState(path, { removed: true });
+    }
+  }
+  if (isCurrentWorkspace(workspace)) {
+    touchDirtyState();
+    if (dirtyFiles.value.length) setStatus(tr("local.diskChanged"), tr("local.dirtyHint", { count: dirtyFiles.value.length }));
+  }
+}
+
 async function aiToolExecuteSshCommand({ connection, command, commands, high_risk: highRisk, reason, wait_seconds: waitSeconds } = {}, signal, session = getActiveAiSession()) {
   const config = getAiExposedSshConfig(connection);
   const sshSession = getActiveSshSessionForConfig(config);
   const normalizedCommand = String(command || "").trim();
-  const mainCommands = normalizeAiSshCommandList(commands);
+  const mainCommands = normalizeMainCommands(commands);
   const normalizedReason = String(reason || "").trim();
   const normalizedWaitSeconds = normalizeAiSshCommandWaitSeconds(waitSeconds);
   if (!normalizedCommand) throw new Error("command is required");
@@ -8607,7 +8813,7 @@ function formatAiSshConnection(config, session) {
 }
 
 async function authorizeAiSshCommand(config, command, mainCommands, highRisk, reason, session, signal) {
-  const whitelisted = areSshMainCommandsWhitelisted(config, mainCommands);
+  const whitelisted = areMainCommandsWhitelisted(config.whitelist, mainCommands);
   if (!highRisk && whitelisted) return;
   const messageKey = highRisk ? "ssh.confirmHighRiskCommand" : "ssh.confirmUnauthorizedCommand";
   const approved = await showAiInteraction(session, {
@@ -8622,27 +8828,11 @@ async function authorizeAiSshCommand(config, command, mainCommands, highRisk, re
   if (!approved) throw new Error(tr("ssh.error.commandRejected"));
 }
 
-function areSshMainCommandsWhitelisted(config, mainCommands) {
-  const whitelist = new Set(normalizeSshWhitelist(config.whitelist || []).map(normalizeMainCommandName));
-  return mainCommands.length > 0 && mainCommands.every((command) => whitelist.has(command));
-}
-
-function normalizeAiSshCommandList(commands) {
-  if (!Array.isArray(commands)) return [];
-  return uniqueStrings(commands.map(normalizeMainCommandName)).filter(Boolean);
-}
-
 function normalizeAiSshCommandWaitSeconds(value) {
   if (value === undefined || value === null || value === "") return SSH_COMMAND_DEFAULT_WAIT_SECONDS;
   const seconds = Number(value);
   if (!Number.isSafeInteger(seconds) || seconds <= 0) throw new Error("wait_seconds must be a positive integer");
   return seconds;
-}
-
-function normalizeMainCommandName(command) {
-  const value = String(command || "").trim();
-  if (!value || /\s/.test(value)) return "";
-  return value;
 }
 
 function delay(ms, signal) {
@@ -9379,4 +9569,24 @@ function getTreeIconClass(node, collapsed = false) {
   .code-editor-view .editor-dialog-actions { flex-direction: column-reverse; }
   .code-editor-view .editor-dialog-actions button { width: 100%; }
 }
+
+.code-editor-view .local-executor-content { padding: 12px; overflow: auto; display: flex; flex-direction: column; gap: 12px; }
+.code-editor-view .local-executor-content p { margin: 0; font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
+.code-editor-view .local-executor-content label, .code-editor-view .local-executor-content form { display: flex; flex-direction: column; gap: 8px; font-size: 12px; }
+.code-editor-view .local-executor-content textarea, .code-editor-view .local-executor-content select, .code-editor-view .local-executor-content input:not([type="checkbox"]) { width: 100%; min-width: 0; padding: 8px; border: 1px solid var(--border); border-radius: 4px; color: inherit; background: var(--input); }
+.code-editor-view .local-whitelist-field { display: flex; flex-direction: column; gap: 8px; }
+.code-editor-view .local-executor-content h3 { margin: 0; font-size: 13px; }
+.code-editor-view .local-executor-content textarea { resize: vertical; font-family: monospace; }
+.code-editor-view .local-executor-content .local-check { flex-direction: row; align-items: flex-start; }
+.code-editor-view .local-check input { margin-top: 3px; }
+.code-editor-view .local-warning { color: var(--warning, #c68b38); }
+.code-editor-view .local-executor-dialog { width: min(760px, calc(100vw - 32px)); max-height: calc(100dvh - 40px); padding: 16px; }
+.code-editor-view .local-executor-dialog .editor-dialog-header h2 { flex: 1; }
+.code-editor-view .local-executor-dialog .local-executor-content { min-height: 0; }
+.code-editor-view .local-status-button { position: relative; }
+.code-editor-view .local-status-dot { position: absolute; top: 3px; right: 3px; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); box-shadow: 0 0 0 1px var(--panel); }
+.code-editor-view .local-status-connected .local-status-dot { background: #3fb950; }
+.code-editor-view .local-status-connecting .local-status-dot { background: #d29922; }
+.code-editor-view .local-status-unreachable .local-status-dot { background: #f85149; }
+
 </style>

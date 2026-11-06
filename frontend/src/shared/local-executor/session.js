@@ -149,7 +149,7 @@ export function createLocalExecutorSession({onFinished = () => {}, heartbeatMs =
             const id = crypto.randomUUID();
             const shell = args.shell || state.shell || state.info.shell;
             if (!(state.info.shells || [state.info.shell]).includes(shell)) throw new Error('Shell is unavailable on this connection');
-            const task = reactive({id, shell, command: args.command, cwd: args.cwd || state.info.default_cwd, status: 'submitting', output: '', cursor: 0, has_more: false, exit_code: null, error: '', truncated: false, output_lost: false});
+            const task = reactive({id, shell, command: args.command, reason: args.reason || '', cwd: args.cwd || state.info.default_cwd, status: 'submitting', output: '', cursor: 0, has_more: false, exit_code: null, error: '', truncated: false, output_lost: false});
             state.tasks.unshift(task);
             owners.set(id, owner);
             try {

@@ -76,7 +76,7 @@ async function ask(page) {
     await page.getByRole('button', {name: '发送', exact: true}).click();
 }
 
-test('场景：无 GTools 后端时配对真实本机服务，批准后执行且凭据不进入模型或设置', async ({page}) => {
+test('场景：任务列表不展示已完成任务，执行结果仍返回 AI 且凭据不进入模型或设置', async ({page}) => {
     await setup(page, "printf '执行器连接成功\\n'");
     const panel = await connect(page);
     await ask(page);
@@ -90,8 +90,7 @@ test('场景：无 GTools 后端时配对真实本机服务，批准后执行且
     await expect(panel.locator('.local-output')).toHaveCount(0);
     await expect.poll(() => terminalOutput).toMatch(/\] 执行器连接成功\n/);
     await expect(panel.locator('.local-task')).toHaveCount(0);
-    await expect(panel).not.toContainText('completed');
-    await expect(panel.getByRole('button', {name: '取消任务', exact: true})).toHaveCount(0);
+    await expect(panel.locator('.local-tasks')).toHaveCount(0);
     expect(JSON.stringify(requests)).not.toContain(connection.token);
     const settings = await page.evaluate(() => JSON.stringify({...localStorage}));
     expect(settings).not.toContain(connection.token);
@@ -99,6 +98,19 @@ test('场景：无 GTools 后端时配对真实本机服务，批准后执行且
     const result = JSON.parse(requests[1].input.find((item) => item.type === 'function_call_output').output);
     expect(result).toMatchObject({ok: true, status: 'completed', exit_code: 0, has_more: false});
     expect(result.output).toContain('执行器连接成功');
+});
+
+test('场景：任务列表不展示失败任务，错误输出和退出码仍返回 AI', async ({page}) => {
+    await setup(page, "printf '失败信息\\n' >&2; exit 7", {commands: ['printf', 'exit']}, {localExecutor: {autoApprove: true}});
+    const panel = await connect(page);
+    await ask(page);
+    await expect(page.locator('.ai-message-assistant')).toContainText('本机命令请求已处理');
+    await page.getByRole('button', {name: '执行器连接', exact: true}).click();
+    await expect(panel.locator('.local-task')).toHaveCount(0);
+    await expect(panel.locator('.local-tasks')).toHaveCount(0);
+    const result = JSON.parse(requests[1].input.find((item) => item.type === 'function_call_output').output);
+    expect(result).toMatchObject({status: 'failed', exit_code: 7});
+    expect(result.output).toContain('失败信息');
 });
 
 test('场景：拒绝本机命令授权后不提交执行任务', async ({page}) => {
@@ -117,14 +129,16 @@ test('场景：拒绝本机命令授权后不提交执行任务', async ({page})
     expect(JSON.parse(result.output)).toMatchObject({ok: false});
 });
 
-test('场景：不展示任务区块，断开仍取消长任务并移除连接信息', async ({page}) => {
+test('场景：任务列表展示运行状态，断开取消长任务并清空列表和连接信息', async ({page}) => {
     await setup(page, 'sleep 30', {wait_seconds: 1});
     const panel = await connect(page);
     await ask(page);
     await page.getByRole('dialog', {name: '执行命令'}).getByRole('button', {name: '执行命令'}).click();
     await expect(page.locator('.ai-message-assistant')).toContainText('本机命令请求已处理');
     await page.getByRole('button', {name: '执行器连接', exact: true}).click();
-    await expect(panel.locator('.local-task')).toHaveCount(0);
+    await expect(panel.locator('.local-task')).toHaveCount(1);
+    await expect(panel.locator('.local-task-status')).toHaveText('运行中');
+    await expect(panel.locator('.local-task-details')).toHaveCount(0);
     const cancellation = page.waitForResponse((response) => response.url().startsWith(connection.url + '/v1/tasks/') && response.url().endsWith('/cancel'));
     await panel.getByRole('button', {name: '断开并请求取消任务'}).click();
     const response = await cancellation;
@@ -133,6 +147,72 @@ test('场景：不展示任务区块，断开仍取消长任务并移除连接�
     await expect.poll(() => terminalOutput).toContain(`[${id}] 执行结束 | 状态: cancelled`);
     await expect(panel.getByRole('button', {name: '连接执行器', exact: true})).toBeVisible();
     await expect(panel.getByLabel('终端显示的连接 JSON')).toHaveValue('');
+    await expect(panel.locator('.local-task')).toHaveCount(0);
+});
+
+test('场景：任务列表分别展开和停止，停止失败可重试且不影响另一任务', async ({page}) => {
+    await setup(page, 'pwd', {}, {localExecutor: {autoApprove: true}});
+    const commands = [
+        {command: "printf '任务甲输出\\n'; sleep 30", reason: '任务甲原因'},
+        {command: "printf '任务乙输出\\n'; sleep 30", reason: '任务乙原因'},
+    ];
+    await page.route('https://api.openai.com/v1/responses', async (route) => {
+        requests.push(route.request().postDataJSON());
+        const response = requests.length === 1
+            ? {output: commands.map((args, index) => ({type: 'function_call', call_id: `task-${index}`, name: 'execute_executor_command', arguments: JSON.stringify({...args, commands: ['printf', 'sleep'], high_risk: false, wait_seconds: 0})}))}
+            : {output_text: '两条命令已提交。', output: []};
+        await route.fulfill({status: 200, headers: {'content-type': 'text/event-stream'}, body: `data: ${JSON.stringify({type: 'response.completed', response})}\n\ndata: [DONE]\n\n`});
+    });
+    const panel = await connect(page);
+    await ask(page);
+    await expect(page.locator('.ai-message-assistant')).toContainText('两条命令已提交');
+    await page.getByRole('button', {name: '执行器连接', exact: true}).click();
+    await expect(panel.locator('.local-task')).toHaveCount(2);
+    const first = panel.locator('.local-task').filter({has: page.locator('.local-task-reason', {hasText: '任务甲原因'})});
+    const second = panel.locator('.local-task').filter({has: page.locator('.local-task-reason', {hasText: '任务乙原因'})});
+    await expect(first.locator('.local-task-status')).toHaveText('运行中');
+    await expect(first.locator('.local-task-details')).toHaveCount(0);
+    const expand = first.getByRole('button', {name: '展开', exact: true});
+    await expect(expand).toHaveAttribute('aria-expanded', 'false');
+    await expand.click();
+    await expect(first.locator('.local-command')).toHaveText(commands[0].command);
+    await expect(first.locator('.local-output')).toHaveText('任务甲输出');
+    await expect(second.locator('.local-task-details')).toHaveCount(0);
+    const collapse = first.getByRole('button', {name: '收起', exact: true});
+    await expect(collapse).toHaveAttribute('aria-expanded', 'true');
+    await collapse.click();
+    await expect(first.locator('.local-task-details')).toHaveCount(0);
+    const id = await first.locator('.local-task-id').textContent();
+    const results = requests[1].input.filter((item) => item.type === 'function_call_output').map((item) => JSON.parse(item.output));
+    expect(results.some((result) => result.task_id === id)).toBe(true);
+    let stopRequests = 0;
+    let failStop;
+    await page.route(`${connection.url}/v1/tasks/${id}/cancel`, async (route) => {
+        stopRequests++;
+        if (stopRequests === 1) {
+            // 首次响应可控，验证等待期间不会重复请求，以及失败后仍可重试。
+            await new Promise((resolve) => { failStop = resolve; });
+            await route.fulfill({status: 503, json: {error: '模拟停止失败'}});
+        } else await route.continue();
+    });
+    await first.getByRole('button', {name: '停止', exact: true}).click();
+    await expect(first.getByRole('button', {name: '停止中…', exact: true})).toBeDisabled();
+    await expect.poll(() => stopRequests).toBe(1);
+    failStop();
+    await expect(first.getByRole('alert')).toHaveText('模拟停止失败');
+    await expect(first.getByRole('button', {name: '停止', exact: true})).toBeEnabled();
+    await first.getByRole('button', {name: '停止', exact: true}).click();
+    await expect(first).toHaveCount(0);
+    await expect(panel.locator('.local-task')).toHaveCount(1);
+    await expect(second.locator('.local-task-status')).toHaveText('运行中');
+    await expect(second.getByRole('button', {name: '停止', exact: true})).toBeEnabled();
+    await second.getByRole('button', {name: '展开', exact: true}).click();
+    await expect(second.locator('.local-output')).toHaveText('任务乙输出');
+    await second.getByRole('button', {name: '停止', exact: true}).click();
+    await expect(second).toHaveCount(0);
+    await expect(panel.locator('.local-tasks')).toHaveCount(0);
+    expect(stopRequests).toBe(2);
+    await expect.poll(() => terminalOutput).toContain(`[${id}] 执行结束 | 状态: cancelled`);
 });
 
 test('场景：低风险白名单命令直接执行，重新连接自动回填白名单', async ({page}) => {

@@ -737,6 +737,31 @@
             <p v-if="!localExecutor.state.autoApprove">{{ tr('local.approvalHint') }}</p>
             <label v-if="localWorkspaceName" class="local-check"><input v-model="localExecutor.state.bindWorkspace" type="checkbox" />{{ tr('local.bindWorkspace') }}: {{ localWorkspaceName }}</label>
             <p v-if="localExecutor.state.bindWorkspace">{{ tr('local.bindHint') }}</p>
+            <section v-if="localActiveTasks.length" class="local-tasks" :aria-label="tr('local.tasks')">
+              <h3>{{ tr('local.tasks') }}</h3>
+              <article v-for="task in localActiveTasks" :key="task.id" class="local-task">
+                <div class="local-task-header">
+                  <div class="local-task-summary">
+                    <code class="local-task-id">{{ task.id }}</code>
+                    <p class="local-task-reason">{{ task.reason || '—' }}</p>
+                  </div>
+                  <span class="local-task-status" :class="`local-task-status-${task.status}`">{{ tr(`local.taskStatus.${task.status}`) }}</span>
+                  <div class="local-task-actions">
+                    <button type="button" :disabled="!localExecutor.state.reachable || isLocalTaskFinished(task) || task.status === 'submitting' || task.status === 'cancelling' || localTaskUi[task.id]?.stopping" @click="stopLocalTask(task)">{{ tr(localTaskUi[task.id]?.stopping || task.status === 'cancelling' ? 'local.taskStopping' : 'local.taskStop') }}</button>
+                    <button type="button" :aria-expanded="!!localTaskUi[task.id]?.expanded" :aria-controls="`local-task-details-${task.id}`" @click="toggleLocalTask(task.id)">{{ tr(localTaskUi[task.id]?.expanded ? 'local.taskCollapse' : 'local.taskExpand') }}</button>
+                  </div>
+                </div>
+                <p v-if="localTaskUi[task.id]?.error" role="alert" class="local-warning">{{ localTaskUi[task.id].error }}</p>
+                <div v-if="localTaskUi[task.id]?.expanded" :id="`local-task-details-${task.id}`" class="local-task-details">
+                  <h4>{{ tr('local.taskInput') }}</h4>
+                  <pre class="local-command">{{ task.command }}</pre>
+                  <h4>{{ tr('local.taskOutput') }}</h4>
+                  <pre class="local-output">{{ task.output || tr('local.taskNoOutput') }}</pre>
+                  <p v-if="task.truncated || task.output_lost" class="local-warning">{{ tr('local.taskTruncated') }}</p>
+                  <p v-if="task.error" class="local-warning">{{ task.error }}</p>
+                </div>
+              </article>
+            </section>
             <button type="button" @click="localExecutor.disconnect()">{{ tr('local.disconnect') }}</button>
             <p>{{ tr('local.disconnectHint') }}</p>
           </template>
@@ -1151,6 +1176,10 @@ const localIsWindows = /Windows/i.test(navigator.userAgent);
 const localDialog = reactive({ visible: false, platform: localIsWindows ? 'windows' : 'unix', terminal: 'powershell', listenAddress: '127.0.0.1', port: 0, template: localIsWindows ? 'powershell' : 'sh', connection: '', copied: false });
 const localDialogElement = ref(null);
 const localStatusButton = ref(null);
+const localActiveTasks = computed(() => localExecutor.state.tasks.filter((task) => !isLocalTaskFinished(task)));
+// 展开和停止请求状态只用于当前连接的界面，不进入设置或 AI 上下文。
+const localTaskUi = ref({});
+watch(() => localExecutor.state.connected, (connected) => { if (!connected) localTaskUi.value = {}; });
 const localWorkspaceName = computed(() => rootKind.value === 'local' ? rootName.value : '');
 const localConnectionStatus = computed(() => localExecutor.state.connecting ? 'connecting' : localExecutor.state.connected ? (localExecutor.state.reachable ? 'connected' : 'unreachable') : 'disconnected');
 const localStartup = computed(() => {
@@ -8683,6 +8712,21 @@ function aiToolSftpCancelTask({ task_id: taskId } = {}) {
   return { ...formatSftpTaskForTool(task, cancelled ? "SFTP task cancelled" : "SFTP task was not cancelled"), cancelled };
 }
 
+function toggleLocalTask(id) {
+  const ui = localTaskUi.value[id] ||= reactive({expanded: false, stopping: false, error: ''});
+  ui.expanded = !ui.expanded;
+}
+
+async function stopLocalTask(task) {
+  const ui = localTaskUi.value[task.id] ||= reactive({expanded: false, stopping: false, error: ''});
+  if (ui.stopping || !localExecutor.state.reachable || isLocalTaskFinished(task) || ['submitting', 'cancelling'].includes(task.status)) return;
+  ui.stopping = true;
+  ui.error = '';
+  try { await localExecutor.cancel(task.id); }
+  catch (error) { ui.error = error.message; }
+  finally { ui.stopping = false; }
+}
+
 function openLocalDialog() {
   localDialog.visible = true;
   nextTick(() => localDialogElement.value?.focus());
@@ -9607,6 +9651,18 @@ function getTreeIconClass(node, collapsed = false) {
 .code-editor-view .local-executor-content .local-check { flex-direction: row; align-items: flex-start; }
 .code-editor-view .local-check input { margin-top: 3px; }
 .code-editor-view .local-warning { color: var(--warning, #c68b38); }
+.code-editor-view .local-tasks { display: flex; flex-direction: column; gap: 8px; }
+.code-editor-view .local-task { min-width: 0; padding: 10px; border: 1px solid var(--border); border-radius: 4px; }
+.code-editor-view .local-task-header { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.code-editor-view .local-task-summary { flex: 1 1 220px; min-width: 0; }
+.code-editor-view .local-task-id { font-size: 11px; overflow-wrap: anywhere; }
+.code-editor-view .local-task-reason { color: var(--muted); }
+.code-editor-view .local-task-status { font-size: 12px; white-space: nowrap; }
+.code-editor-view .local-task-status-unknown { color: var(--warning, #c68b38); }
+.code-editor-view .local-task-actions { display: flex; gap: 6px; }
+.code-editor-view .local-task-details { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.code-editor-view .local-task-details h4 { margin: 0; font-size: 12px; }
+.code-editor-view .local-task-details pre { margin: 0; padding: 8px; max-height: 260px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; color: inherit; background: var(--input); border-radius: 4px; }
 .code-editor-view .local-executor-dialog { width: min(760px, calc(100vw - 32px)); max-height: calc(100dvh - 40px); padding: 16px; }
 .code-editor-view .local-executor-dialog .editor-dialog-header h2 { flex: 1; }
 .code-editor-view .local-executor-dialog .local-executor-content { min-height: 0; }

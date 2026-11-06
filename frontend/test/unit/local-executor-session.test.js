@@ -18,7 +18,9 @@ test('场景：会话隔离阻止其他 AI 会话读取或取消任务，凭据�
     const session = createLocalExecutorSession();
     try {
         await session.connect(connection);
-        const result = await session.execute({command: 'pwd', wait_seconds: 0}, {sessionId: 'a'});
+        const result = await session.execute({command: 'pwd', reason: '确认命令工作目录', wait_seconds: 0}, {sessionId: 'a'});
+        assert.equal(session.state.tasks[0].reason, '确认命令工作目录');
+        assert.equal(JSON.parse(requests[1].options.body).reason, undefined);
         await assert.rejects(session.read(result.task_id, 0, {sessionId: 'b'}), /does not belong/);
         await assert.rejects(session.cancel(result.task_id, {sessionId: 'b'}), /does not belong/);
         assert.equal(requests.length, 2);

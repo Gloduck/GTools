@@ -1011,7 +1011,6 @@ const PREVIEW_INLINE_IMAGE_MAX_FILE_SIZE = 8 * 1024 * 1024;
 const AI_AGENTS_FILE_NAME = "AGENTS.md";
 const AI_AGENTS_MAX_CHARS = 30000;
 const AI_GLOBAL_PROMPT_MAX_CHARS = 4000;
-const AI_AGENT_MAX_TOOL_CALL_ROUNDS = 25;
 const AI_TOOL_OUTPUT_MIN_CHARS = 1000;
 const AI_TOOL_OUTPUT_DEFAULT_MAX_CHARS = 5000;
 const AI_TOOL_OUTPUT_HARD_MAX_CHARS = 20000;
@@ -5967,7 +5966,8 @@ async function runAiAgent(prompt, signal, session = getActiveAiSession(), runCon
   const agentInstructions = getAgentInstructions();
   const model = runConfig.model || session.agentModel.trim();
   const reasoningEffort = runConfig.reasoningEffort || session.reasoningEffort;
-  for (let round = 0; round < AI_AGENT_MAX_TOOL_CALL_ROUNDS; round += 1) {
+  while (true) {
+    throwIfAiAborted(signal);
     const payload = { model, instructions: agentInstructions, input: conversation, tools: getAiToolDefinitions() };
     if (reasoningEffort && reasoningEffort !== "default") payload.reasoning = { effort: reasoningEffort };
     const response = await callOpenAiResponses(payload, signal);
@@ -6037,7 +6037,6 @@ async function runAiAgent(prompt, signal, session = getActiveAiSession(), runCon
     if (!toolCalls.length) return;
     if (imageInputs.length) conversation.push(buildImageInputMessage(imageInputs));
   }
-  addAiMessage("assistant", "Reached the tool-call round limit. Review the current changes before continuing.", {}, session);
 }
 
 async function handleAiFunctionCall(call, args, session, signal, imageInputs, conversation) {

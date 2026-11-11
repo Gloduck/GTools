@@ -4910,6 +4910,10 @@ async function callOpenAiImage(options, signal) {
   const common = isDallE
     ? { model, prompt: options.prompt, response_format: "b64_json" }
     : { model, prompt: options.prompt, size: options.size || "auto", quality: options.quality || "auto", background: options.background || "auto", output_format: options.outputFormat };
+  if (!isDallE && options.outputFormat === "gif") {
+    if (options.frameCount !== undefined) common.frame_count = options.frameCount;
+    if (options.frameDurationMs !== undefined) common.frame_duration_ms = options.frameDurationMs;
+  }
   if (isDallE && options.size && options.size !== "auto") common.size = options.size;
   if (/^dall-e-3$/i.test(model) && options.quality && options.quality !== "auto") common.quality = normalizeDallE3Quality(options.quality);
   let endpoint = "generations";
@@ -5000,7 +5004,7 @@ async function readBoundedBlobResponse(response, path, maxSize, operation = "AI 
 }
 
 function getImageMimeTypeForFormat(format) {
-  return { jpeg: "image/jpeg", jpg: "image/jpeg", webp: "image/webp", png: "image/png" }[String(format || "png").toLowerCase()] || "image/png";
+  return { jpeg: "image/jpeg", jpg: "image/jpeg", webp: "image/webp", png: "image/png", gif: "image/gif" }[String(format || "png").toLowerCase()] || "image/png";
 }
 
 function normalizeDallE3Quality(value) {
@@ -6508,16 +6512,18 @@ function getAiAllToolDefinitions() {
       "Generate a new image or edit an existing workspace image using the configured image model.",
       "Omit input_path to use the image generation endpoint. Provide input_path to use the image edit endpoint; mask_path is optional and requires input_path.",
       "The result replaces the workspace image's in-memory content and is not written to disk until the user saves it. Editing into the same path is safe because the saved disk image remains the revert baseline. Set overwrite only when intentionally targeting another existing file.",
-      "Only PNG, JPEG, and WebP output paths are supported. Keep prompts self-contained because the image API does not receive the coding-agent conversation."
+      "PNG, JPEG, WebP, and animated GIF output paths are supported; GIF requires a compatible image model. Describe the motion and loop in the prompt. Keep prompts self-contained because the image API does not receive the coding-agent conversation."
     ), parameters: { type: "object", properties: {
       prompt: { type: "string", description: "Complete image generation or editing prompt." },
-      output_path: { type: "string", description: "Workspace-relative output path ending in .png, .jpg, .jpeg, or .webp." },
+      output_path: { type: "string", description: "Workspace-relative output path ending in .png, .jpg, .jpeg, .webp, or .gif." },
       input_path: { type: "string", description: "Optional workspace image path. When present, the edit endpoint is used." },
       mask_path: { type: "string", description: "Optional workspace mask image path for image editing." },
-      size: { type: "string", description: "Provider-supported image size, for example auto, 1024x1024, 1536x1024, or 1024x1536." },
+      size: { type: "string", description: "Provider-supported image size, for example auto, 1024x1024, 1536x1024, or 1024x1536. GIF size is per frame; use auto or dimensions that are positive multiples of 16." },
       quality: { type: "string", description: "Provider-supported quality. GPT Image commonly uses auto, low, medium, or high; DALL-E 3 uses standard or hd." },
       background: { type: "string", description: "Generation background, for example auto, opaque, or transparent." },
-      output_format: { type: "string", description: "Optional png, jpeg, or webp. Defaults from output_path." },
+      output_format: { type: "string", description: "Optional png, jpeg, webp, or gif. Defaults from output_path." },
+      frame_count: { type: "integer", minimum: 2, maximum: 16, description: "GIF only. Number of animation frames; omitted uses the provider default (GPT Image 2.6: 9)." },
+      frame_duration_ms: { type: "integer", minimum: 20, maximum: 2000, description: "GIF only. Milliseconds per frame; GPT Image 2.6 rounds to 10 ms, default 200. Omit for provider default." },
       overwrite: { type: "boolean", description: "Allow targeting an existing output file other than input_path. The disk file remains unchanged until manual save." }
     }, required: ["prompt", "output_path"] } },
     { type: "function", name: "search_text", requirements: ["workspace"], description: aiToolDescription("Search exact text across workspace files.", "This is a simple substring search, not a regex search. Use path to limit the search scope and max_results to keep output concise."), parameters: { type: "object", properties: { query: { type: "string" }, path: { type: "string" }, max_results: { type: "number" } }, required: ["query"] } },
@@ -7589,7 +7595,7 @@ async function aiToolReadImage(path) {
   return { path: normalized, mimeType, size: file.size, dataUrl };
 }
 
-async function aiToolGenerateOrEditImage({ prompt, output_path: outputPath, input_path: inputPath, mask_path: maskPath, size = "auto", quality = "auto", background = "auto", output_format: outputFormat, overwrite = false } = {}, session = getActiveAiSession(), signal) {
+async function aiToolGenerateOrEditImage({ prompt, output_path: outputPath, input_path: inputPath, mask_path: maskPath, size = "auto", quality = "auto", background = "auto", output_format: outputFormat, frame_count: frameCount, frame_duration_ms: frameDurationMs, overwrite = false } = {}, session = getActiveAiSession(), signal) {
   const workspace = captureWorkspace();
   assertCurrentWorkspace(workspace);
   throwIfAiAborted(signal);
@@ -7597,6 +7603,9 @@ async function aiToolGenerateOrEditImage({ prompt, output_path: outputPath, inpu
   if (!normalizedPrompt) throw new Error("prompt is required");
   const normalizedOutputPath = normalizeWorkspacePath(outputPath);
   const format = normalizeImageOutputFormat(outputFormat, normalizedOutputPath);
+  if (format !== "gif" && (frameCount !== undefined || frameDurationMs !== undefined)) throw new Error("frame_count and frame_duration_ms require GIF output");
+  if (frameCount !== undefined && (!Number.isInteger(frameCount) || frameCount < 2 || frameCount > 16)) throw new Error("frame_count must be an integer between 2 and 16");
+  if (frameDurationMs !== undefined && (!Number.isInteger(frameDurationMs) || frameDurationMs < 20 || frameDurationMs > 2000)) throw new Error("frame_duration_ms must be an integer between 20 and 2000");
   const normalizedInputPath = inputPath ? normalizeWorkspacePath(inputPath) : "";
   assertFilePathAncestors(normalizedOutputPath);
   if (isExternalWritePath(normalizedOutputPath, workspace.generation)) throw new Error(`File operation is already in progress: ${normalizedOutputPath}`);
@@ -7621,6 +7630,8 @@ async function aiToolGenerateOrEditImage({ prompt, output_path: outputPath, inpu
     quality: String(quality || "auto"),
     background: String(background || "auto"),
     outputFormat: format,
+    frameCount,
+    frameDurationMs,
     outputPath: normalizedOutputPath,
   }, signal);
   return stageGeneratedImage({
@@ -7671,7 +7682,7 @@ function normalizeImageOutputFormat(value, path) {
   const requested = String(value || "").trim().toLowerCase().replace("jpg", "jpeg");
   const extension = FileUtils.getFileExtension(path).replace("jpg", "jpeg");
   const format = requested || extension;
-  if (!["png", "jpeg", "webp"].includes(format)) throw new Error("output_path must end in .png, .jpg, .jpeg, or .webp");
+  if (!["png", "jpeg", "webp", "gif"].includes(format)) throw new Error("output_path must end in .png, .jpg, .jpeg, .webp, or .gif");
   if (requested && extension !== requested) throw new Error(`output_format ${requested} does not match output_path: ${path}`);
   return format;
 }

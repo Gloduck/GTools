@@ -3,17 +3,21 @@ import {expect, test} from '@playwright/test';
 test.use({channel: 'chromium'});
 
 const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4AWJiYGD4DwAAAP//cGajQwAAAAZJREFUAwABDgEC81VxbAAAAABJRU5ErkJggg==';
+// 两帧红蓝循环 GIF，用于验证暂存和保存没有重新编码成静态图片。
+const gif = Buffer.from('47494638396101000100800000ff00000000ff21ff0b4e45545343415045322e30030100000021f904000a0000002c000000000100010000020244010021f904000a0000002c00000000010001000002024c01003b', 'hex').toString('base64');
 const image = {id: 'ig-1', type: 'image_generation_call', status: 'completed', output_format: 'png', result: png};
 const emptyMessage = {type: 'message', role: 'assistant', content: [{type: 'output_text', text: ''}]};
 
-async function setup(page, response, {stream = true, items = [], workspace = true, beforeSend} = {}) {
+async function setup(page, response, {stream = true, items = [], workspace = true, beforeSend, imageModel = 'test-image-model'} = {}) {
     const requests = [];
-    await page.addInitScript(() => {
+    await page.addInitScript((imageModel) => {
+        // 图片测试使用真实 OPFS；固定持久化授权结果，避免环境提示阻挡操作。
+        Object.defineProperty(navigator.storage, 'persist', {configurable: true, value: async () => true});
         localStorage.setItem('ui-locale', 'en-US');
         localStorage.setItem('browser-code-editor-settings', JSON.stringify({
-            ai: {apiKey: 'test-key', agentModels: 'test-model', imageModel: 'test-image-model', baseUrl: 'https://api.openai.com/v1'},
+            ai: {apiKey: 'test-key', agentModels: 'test-model', imageModel, baseUrl: 'https://api.openai.com/v1'},
         }));
-    });
+    }, imageModel);
     await page.route('https://api.openai.com/v1/responses', async (route) => {
         requests.push(route.request().postDataJSON());
         const events = items.map((item, output_index) => ({type: 'response.output_item.done', item, output_index}));
@@ -174,6 +178,129 @@ test('三种调用混合返回时分别处理，只有本地函数触发工具�
     const path = await page.locator('.ai-image-result').getAttribute('title');
     await saveImage(page, path);
     expect(await readFile(page, path)).toEqual([...Buffer.from(png, 'base64')]);
+});
+
+function imageCall(args) {
+    return {type: 'function_call', id: 'gif-call', call_id: 'gif-call', name: 'generate_or_edit_image', arguments: JSON.stringify({prompt: '生成红蓝交替的循环动画', ...args})};
+}
+
+for (const delivery of ['base64', 'url']) {
+    test(`GIF 生成透传动画参数，${delivery} 结果按原始双帧字节预览和保存`, async ({page}) => {
+        let body;
+        await page.route('https://api.openai.com/v1/images/generations', async (route) => {
+            body = route.request().postDataJSON();
+            await route.fulfill({json: {data: [delivery === 'base64' ? {b64_json: gif} : {url: 'https://images.example/animation.gif'}]}});
+        });
+        await page.route('https://images.example/animation.gif', (route) => route.fulfill({contentType: 'application/octet-stream', body: Buffer.from(gif, 'base64')}));
+        const requests = await setup(page, (requests) => requests.length === 1
+            ? {output: [imageCall({output_path: 'animation.gif', frame_count: 2, frame_duration_ms: 100})]}
+            : {output_text: '动画已生成。'}, {imageModel: 'gpt-image-2.6-sunburst'});
+        expect(body).toMatchObject({model: 'gpt-image-2.6-sunburst', output_format: 'gif', frame_count: 2, frame_duration_ms: 100, n: 1});
+        expect(body).not.toHaveProperty('stream');
+        expect(body).not.toHaveProperty('output_compression');
+        const schema = requests[0].tools.find((tool) => tool.name === 'generate_or_edit_image').parameters.properties;
+        expect(schema.output_format.description).toContain('gif');
+        expect(schema.frame_count).toMatchObject({type: 'integer', minimum: 2, maximum: 16});
+        expect(schema.frame_duration_ms).toMatchObject({type: 'integer', minimum: 20, maximum: 2000});
+        const result = JSON.parse(requests[1].input.find((item) => item.type === 'function_call_output').output);
+        expect(result).toMatchObject({ok: true, image_path: 'animation.gif', mime_type: 'image/gif', width: 1, height: 1, dirty: true});
+        const preview = page.locator('.ai-image-result img');
+        await expect.poll(() => preview.evaluate((element) => element.naturalWidth)).toBe(1);
+        const frames = await preview.evaluate(async (element) => {
+            const response = await fetch(element.src);
+            const decoder = new ImageDecoder({data: await response.arrayBuffer(), type: 'image/gif'});
+            try {
+                await decoder.tracks.ready;
+                const decoded = await decoder.decode({frameIndex: 1});
+                decoded.image.close();
+                return decoder.tracks.selectedTrack.frameCount;
+            } finally { decoder.close(); }
+        });
+        expect(frames).toBe(2);
+        expect(await readFile(page, 'animation.gif')).toBeNull();
+        await saveImage(page, 'animation.gif');
+        expect(await readFile(page, 'animation.gif')).toEqual([...Buffer.from(gif, 'base64')]);
+    });
+}
+
+test('GIF 编辑使用静态参考图并在 multipart 请求中传递动画参数', async ({page}) => {
+    let fields;
+    await page.route('https://api.openai.com/v1/images/edits', async (route) => {
+        const request = route.request();
+        const parsed = await new Response(request.postDataBuffer(), {headers: {'Content-Type': request.headers()['content-type']}}).formData();
+        fields = Object.fromEntries(parsed);
+        await route.fulfill({json: {data: [{b64_json: gif}]}});
+    });
+    const requests = await setup(page, (requests) => requests.length === 1
+        ? {output: [imageCall({input_path: 'existing.png', output_path: 'edited.gif', output_format: 'gif', frame_count: 16, frame_duration_ms: 2000})]}
+        : {output_text: '参考图动画已生成。'}, {
+        imageModel: 'gpt-image-2.6-flare',
+        beforeSend: () => page.evaluate(async (png) => {
+            const root = await navigator.storage.getDirectory();
+            const stream = await (await root.getFileHandle('existing.png')).createWritable();
+            await stream.write(Uint8Array.from(atob(png), (value) => value.charCodeAt(0)));
+            await stream.close();
+        }, png),
+    });
+    expect(fields).toMatchObject({model: 'gpt-image-2.6-flare', output_format: 'gif', frame_count: '16', frame_duration_ms: '2000'});
+    expect(fields.image.type).toBe('image/png');
+    expect([...new Uint8Array(await fields.image.arrayBuffer())]).toEqual([...Buffer.from(png, 'base64')]);
+    const result = JSON.parse(requests[1].input.find((item) => item.type === 'function_call_output').output);
+    expect(result).toMatchObject({ok: true, image_path: 'edited.gif', input_path: 'existing.png', operation: 'edited', mime_type: 'image/gif'});
+    await saveImage(page, 'edited.gif');
+    expect(await readFile(page, 'edited.gif')).toEqual([...Buffer.from(gif, 'base64')]);
+});
+
+test('GIF 省略动画参数时沿用服务端默认值，PNG 请求不附带动画参数', async ({page}) => {
+    const bodies = [];
+    await page.route('https://api.openai.com/v1/images/generations', async (route) => {
+        const body = route.request().postDataJSON();
+        bodies.push(body);
+        await route.fulfill({json: {data: [{b64_json: body.output_format === 'gif' ? gif : png}]}});
+    });
+    const requests = await setup(page, (requests) => requests.length === 1 ? {output: [
+        imageCall({output_path: 'defaults.gif'}),
+        {...imageCall({output_path: 'still.png'}), id: 'png-call', call_id: 'png-call'},
+    ]} : {output_text: '已生成动画与静态图。'});
+    expect(bodies).toHaveLength(2);
+    expect(bodies.map((body) => body.output_format)).toEqual(['gif', 'png']);
+    for (const body of bodies) {
+        expect(body).not.toHaveProperty('frame_count');
+        expect(body).not.toHaveProperty('frame_duration_ms');
+    }
+    const results = requests[1].input.filter((item) => item.type === 'function_call_output').map((item) => JSON.parse(item.output));
+    expect(results.every((result) => result.ok)).toBe(true);
+});
+
+test('GIF 参数错误或格式不匹配时在调用图片 API 前报错', async ({page}) => {
+    let imageRequests = 0;
+    await page.route('https://api.openai.com/v1/images/**', async (route) => {
+        imageRequests++;
+        await route.fulfill({status: 400, json: {error: {message: '不应发送请求'}}});
+    });
+    const invalid = [
+        {frame_count: 1}, {frame_count: 17}, {frame_count: '2'}, {frame_count: null},
+        {frame_duration_ms: 19}, {frame_duration_ms: 2001}, {frame_duration_ms: 20.5},
+        {output_path: 'still.png', frame_count: 2}, {output_path: 'mismatch.png', output_format: 'gif'},
+    ];
+    const requests = await setup(page, (requests) => requests.length === 1 ? {output: invalid.map((args, index) => ({
+        ...imageCall({output_path: 'invalid.gif', ...args}), id: `invalid-${index}`, call_id: `invalid-${index}`,
+    }))} : {output_text: '参数错误已确认。'});
+    expect(imageRequests).toBe(0);
+    const results = requests[1].input.filter((item) => item.type === 'function_call_output').map((item) => JSON.parse(item.output));
+    expect(results).toHaveLength(invalid.length);
+    expect(results.every((result) => result.ok === false)).toBe(true);
+    await expect(page.locator('.ai-image-result')).toHaveCount(0);
+});
+
+test('原生图片结果返回 GIF 时沿用原始动画字节', async ({page}) => {
+    await setup(page, {output: [{...image, output_format: 'gif', result: gif}]});
+    const preview = page.locator('.ai-image-result');
+    const path = await preview.getAttribute('title');
+    expect(path).toMatch(/\.gif$/);
+    await expect.poll(() => preview.locator('img').evaluate((element) => element.naturalWidth)).toBe(1);
+    await saveImage(page, path);
+    expect(await readFile(page, path)).toEqual([...Buffer.from(gif, 'base64')]);
 });
 
 async function saveImage(page, path) {

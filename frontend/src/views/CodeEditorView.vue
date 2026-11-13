@@ -419,6 +419,11 @@
               <input v-model="settings.ai.imageModel" list="ai-model-options" spellcheck="false" />
             </label>
             <label class="setting-row">
+              <span>{{ tr('settings.aiReviewModel') }}</span>
+              <input v-model="settings.ai.reviewModel" list="ai-model-options" spellcheck="false" />
+              <small class="setting-hint">{{ tr('settings.aiReviewModelHint') }}</small>
+            </label>
+            <label class="setting-row">
               <span>{{ tr('settings.aiAgentModel') }}</span>
               <input v-model="settings.ai.agentModels" spellcheck="false" :placeholder="tr('settings.aiAgentModelsPlaceholder')" @change="normalizeAgentModelsInput" />
             </label>
@@ -725,17 +730,19 @@
             <h3>{{ tr('local.connectionApproval') }}</h3>
             <label class="local-check"><input v-model="localAutoApprove" type="checkbox" aria-describedby="local-auto-approve-hint" />{{ tr('commandApproval.autoApprove') }}</label>
             <p id="local-auto-approve-hint">{{ tr('local.autoApproveHint') }}</p>
+            <label class="local-check"><input v-model="localAutoReview" type="checkbox" aria-describedby="local-auto-review-hint" />{{ tr('commandApproval.autoReview') }}</label>
+            <p id="local-auto-review-hint">{{ tr('commandApproval.autoReviewHint') }}</p>
             <label>{{ tr('local.whitelistTemplate') }}
-              <select v-model="localDialog.template" :disabled="localExecutor.state.autoApprove">
+              <select v-model="localDialog.template" :disabled="localExecutor.state.autoApprove || localExecutor.state.autoReview">
                 <option v-for="(_, name) in COMMAND_WHITELIST_TEMPLATES" :key="name" :value="name">{{ tr(`local.template.${name}`) }}</option>
               </select>
             </label>
             <div class="local-whitelist-field">
-              <div class="setting-title-row"><label for="local-command-whitelist">{{ tr('ssh.whitelist') }}</label><button type="button" :disabled="localExecutor.state.autoApprove || !localExecutor.state.reachable" @click="applyLocalWhitelistTemplate">{{ tr('ssh.applyWhitelistTemplate') }}</button></div>
-              <textarea id="local-command-whitelist" v-model="localWhitelistText" :disabled="localExecutor.state.autoApprove" rows="3" spellcheck="false" :placeholder="tr('ssh.whitelistPlaceholder')" />
+              <div class="setting-title-row"><label for="local-command-whitelist">{{ tr('ssh.whitelist') }}</label><button type="button" :disabled="localExecutor.state.autoApprove || localExecutor.state.autoReview || !localExecutor.state.reachable" @click="applyLocalWhitelistTemplate">{{ tr('ssh.applyWhitelistTemplate') }}</button></div>
+              <textarea id="local-command-whitelist" v-model="localWhitelistText" :disabled="localExecutor.state.autoApprove || localExecutor.state.autoReview" rows="3" spellcheck="false" :placeholder="tr('ssh.whitelistPlaceholder')" />
             </div>
-            <p v-if="!localExecutor.state.autoApprove">{{ tr('local.templateHint') }}</p>
-            <p v-if="!localExecutor.state.autoApprove">{{ tr('local.approvalHint') }}</p>
+            <p v-if="!localExecutor.state.autoApprove && !localExecutor.state.autoReview">{{ tr('local.templateHint') }}</p>
+            <p v-if="!localExecutor.state.autoApprove && !localExecutor.state.autoReview">{{ tr('local.approvalHint') }}</p>
             <label v-if="localWorkspaceName" class="local-check"><input v-model="localExecutor.state.bindWorkspace" type="checkbox" />{{ tr('local.bindWorkspace') }}: {{ localWorkspaceName }}</label>
             <p v-if="localExecutor.state.bindWorkspace">{{ tr('local.bindHint') }}</p>
             <section v-if="localActiveTasks.length" class="local-tasks" :aria-label="tr('local.tasks')">
@@ -821,16 +828,21 @@
           <span>{{ tr('ssh.exposeToAi') }}</span>
         </label>
         <label class="setting-row checkbox-row">
-          <input v-model="sshDialog.draft.autoApprove" type="checkbox" aria-describedby="ssh-auto-approve-hint" />
+          <input v-model="sshDialog.draft.autoApprove" type="checkbox" aria-describedby="ssh-auto-approve-hint" @change="sshDialog.draft.autoApprove && (sshDialog.draft.autoReview = false)" />
           <span>{{ tr('commandApproval.autoApprove') }}</span>
         </label>
         <small id="ssh-auto-approve-hint" class="setting-hint">{{ tr('ssh.autoApproveHint') }}</small>
+        <label class="setting-row checkbox-row">
+          <input v-model="sshDialog.draft.autoReview" type="checkbox" aria-describedby="ssh-auto-review-hint" @change="sshDialog.draft.autoReview && (sshDialog.draft.autoApprove = false)" />
+          <span>{{ tr('commandApproval.autoReview') }}</span>
+        </label>
+        <small id="ssh-auto-review-hint" class="setting-hint">{{ tr('commandApproval.autoReviewHint') }}</small>
         <label class="setting-row">
           <span class="setting-title-row">
             <span>{{ tr('ssh.whitelist') }}</span>
-            <button type="button" :disabled="sshDialog.draft.autoApprove" @click="applySshWhitelistTemplateToDialog">{{ tr('ssh.applyWhitelistTemplate') }}</button>
+            <button type="button" :disabled="sshDialog.draft.autoApprove || sshDialog.draft.autoReview" @click="applySshWhitelistTemplateToDialog">{{ tr('ssh.applyWhitelistTemplate') }}</button>
           </span>
-          <textarea v-model="sshDialog.draft.whitelistText" :disabled="sshDialog.draft.autoApprove" rows="3" spellcheck="false" :placeholder="tr('ssh.whitelistPlaceholder')"></textarea>
+          <textarea v-model="sshDialog.draft.whitelistText" :disabled="sshDialog.draft.autoApprove || sshDialog.draft.autoReview" rows="3" spellcheck="false" :placeholder="tr('ssh.whitelistPlaceholder')"></textarea>
         </label>
         <small class="setting-hint">{{ tr('ssh.aiHint') }}</small>
         <div class="editor-dialog-actions">
@@ -872,7 +884,8 @@
 import { computed, defineComponent, h, markRaw, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch } from "vue";
 import { createLocalExecutorSession } from "@/shared/local-executor/session.js";
 import { COMMAND_WHITELIST_TEMPLATES } from "@/shared/command-presets.js";
-import { normalizeCommandWhitelist, normalizeMainCommands, getCommandApprovalReason } from "@/shared/command-whitelist.js";
+import { normalizeCommandWhitelist, normalizeMainCommands, normalizeCommandApprovalSettings, getCommandApprovalReason } from "@/shared/command-whitelist.js";
+import { reviewAiCommand } from "@/shared/ai-command-review.js";
 import { normalizeLocalCommand, isLocalTaskFinished, buildLocalStartupCommand, normalizeExecutorListenAddress, normalizeLocalExecutorSettings, normalizeExecutorToken, buildLocalConnectionDraft } from "@/shared/local-executor/client.js";
 import { runAiNodeWorker } from "@/shared/ai-node-worker.js";
 import { runFilterScript } from "@/shared/filter-script-worker.js";
@@ -920,7 +933,7 @@ const LEGACY_AI_COMPLETE_SHORTCUT = "Ctrl+Shift+Enter";
 const LEGACY_FOLD_ALL_SHORTCUT = "Ctrl+K Ctrl+0";
 const LEGACY_UNFOLD_ALL_SHORTCUT = "Ctrl+K Ctrl+J";
 const vscodeShortcuts = { save: "Ctrl+S", format: "Shift+Alt+F", commandPalette: "Ctrl+P", search: "Ctrl+Shift+F", findReferences: "Shift+F12", preview: "Ctrl+Shift+V", toggleSidebar: "Ctrl+B", fold: "Ctrl+Shift+[", unfold: "Ctrl+Shift+]", foldAll: "Ctrl+Alt+[", unfoldAll: "Ctrl+Alt+]", aiComplete: "Ctrl+Alt+Enter" };
-const defaultAiSettings = { apiKey: "", baseUrl: "https://api.openai.com/v1", npmRegistryUrl: "", completionModel: "gpt-5.4-mini", imageModel: "gpt-image-1", agentModels: "gpt-5.5,gpt-5.4-mini", globalPrompt: "", reasoningEffort: "default", autoSaveSessions: false };
+const defaultAiSettings = { apiKey: "", baseUrl: "https://api.openai.com/v1", npmRegistryUrl: "", completionModel: "gpt-5.4-mini", imageModel: "gpt-image-1", reviewModel: "", agentModels: "gpt-5.5,gpt-5.4-mini", globalPrompt: "", reasoningEffort: "default", autoSaveSessions: false };
 const defaultBackendSettings = { enabled: false, baseUrl: getCurrentBackendBaseUrl() };
 const DEFAULT_SSH_WHITELIST_TEMPLATE = COMMAND_WHITELIST_TEMPLATES.sh;
 const defaultSshSettings = { securityKey: "", terminalTheme: "dark", whitelistTemplate: DEFAULT_SSH_WHITELIST_TEMPLATE, connections: [] };
@@ -1229,6 +1242,21 @@ const localAutoApprove = computed({
   set: (value) => {
     localExecutor.state.autoApprove = value === true;
     settings.localExecutor.autoApprove = value === true;
+    if (value === true) {
+      localExecutor.state.autoReview = false;
+      settings.localExecutor.autoReview = false;
+    }
+  },
+});
+const localAutoReview = computed({
+  get: () => localExecutor.state.autoReview,
+  set: (value) => {
+    localExecutor.state.autoReview = value === true;
+    settings.localExecutor.autoReview = value === true;
+    if (value === true) {
+      localExecutor.state.autoApprove = false;
+      settings.localExecutor.autoApprove = false;
+    }
   },
 });
 const localWhitelistText = computed({
@@ -1329,7 +1357,7 @@ const searchBusy = ref(false);
 const searchSearched = ref(false);
 let searchSerial = 0;
 const aiAgentModelOptions = computed(() => uniqueStrings([...getAgentModels(), ...aiSessions.map((session) => session.agentModel)]));
-const aiModelOptions = computed(() => uniqueStrings([settings.ai.completionModel, settings.ai.imageModel, ...aiAgentModelOptions.value, defaultAiSettings.completionModel, defaultAiSettings.imageModel, ...aiAvailableModels.value]));
+const aiModelOptions = computed(() => uniqueStrings([settings.ai.completionModel, settings.ai.imageModel, settings.ai.reviewModel, ...aiAgentModelOptions.value, defaultAiSettings.completionModel, defaultAiSettings.imageModel, ...aiAvailableModels.value]));
 const aiContextLength = computed(() => formatAiUsage(activeAiSession.value?.contextUsage));
 const canResetAiConversation = computed(() => Boolean(aiPrompt.value.trim() || aiMessages.value.length || (activeAiSession.value && getAiTouchedFiles(activeAiSession.value).length)));
 const aiHistoryGroups = computed(() => groupAiSessionDrawerItems(aiSessions
@@ -1940,7 +1968,7 @@ function createSshDraft(source = {}) {
     privateKey: source.privateKey || "",
     passphrase: source.passphrase || "",
     exposeToAi: Boolean(source.exposeToAi),
-    autoApprove: source.autoApprove === true,
+    ...normalizeCommandApprovalSettings(source),
     whitelistText: Array.isArray(source.whitelist) ? source.whitelist.join("\n") : String(source.whitelistText || ""),
   };
 }
@@ -2003,7 +2031,7 @@ function normalizeSshConfig(value = {}) {
     privateKey: value.authType === "privateKey" ? String(value.privateKey || "") : "",
     passphrase: value.authType === "privateKey" ? String(value.passphrase || "") : "",
     exposeToAi: Boolean(value.exposeToAi),
-    autoApprove: value.autoApprove === true,
+    ...normalizeCommandApprovalSettings(value),
     whitelist: normalizeCommandWhitelist(value.whitelistText ?? value.whitelist),
   };
 }
@@ -5073,7 +5101,7 @@ function resetAiSessionDraft(options = {}) {
 }
 
 function createAiInteractionDialog() {
-  return { visible: false, mode: "question", title: "", message: "", options: [], customValue: "", selectedOption: null, confirmLabel: "", cancelLabel: "", tone: "default" };
+  return { visible: false, mode: "question", title: "", message: "", options: [], customValue: "", selectedOption: null, confirmLabel: "", cancelLabel: "", tone: "default", commandAction: null };
 }
 
 function createAiSession(options = {}) {
@@ -5088,6 +5116,7 @@ function createAiSession(options = {}) {
     reasoningEffort: aiReasoningEfforts.includes(reasoningEffort) ? reasoningEffort : defaultAiSettings.reasoningEffort,
     prompt: "",
     messages: [],
+    commandAuthorizations: [],
     pendingAttachments: [],
     touchedPaths: new Set(),
     saved: options.saved ?? Boolean(settings.ai.autoSaveSessions),
@@ -5137,6 +5166,9 @@ function normalizeStoredAiSession(value, index) {
     reasoningEffort: settings.ai.reasoningEffort,
     prompt: "",
     messages: value.messages.map(normalizeStoredAiMessage).filter(Boolean),
+    // 旧会话只能从仍保留的用户原话恢复授权，不从助手摘要反推。
+    commandAuthorizations: Array.isArray(value.commandAuthorizations) ? value.commandAuthorizations
+      : value.messages.filter((message) => message.role === 'user').map((message) => ({type: 'user_message', content: String(message.content || '')})),
     pendingAttachments: [],
     touchedPaths: new Set(),
     saved: true,
@@ -5213,6 +5245,7 @@ function serializeAiSessionContent(session) {
   return {
     id: session.id,
     title: String(session.title || "").trim() || tr("ai.defaultSessionTitle", { count: aiSessions.indexOf(session) + 1 }),
+    commandAuthorizations: JSON.parse(JSON.stringify(session.commandAuthorizations)),
     messages: session.messages.map((message) => ({
       id: message.id,
       role: message.role,
@@ -5285,6 +5318,12 @@ function settleAiInteraction(session, result) {
   const dialog = session?.interactionDialog;
   const request = session ? aiInteractionRequests.get(session.id) : null;
   if (!dialog?.visible || !request) return;
+  // 仅由真实 UI 交互写入授权记录；工具输出中的“用户已同意”不能生成记录。
+  if (!request.signal?.aborted) {
+    if (dialog.mode === 'question') session.commandAuthorizations.push({type: 'user_answer', question: dialog.message, answer: result?.value || '',
+      ...(result?.selectedOption ? {selected_option: result.selectedOption} : {}), cancelled: result === null});
+    if (dialog.commandAction) session.commandAuthorizations.push({type: 'command_confirmation', action: dialog.commandAction, approved: result === true});
+  }
   aiInteractionRequests.delete(session.id);
   request.signal?.removeEventListener("abort", request.abortHandler);
   Object.assign(dialog, createAiInteractionDialog());
@@ -5476,6 +5515,7 @@ async function deleteAiSessionById(id) {
 }
 
 function addAiMessage(role, content, meta = {}, session = getActiveAiSession()) {
+  if (role === 'user') session.commandAuthorizations.push({type: 'user_message', content: String(content || '')});
   session.messages.push(createAiMessage(role, content, meta));
   return session.messages.at(-1);
 }
@@ -5904,6 +5944,7 @@ function resetAiConversation() {
   aiPrompt.value = "";
   disposeAiMessageResources(session.messages);
   session.messages.splice(0, session.messages.length);
+  session.commandAuthorizations.splice(0, session.commandAuthorizations.length);
   clearAiAttachments(session.pendingAttachments);
   session.touchedPaths.clear();
   session.contextUsage = null;
@@ -6559,8 +6600,8 @@ function getAiAllToolDefinitions() {
       filter_script: { type: "string", description: "Optional JavaScript async function body used to filter only the response body before returning it. input is the response body string." },
       max_chars: { type: "number", description: aiToolOutputLimitDescription() }
     }, required: ["url"] } },
-    { type: "function", name: "get_executor_info", requirements: ["executor"], description: "Get the user-selected executor environment (on this computer, a LAN host or a remote host), default directory, shell, user-configured main-command whitelist and auto_approve state. When auto_approve is true, the user has enabled execution without command approval for this connection. This is independent of the application backend. Browser workspace files and executor disk files are not automatically the same; unsaved editor changes are not on disk.", parameters: { type: "object", properties: {} } },
-    { type: "function", name: "execute_executor_command", requirements: ["executor"], description: "Execute a non-interactive shell command on the user-selected executor host. This may be a different computer from the browser; check get_executor_info for its endpoint and directory. Provide a reason and explicit cwd when relevant. Each task has a fresh shell; cd and environment changes do not persist across calls. Provide commands listing every main command in chains, pipes and substitutions, and high_risk based on your risk assessment. Unless the user enabled auto_approve for this connection, commands outside the user whitelist and all high-risk commands require approval. With auto_approve enabled, commands run directly regardless of whitelist, risk or unsaved files; do not request separate command approval. Only the user can change this setting in the connection dialog. Commands run with the executor user permissions, like an SSH shell. Never bypass rejected approval through other tools or alternate commands. The command reads disk files, not unsaved editor changes or OPFS. Wait up to wait_seconds (10 by default) and return up to max_chars Unicode characters plus the exit code when finished; short tasks need no separate read call. For tasks still running or with has_more output, use read_executor_task with the returned task_id and cursor. decoding_loss means invalid UTF-8 bytes were replaced; affected text is not reliable original output. truncated/output_lost indicate buffer loss, not command failure. The wait window never terminates a command. If delivery is uncertain, inspect the existing task; never automatically re-run the command. Do not start detached daemons; descendants are cleaned up when the task ends.", parameters: { type: "object", properties: {
+    { type: "function", name: "get_executor_info", requirements: ["executor"], description: "Get the user-selected executor environment (on this computer, a LAN host or a remote host), default directory, shell, user-configured main-command whitelist and auto_approve state. When auto_approve is true, the user has enabled execution without command approval for this connection. When auto_review is true, every command is independently reviewed against user authorization and tool evidence before execution. This is independent of the application backend. Browser workspace files and executor disk files are not automatically the same; unsaved editor changes are not on disk.", parameters: { type: "object", properties: {} } },
+    { type: "function", name: "execute_executor_command", requirements: ["executor"], description: "Execute a non-interactive shell command on the user-selected executor host. This may be a different computer from the browser; check get_executor_info for its endpoint and directory. Provide a reason and explicit cwd when relevant. Each task has a fresh shell; cd and environment changes do not persist across calls. Provide commands listing every main command in chains, pipes and substitutions, and high_risk based on your risk assessment. When auto_review is true, every command goes through independent AI review, including whitelisted commands. A needs_evidence result means nothing executed: perform relevant read-only checks and resubmit only after obtaining the requested evidence. Do not repeat unchanged requests without new evidence. Otherwise, unless the user enabled auto_approve, commands outside the user whitelist and all high-risk commands require approval. With auto_approve enabled, commands run directly regardless of whitelist, risk or unsaved files; do not request separate command approval. Only the user can change this setting in the connection dialog. Commands run with the executor user permissions, like an SSH shell. Never bypass rejected approval through other tools or alternate commands. The command reads disk files, not unsaved editor changes or OPFS. Wait up to wait_seconds (10 by default) and return up to max_chars Unicode characters plus the exit code when finished; short tasks need no separate read call. For tasks still running or with has_more output, use read_executor_task with the returned task_id and cursor. decoding_loss means invalid UTF-8 bytes were replaced; affected text is not reliable original output. truncated/output_lost indicate buffer loss, not command failure. The wait window never terminates a command. If delivery is uncertain, inspect the existing task; never automatically re-run the command. Do not start detached daemons; descendants are cleaned up when the task ends.", parameters: { type: "object", properties: {
       max_chars: { type: "integer", minimum: 1, maximum: AI_TOOL_OUTPUT_HARD_MAX_CHARS, description: aiToolOutputLimitDescription() + " Counts complete Unicode characters." },
       commands: { type: "array", items: { type: "string" }, description: "Required list of every main command in command, including chains, pipes and substitutions, without arguments." },
       high_risk: { type: "boolean", description: "Required AI-assessed risk flag; high-risk commands require approval unless the user enabled auto-approval for this connection." },
@@ -6571,7 +6612,7 @@ function getAiAllToolDefinitions() {
     }, required: ["command", "commands", "high_risk", "reason"] } },
     { type: "function", name: "read_executor_task", requirements: ["executor"], description: "Read status and incremental output for an executor task belonging to this AI session. Supply the opaque cursor from the previous result to avoid repeating output. Terminal statuses are completed, failed and cancelled. There is no execution timeout; request cancellation when needed. If output_lost is true, older output has rolled out of the buffer. decoding_loss means some bytes could not be decoded as UTF-8; do not treat affected text as reliable original output. Drain has_more even after completion. Do not busy-poll tasks when no next step depends on the result.", parameters: { type: "object", properties: { task_id: { type: "string" }, cursor: { type: "integer", minimum: 0 }, max_chars: { type: "integer", minimum: 1, maximum: AI_TOOL_OUTPUT_HARD_MAX_CHARS, description: aiToolOutputLimitDescription() + " Counts complete Unicode characters." } }, required: ["task_id"] } },
     { type: "function", name: "cancel_executor_task", requirements: ["executor"], description: "Request cancellation of an executor task belonging to this AI session. Cancellation is not complete until the returned or subsequently read status confirms it.", parameters: { type: "object", properties: { task_id: { type: "string" } }, required: ["task_id"] } },
-    { type: "function", name: "get_ssh_connections", requirements: ["backend", "ssh_exposed"], description: aiToolDescription("Get SSH settings exposed to AI.", "Returns id, name, host, port, active state, command whitelist and per-connection auto_approve state. Secrets are never returned. Use this before opening or choosing an SSH connection when the target is ambiguous."), parameters: { type: "object", properties: {} } },
+    { type: "function", name: "get_ssh_connections", requirements: ["backend", "ssh_exposed"], description: aiToolDescription("Get SSH settings exposed to AI.", "Returns id, name, host, port, active state, command whitelist and per-connection auto_approve and auto_review states. Secrets are never returned. Use this before opening or choosing an SSH connection when the target is ambiguous."), parameters: { type: "object", properties: {} } },
     { type: "function", name: "open_ssh_connection", requirements: ["backend", "ssh_exposed"], description: aiToolDescription("Open an exposed SSH connection by id, name, or host.", "The backend SSH WebSocket performs the actual SSH connection. Reuse active connections when possible instead of reconnecting.", "Open a connection only for a task that explicitly targets or inherently depends on that remote host."), parameters: { type: "object", properties: { connection: { type: "string", description: "SSH setting id, name, or host." } }, required: ["connection"] } },
     { type: "function", name: "activate_ssh_terminal", requirements: ["backend", "ssh_exposed"], description: aiToolDescription("Switch the visible editor tab to an already active exposed SSH terminal.", "This does not execute any SSH command. It requires the connection to already be active."), parameters: { type: "object", properties: { connection: { type: "string", description: "SSH setting id, name, or host." } }, required: ["connection"] } },
     { type: "function", name: "close_ssh_connection", requirements: ["backend", "ssh_exposed"], description: aiToolDescription("Close an active exposed SSH connection by id, name, or host.", "Use only when the user asks to disconnect or when cleanup is clearly part of the requested task."), parameters: { type: "object", properties: { connection: { type: "string", description: "SSH setting id, name, or host." } }, required: ["connection"] } },
@@ -6579,7 +6620,7 @@ function getAiAllToolDefinitions() {
     { type: "function", name: "execute_ssh_command", requirements: ["backend", "ssh_exposed"], description: aiToolDescription(
       "Execute a command on an active exposed SSH connection.",
       "Use this only for work that must occur on the selected remote host.",
-      "Unless the user enabled auto_approve for this SSH connection, commands outside its whitelist and high-risk commands require approval. When auto_approve is true, run commands directly regardless of whitelist or risk and do not request separate command approval. Only the user can change this setting in the SSH connection dialog.",
+      "When auto_review is true, every command is independently reviewed using user authorization and tool evidence, including whitelisted commands. If review returns needs_evidence, no command executed: perform relevant read-only checks, then resubmit with new evidence. Do not repeat requests without new evidence or bypass review. Otherwise, unless the user enabled auto_approve for this SSH connection, commands outside its whitelist and high-risk commands require approval. When auto_approve is true, run commands directly regardless of whitelist or risk and do not request separate command approval. Only the user can change this setting in the SSH connection dialog.",
       "Choose concise commands or flags that produce short output when possible.",
       "You must provide a clear reason, commands array containing every main command used by the shell command, and high_risk based on your own risk assessment.",
       "If an SSH command approval is rejected, do not try alternate SSH commands for the same purpose unless the user explicitly asks you to continue or grants permission. List every SSH command you ran in your final answer."
@@ -6761,7 +6802,7 @@ async function runAiToolCall(call, args = {}, session = getActiveAiSession(), si
       case "sftp_download_file": return okTool(await aiToolSftpDownloadFile(args));
       case "sftp_list_tasks": return okTool(aiToolSftpListTasks(args));
       case "sftp_cancel_task": return okTool(aiToolSftpCancelTask(args));
-      case "get_executor_info": return okTool({ summary: "Connected executor", endpoint: localExecutor.state.url, ...localExecutor.state.info, selected_shell: localExecutor.state.shell, whitelist: normalizeCommandWhitelist(localExecutor.state.whitelistText), auto_approve: localExecutor.state.autoApprove, workspace_linked: localExecutor.state.bindWorkspace });
+      case "get_executor_info": return okTool({ summary: "Connected executor", endpoint: localExecutor.state.url, ...localExecutor.state.info, selected_shell: localExecutor.state.shell, whitelist: normalizeCommandWhitelist(localExecutor.state.whitelistText), auto_approve: localExecutor.state.autoApprove, auto_review: localExecutor.state.autoReview, workspace_linked: localExecutor.state.bindWorkspace });
       case "execute_executor_command": return okTool(await aiToolExecuteLocalCommand(args, signal, session));
       case "read_executor_task": return okTool(await localExecutor.read(args.task_id, args.cursor ?? 0, {sessionId: session.id}, signal, args.max_chars));
       case "cancel_executor_task": return okTool(await localExecutor.cancel(args.task_id, {sessionId: session.id}));
@@ -6778,7 +6819,7 @@ async function runAiToolCall(call, args = {}, session = getActiveAiSession(), si
     }
   } catch (error) {
     if (error.name === "AbortError") throw error;
-    return { ok: false, summary: error.message || String(error) };
+    return { ok: false, summary: error.message || String(error), ...(error.commandApproval ? {approval: error.commandApproval} : {}) };
   }
 }
 
@@ -7243,6 +7284,7 @@ function normalizeSettings(value = {}) {
   savedSettings.maxMemoryWriteBytes = normalizeMemoryLimit(savedSettings.maxMemoryWriteBytes, DEFAULT_MAX_MEMORY_WRITE_BYTES);
   if (!aiReasoningEfforts.includes(ai.reasoningEffort)) ai.reasoningEffort = defaultAiSettings.reasoningEffort;
   ai.autoSaveSessions = Boolean(ai.autoSaveSessions);
+  ai.reviewModel = String(ai.reviewModel || "").trim();
   ai.npmRegistryUrl = String(ai.npmRegistryUrl || "").trim().replace(/\/+$/, "");
   ai.globalPrompt = String(ai.globalPrompt || "").slice(0, AI_GLOBAL_PROMPT_MAX_CHARS);
   backend.enabled = Boolean(backend.enabled);
@@ -8789,6 +8831,7 @@ function applyLocalExecutorSettings() {
   if (localExecutor.state.connected) {
     localExecutor.state.whitelistText = saved.whitelist.join('\n');
     localExecutor.state.autoApprove = saved.autoApprove;
+    localExecutor.state.autoReview = saved.autoReview;
   }
 }
 
@@ -8798,6 +8841,43 @@ function applyLocalWhitelistTemplate() {
   localWhitelistText.value = COMMAND_WHITELIST_TEMPLATES[localDialog.template] || '';
 }
 
+async function authorizeAiCommand({getPolicy, action, confirmation, rejectedMessage}, session, signal) {
+  const policy = getPolicy();
+  const approvalReason = getCommandApprovalReason(policy);
+  if (!approvalReason) return;
+  const assertCurrentPolicy = () => {
+    const current = getPolicy();
+    if (current.autoReview !== policy.autoReview || current.autoApprove !== policy.autoApprove) throw new Error(tr('commandApproval.settingsChanged'));
+  };
+  let review;
+  if (approvalReason === 'auto-review') {
+    const model = settings.ai.reviewModel.trim();
+    try {
+      review = await reviewAiCommand({model, action, messages: session.messages, authorizations: session.commandAuthorizations,
+        locale: getCurrentLocale(), request: callOpenAiResponses, signal});
+    } catch (error) {
+      throwIfAiAborted(signal);
+      const key = {COMMAND_REVIEW_MODEL_REQUIRED: 'commandApproval.modelRequired', COMMAND_REVIEW_INVALID: 'commandApproval.invalidResult', COMMAND_REVIEW_TIMEOUT: 'commandApproval.timeout'}[error.code];
+      review = {model, decision: 'needs_confirmation', reason: key ? tr(key) : tr('commandApproval.failed', {error: error.message || String(error)})};
+    }
+    throwIfAiAborted(signal);
+    assertCurrentPolicy();
+    if (review.decision === 'approve') return {method: 'ai', ...review};
+    if (review.decision === 'needs_evidence') {
+      // 缺少事实时交还主 AI 做只读核实，原命令尚未发送到任何执行端。
+      throw Object.assign(new Error(tr('commandApproval.needsEvidence', {reason: review.reason})), {commandApproval: {method: 'ai', ...review}});
+    }
+  }
+  const dialog = confirmation(approvalReason);
+  dialog.commandAction = action;
+  if (review) dialog.message += `\n\n${tr('commandApproval.reviewResult', {reason: review.reason})}`;
+  const approved = await showAiInteraction(session, dialog, signal);
+  throwIfAiAborted(signal);
+  assertCurrentPolicy();
+  if (!approved) throw Object.assign(new Error(rejectedMessage), {commandApproval: review ? {method: 'user', approved: false, review} : undefined});
+  return {method: 'user', ...(review ? {review} : {})};
+}
+
 async function aiToolExecuteLocalCommand(input, signal, session) {
   const args = normalizeLocalCommand({ ...input, shell: input.shell || localExecutor.state.shell });
   const version = localExecutor.generation;
@@ -8805,21 +8885,22 @@ async function aiToolExecuteLocalCommand(input, signal, session) {
   if (!info || !localExecutor.state.reachable) throw new Error(tr("local.notConnected"));
   const workspace = localExecutor.state.bindWorkspace ? captureWorkspace() : null;
   const dirtyHint = dirtyFiles.value.length ? tr("local.dirtyHint", { count: dirtyFiles.value.length }) : "";
-  const approvalReason = getCommandApprovalReason({ autoApprove: localExecutor.state.autoApprove, whitelist: localExecutor.state.whitelistText,
-    mainCommands: args.commands, highRisk: args.high_risk, hasUnsavedFiles: dirtyFiles.value.length > 0 });
-  if (approvalReason) {
-    const approved = await showAiInteraction(session, {
+  const action = {type: 'executor', target: {endpoint: localExecutor.state.url, platform: info.platform}, command: args.command,
+    shell: args.shell, cwd: args.cwd || info.default_cwd, claimed_purpose: args.reason, unsaved_files: dirtyFiles.value.map((file) => file.path)};
+  const approval = await authorizeAiCommand({
+    getPolicy: () => ({autoApprove: localExecutor.state.autoApprove, autoReview: localExecutor.state.autoReview, whitelist: localExecutor.state.whitelistText,
+      mainCommands: args.commands, highRisk: args.high_risk, hasUnsavedFiles: dirtyFiles.value.length > 0}),
+    action, rejectedMessage: tr("local.rejected"),
+    confirmation: (approvalReason) => ({
       mode: "confirm", title: tr("local.run"), tone: "danger",
       message: tr(approvalReason === 'high-risk' ? "local.confirmHighRiskCommand" : approvalReason === 'not-whitelisted' ? "local.confirmUnauthorizedCommand" : "local.approve", {
-        command: args.command, commands: args.commands.join(", "), shell: args.shell, endpoint: localExecutor.state.url, cwd: args.cwd || info.default_cwd, reason: args.reason, dirty: dirtyHint }),
+        command: args.command, commands: args.commands.join(", "), shell: args.shell, endpoint: action.target.endpoint, cwd: action.cwd, reason: args.reason, dirty: dirtyHint }),
       confirmLabel: tr("local.run"), cancelLabel: tr("dialog.cancel"),
-    }, signal);
-    throwIfAiAborted(signal);
-    if (!approved) throw new Error(tr("local.rejected"));
-  }
+    }),
+  }, session, signal);
   throwIfAiAborted(signal);
   if (version !== localExecutor.generation) throw new Error(tr("local.connectionChanged"));
-  return { ...await localExecutor.execute(args, { sessionId: session.id, workspace }, signal), command: args.command, commands: args.commands, high_risk: args.high_risk, reason: args.reason };
+  return { ...await localExecutor.execute(args, { sessionId: session.id, workspace }, signal), command: args.command, commands: args.commands, high_risk: args.high_risk, reason: args.reason, approval };
 }
 
 async function refreshAfterLocalTask(task, owner) {
@@ -8862,6 +8943,7 @@ async function refreshAfterLocalTask(task, owner) {
 async function aiToolExecuteSshCommand({ connection, command, commands, high_risk: highRisk, reason, wait_seconds: waitSeconds } = {}, signal, session = getActiveAiSession()) {
   const config = getAiExposedSshConfig(connection);
   const sshSession = getActiveSshSessionForConfig(config);
+  const socket = sshSession.ws;
   const normalizedCommand = String(command || "").trim();
   const mainCommands = normalizeMainCommands(commands);
   const normalizedReason = String(reason || "").trim();
@@ -8870,15 +8952,18 @@ async function aiToolExecuteSshCommand({ connection, command, commands, high_ris
   if (!mainCommands.length) throw new Error(tr("ssh.error.commandListRequired"));
   if (typeof highRisk !== "boolean") throw new Error("high_risk is required");
   if (!normalizedReason) throw new Error(tr("ssh.error.commandReasonRequired"));
-  await authorizeAiSshCommand(config, normalizedCommand, mainCommands, highRisk, normalizedReason, session, signal);
+  const approval = await authorizeAiSshCommand(config, sshSession, normalizedCommand, mainCommands, highRisk, normalizedReason, session, signal);
   throwIfAiAborted(signal);
+  if (getActiveSshSessionForConfig(config) !== sshSession || sshSession.ws !== socket) throw new Error(tr('commandApproval.connectionChanged'));
+  // 执行结果绑定发送时的主机，之后断线或编辑配置不能改写证据归属。
+  const executedConnection = formatAiSshConnection(config, sshSession);
   const capture = { output: "" };
   sshSession.aiCommandCaptures.add(capture);
   try {
     sendSshCommand(sshSession, normalizedCommand);
     await delay(normalizedWaitSeconds * 1000, signal);
     const clipped = clipAiToolTailText(sanitizeAiTerminalOutput(capture.output));
-    return { summary: tr("ssh.toolExecutedCommand", { command: normalizedCommand, reason: normalizedReason }), connection: formatAiSshConnection(config, sshSession), command: normalizedCommand, commands: mainCommands, high_risk: highRisk, reason: normalizedReason, wait_seconds: normalizedWaitSeconds, output_chars: clipped.text_chars, returned_chars: clipped.returned_chars, truncated: clipped.truncated, output: clipped.text };
+    return { summary: tr("ssh.toolExecutedCommand", { command: normalizedCommand, reason: normalizedReason }), connection: executedConnection, command: normalizedCommand, commands: mainCommands, high_risk: highRisk, reason: normalizedReason, wait_seconds: normalizedWaitSeconds, output_chars: clipped.text_chars, returned_chars: clipped.returned_chars, truncated: clipped.truncated, output: clipped.text, approval };
   } finally {
     sshSession.aiCommandCaptures.delete(capture);
   }
@@ -8898,23 +8983,25 @@ function getActiveSshSessionForConfig(config) {
 }
 
 function formatAiSshConnection(config, session) {
-  return { id: config.id, name: config.name, host: config.host, port: config.port || 22, username: config.username, active: Boolean(session?.connected), whitelist: config.whitelist || [], auto_approve: config.autoApprove === true };
+  const target = session?.connected ? session : config;
+  return { id: config.id, name: session?.connected ? session.title : config.name, host: target.host, port: target.port || 22, username: target.username, active: Boolean(session?.connected), whitelist: config.whitelist || [], auto_approve: config.autoApprove === true, auto_review: config.autoReview === true };
 }
 
-async function authorizeAiSshCommand(config, command, mainCommands, highRisk, reason, session, signal) {
-  const approvalReason = getCommandApprovalReason({ autoApprove: config.autoApprove, whitelist: config.whitelist, mainCommands, highRisk });
-  if (!approvalReason) return;
-  const messageKey = approvalReason === 'high-risk' ? "ssh.confirmHighRiskCommand" : "ssh.confirmUnauthorizedCommand";
-  const approved = await showAiInteraction(session, {
-    mode: "confirm",
-    title: tr("ssh.run"),
-    message: tr(messageKey, { name: config.name || config.host, command, commands: mainCommands.join(", "), reason }),
-    confirmLabel: tr("ssh.run"),
-    cancelLabel: tr("dialog.cancel"),
-    tone: "danger",
-  }, signal);
-  if (signal?.aborted) throw createAiAbortError();
-  if (!approved) throw new Error(tr("ssh.error.commandRejected"));
+async function authorizeAiSshCommand(config, sshSession, command, mainCommands, highRisk, reason, session, signal) {
+  // 目标取自实际建立的 SSH 会话，不能把后来编辑的连接配置当作当前主机。
+  const action = {type: 'ssh', target: {id: config.id, host: sshSession.host, port: sshSession.port, username: sshSession.username},
+    command, shell: null, cwd: null, claimed_purpose: reason};
+  return authorizeAiCommand({
+    getPolicy: () => ({...getAiExposedSshConfig(config.id), mainCommands, highRisk}),
+    action, rejectedMessage: tr("ssh.error.commandRejected"),
+    confirmation: (approvalReason) => ({
+      mode: "confirm", title: tr("ssh.run"),
+      message: tr(approvalReason === 'auto-review' ? "ssh.confirmReviewedCommand" : approvalReason === 'high-risk' ? "ssh.confirmHighRiskCommand" : "ssh.confirmUnauthorizedCommand", {
+        name: sshSession.title || sshSession.host, command, commands: mainCommands.join(", "), reason })
+        + `\n\n${tr('commandApproval.actualTarget', {host: sshSession.host, port: sshSession.port, username: sshSession.username})}`,
+      confirmLabel: tr("ssh.run"), cancelLabel: tr("dialog.cancel"), tone: "danger",
+    }),
+  }, session, signal);
 }
 
 function normalizeAiSshCommandWaitSeconds(value) {

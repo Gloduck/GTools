@@ -1,4 +1,4 @@
-import { normalizeCommandWhitelist, normalizeMainCommands } from "../command-whitelist.js";
+import { normalizeCommandWhitelist, normalizeMainCommands, normalizeCommandApprovalSettings } from "../command-whitelist.js";
 
 const TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled']);
 const TASK_ID = /^[a-zA-Z0-9_-]{8,80}$/;
@@ -58,7 +58,7 @@ export function normalizeLocalExecutorSettings(value) {
         whitelist: normalizeCommandWhitelist(source.whitelist),
         listenAddress,
         port: Number.isSafeInteger(source.port) && source.port >= 0 && source.port <= 65535 ? source.port : 0,
-        autoApprove: source.autoApprove === true,
+        ...normalizeCommandApprovalSettings(source),
     };
 }
 

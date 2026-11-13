@@ -76,6 +76,172 @@ async function ask(page) {
     await page.getByRole('button', {name: '发送', exact: true}).click();
 }
 
+const reviewSettings = {
+    ai: {apiKey: 'test-key', agentModels: 'test-model', reviewModel: 'test-review', baseUrl: 'https://api.openai.com/v1'},
+    localExecutor: {autoReview: true, whitelist: ['pwd', 'printf']},
+};
+
+async function respondToReviewTest(route, response) {
+    await route.fulfill({status: 200, headers: {'content-type': 'text/event-stream'},
+        body: `data: ${JSON.stringify({type: 'response.completed', response})}\n\ndata: [DONE]\n\n`});
+}
+
+function localReviewCall(id, command) {
+    return {type: 'function_call', call_id: id, name: 'execute_executor_command', arguments: JSON.stringify({
+        command, commands: [command.split(' ')[0]], high_risk: false, reason: '验证按场景审批',
+    })};
+}
+
+test('场景：自动审查要求补证据，同一命令经真实只读核实后通过且不重复执行', async ({page}) => {
+    const command = "printf 'context-review-ok'";
+    await setup(page, command, {}, reviewSettings);
+    await page.unroute('https://api.openai.com/v1/responses');
+    const reviews = [];
+    const mainRequests = [];
+    const submitted = [];
+    page.on('request', (request) => {
+        if (request.method() === 'POST' && request.url() === `${connection.url}/v1/tasks`) submitted.push(request.postDataJSON());
+    });
+    await page.route('https://api.openai.com/v1/responses', async (route) => {
+        const body = route.request().postDataJSON();
+        if (body.model === 'test-review') {
+            reviews.push(body);
+            const context = JSON.parse(body.input);
+            const verified = context.evidence.some((entry) => entry.name === 'execute_executor_command' && entry.args.command === 'pwd'
+                && entry.result.output.trim() === context.action.cwd);
+            const decision = context.action.command === 'pwd' || verified ? 'approve' : 'needs_evidence';
+            return respondToReviewTest(route, {output_text: JSON.stringify({decision, reason: verified ? '当前目录已核实，允许本次操作' : '先用 pwd 核实执行目录'})});
+        }
+        mainRequests.push(body);
+        const commands = [localReviewCall('before-check', command), localReviewCall('inspect', 'pwd'), localReviewCall('after-check', command)];
+        return respondToReviewTest(route, mainRequests.length <= commands.length
+            ? {output: [commands[mainRequests.length - 1]]} : {output_text: '场景审查完成', output: []});
+    });
+    await connect(page);
+    await ask(page);
+    await expect(page.locator('.ai-message-assistant')).toContainText('场景审查完成');
+    expect(reviews).toHaveLength(3);
+    expect(reviews.every((request) => request.tools === undefined && request.text.format.type === 'json_schema')).toBe(true);
+    expect(JSON.parse(reviews[0].input).authorizations).toContainEqual({type: 'user_message', content: '执行一次本机命令'});
+    expect(JSON.parse(reviews[0].input).action.command).toBe(JSON.parse(reviews[2].input).action.command);
+    expect(submitted.map((task) => task.command)).toEqual(['pwd', command]);
+    const firstResult = JSON.parse(mainRequests[1].input.find((item) => item.type === 'function_call_output').output);
+    expect(firstResult).toMatchObject({ok: false, approval: {decision: 'needs_evidence'}});
+    expect(firstResult.summary).toContain('命令尚未执行');
+    expect(JSON.stringify(reviews)).not.toContain(connection.token);
+    await expect(page.locator('.ai-interaction-dialog')).toHaveCount(0);
+});
+
+for (const scenario of ['needs_confirmation', 'invalid_response', 'api_error']) {
+    test(`场景：自动审查 ${scenario} 显示理由，取消后不会提交执行器任务`, async ({page}) => {
+        const command = "printf 'must-not-run'";
+        await setup(page, command, {}, reviewSettings);
+        await page.unroute('https://api.openai.com/v1/responses');
+        const submitted = [];
+        let mainCalls = 0;
+        page.on('request', (request) => {
+            if (request.method() === 'POST' && request.url() === `${connection.url}/v1/tasks`) submitted.push(request);
+        });
+        await page.route('https://api.openai.com/v1/responses', async (route) => {
+            const body = route.request().postDataJSON();
+            if (body.model === 'test-review') {
+                if (scenario === 'api_error') return route.fulfill({status: 400, json: {error: {message: 'review unavailable'}}});
+                return respondToReviewTest(route, {output_text: scenario === 'invalid_response' ? 'approve'
+                    : JSON.stringify({decision: 'needs_confirmation', reason: '当前请求没有授权此操作，需要用户确认'})});
+            }
+            mainCalls += 1;
+            return respondToReviewTest(route, mainCalls === 1 ? {output: [localReviewCall('reviewed-command', command)]}
+                : {output_text: '审批已取消', output: []});
+        });
+        await connect(page);
+        await ask(page);
+        const dialog = page.getByRole('dialog', {name: '执行命令', exact: true});
+        await expect(dialog).toContainText('AI 审查意见');
+        await expect(dialog).toContainText(command);
+        expect(submitted).toHaveLength(0);
+        await dialog.getByRole('button', {name: '取消', exact: true}).click();
+        await expect(page.locator('.ai-message-assistant')).toContainText('审批已取消');
+        expect(submitted).toHaveLength(0);
+    });
+}
+
+for (const interruption of ['停止会话', '关闭审查', '断开连接']) {
+    test(`场景：自动审查等待期间${interruption}，迟到的通过不能执行命令`, async ({page}) => {
+        await setup(page, 'pwd', {}, reviewSettings);
+        await page.unroute('https://api.openai.com/v1/responses');
+        let reviewing = false;
+        let releaseReview;
+        const heldReview = new Promise((resolve) => { releaseReview = resolve; });
+        const submitted = [];
+        const mainRequests = [];
+        page.on('request', (request) => {
+            if (request.method() === 'POST' && request.url() === `${connection.url}/v1/tasks`) submitted.push(request);
+        });
+        await page.route('https://api.openai.com/v1/responses', async (route) => {
+            const body = route.request().postDataJSON();
+            if (body.model === 'test-review') {
+                reviewing = true;
+                await heldReview;
+                await respondToReviewTest(route, {output_text: JSON.stringify({decision: 'approve', reason: '只读检查'})}).catch(() => {});
+                return;
+            }
+            mainRequests.push(body);
+            await respondToReviewTest(route, mainRequests.length === 1 ? {output: [localReviewCall('stopped-review', 'pwd')]}
+                : {output_text: '变更后的请求已处理', output: []});
+        });
+        await connect(page);
+        await ask(page);
+        await expect.poll(() => reviewing).toBe(true);
+        if (interruption === '停止会话') {
+            await page.getByRole('button', {name: '停止 AI 任务', exact: true}).click();
+        } else {
+            await page.getByRole('button', {name: '执行器连接', exact: true}).click();
+            const panel = page.locator('.local-executor-dialog');
+            if (interruption === '关闭审查') await panel.getByRole('checkbox', {name: 'AI 自动审批', exact: true}).uncheck();
+            else await panel.getByRole('button', {name: '断开并请求取消任务', exact: true}).click();
+            await panel.getByRole('button', {name: '关闭', exact: true}).click();
+        }
+        releaseReview();
+        if (interruption !== '停止会话') {
+            await expect(page.locator('.ai-message-assistant')).toContainText('变更后的请求已处理');
+            const result = JSON.parse(mainRequests[1].input.find((item) => item.type === 'function_call_output').output);
+            expect(result.ok).toBe(false);
+        }
+        await expect(page.getByRole('button', {name: '停止 AI 任务', exact: true})).toBeDisabled();
+        await expect(page.locator('.ai-interaction-dialog')).toHaveCount(0);
+        expect(submitted).toHaveLength(0);
+    });
+}
+
+test('场景：自动审查配置互斥、刷新恢复并随设置链接导出', async ({page}) => {
+    await setup(page, 'pwd', {}, reviewSettings);
+    const panel = await connect(page);
+    const review = panel.getByRole('checkbox', {name: 'AI 自动审批', exact: true});
+    const bypass = panel.getByRole('checkbox', {name: '执行命令免审批', exact: true});
+    await expect(review).toBeChecked();
+    await expect(panel.getByLabel('AI 白名单主命令')).toBeDisabled();
+    await bypass.check();
+    await expect(review).not.toBeChecked();
+    await review.check();
+    await expect(bypass).not.toBeChecked();
+    await panel.getByRole('button', {name: '关闭', exact: true}).click();
+    await page.getByRole('button', {name: '设置', exact: true}).click();
+    await page.getByLabel(/命令审查模型/).fill('chosen-reviewer');
+    await page.evaluate(() => Object.defineProperty(navigator, 'clipboard', {configurable: true, value: {
+        writeText: async (value) => { window.exportedSettingsUrl = value; },
+    }}));
+    await page.getByRole('button', {name: '复制导出 URL', exact: true}).click();
+    const exported = await page.evaluate(() => window.exportedSettingsUrl);
+    const encoded = new URLSearchParams(new URL(exported).hash.slice(1)).get('settings');
+    const snapshot = JSON.parse(inflateRawSync(Buffer.from(encoded, 'base64url')));
+    expect(snapshot).toMatchObject({ai: {reviewModel: 'chosen-reviewer'}, localExecutor: {autoReview: true, autoApprove: false}});
+    await page.reload();
+    await page.getByRole('button', {name: 'AI 助手', exact: true}).click();
+    await connect(page);
+    await expect(review).toBeChecked();
+    expect(await page.evaluate(() => JSON.parse(localStorage.getItem('browser-code-editor-settings')).ai.reviewModel)).toBe('chosen-reviewer');
+});
+
 test('场景：任务列表不展示已完成任务，执行结果仍返回 AI 且凭据不进入模型或设置', async ({page}) => {
     await setup(page, "printf '执行器连接成功\\n'");
     const panel = await connect(page);
@@ -467,12 +633,12 @@ test('场景：设置链接明文导出自定义 token，导入后回填并生�
     const exported = await page.evaluate(() => window.exportedSettingsUrl);
     const encoded = new URLSearchParams(new URL(exported).hash.slice(1)).get('settings');
     const snapshot = JSON.parse(inflateRawSync(Buffer.from(encoded, 'base64url')));
-    expect(snapshot.localExecutor).toEqual({token: 'custom-token-'.repeat(4), whitelist: ['pwd', 'ls'], listenAddress: '192.168.1.25', port: 8321, autoApprove: true});
+    expect(snapshot.localExecutor).toEqual({token: 'custom-token-'.repeat(4), whitelist: ['pwd', 'ls'], listenAddress: '192.168.1.25', port: 8321, autoApprove: true, autoReview: false});
     expect(JSON.stringify(snapshot)).not.toContain(connection.token);
     expect(JSON.stringify(snapshot)).not.toContain(connection.url);
 
     // 自定义凭据正常导入，连接地址和运行状态不从设置恢复。
-    const imported = {token: connection.token, whitelist: ['Get-WinEvent', 'Get-NetTCPConnection'], listenAddress: '::1', port: 0, autoApprove: true};
+    const imported = {token: connection.token, whitelist: ['Get-WinEvent', 'Get-NetTCPConnection'], listenAddress: '::1', port: 0, autoApprove: true, autoReview: false};
     snapshot.localExecutor = {...imported, ...connection,
         connected: true, shell: 'cmd', bindWorkspace: true, tasks: [{id: '不应保存'}]};
     const importUrl = '/codeEditor#settings=' + deflateRawSync(Buffer.from(JSON.stringify(snapshot))).toString('base64url');
@@ -526,7 +692,7 @@ test('场景：监听 IP 和端口修改后自动保存，刷新回填，非法�
     await port.fill('65536');
     await expect(dialog.getByRole('button', {name: '复制启动命令', exact: true})).toBeDisabled();
     expect(await page.evaluate(() => JSON.parse(localStorage.getItem('browser-code-editor-settings')).localExecutor))
-        .toEqual({token: '', whitelist: [], listenAddress: '192.168.1.25', port: 8321, autoApprove: false});
+        .toEqual({token: '', whitelist: [], listenAddress: '192.168.1.25', port: 8321, autoApprove: false, autoReview: false});
     await page.reload();
     await page.getByRole('button', {name: 'AI 助手', exact: true}).click();
     await page.getByRole('button', {name: '执行器连接', exact: true}).click();

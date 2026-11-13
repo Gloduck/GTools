@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {areMainCommandsWhitelisted, getCommandApprovalReason, normalizeCommandWhitelist, normalizeMainCommands} from '../../src/shared/command-whitelist.js';
+import {areMainCommandsWhitelisted, getCommandApprovalReason, normalizeCommandWhitelist, normalizeMainCommands, normalizeCommandApprovalSettings} from '../../src/shared/command-whitelist.js';
 import {COMMAND_WHITELIST_TEMPLATES} from '../../src/shared/command-presets.js';
 
 test('场景：本机文本和 SSH 数组采用相同的去重、分隔和匹配规则', () => {
@@ -52,5 +52,16 @@ test('场景：执行器和 SSH 共用审批判断，关闭免审批后恢复风
 test('场景：免审批必须明确开启，字符串和数字不能被当作授权', () => {
     for (const autoApprove of [undefined, null, false, 'false', 'true', 1]) {
         assert.equal(getCommandApprovalReason({autoApprove, whitelist: [], mainCommands: ['printf']}), 'not-whitelisted');
+    }
+});
+
+test('场景：自动审查覆盖白名单与主 AI 风险标记，冲突设置优先审查', () => {
+    for (const highRisk of [false, true]) {
+        assert.equal(getCommandApprovalReason({autoReview: true, whitelist: ['pwd'], mainCommands: ['pwd'], highRisk}), 'auto-review');
+    }
+    assert.deepEqual(normalizeCommandApprovalSettings({autoApprove: true, autoReview: true}), {autoReview: true, autoApprove: false});
+    assert.deepEqual(normalizeCommandApprovalSettings({autoApprove: true}), {autoReview: false, autoApprove: true});
+    for (const autoReview of [undefined, null, false, 'true', 1]) {
+        assert.equal(normalizeCommandApprovalSettings({autoReview}).autoReview, false);
     }
 });

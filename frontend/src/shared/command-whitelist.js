@@ -21,8 +21,15 @@ export function areMainCommandsWhitelisted(whitelist, mainCommands) {
         && mainCommands.every((command) => typeof command === 'string' && command !== '' && allowed.has(command));
 }
 
-// 返回需要审批的原因；免审批只读取用户为该连接设置的布尔值。
-export function getCommandApprovalReason({autoApprove = false, whitelist, mainCommands, highRisk = false, hasUnsavedFiles = false} = {}) {
+// 导入冲突设置时优先保留审查，避免同时开启免审批而跳过审查。
+export function normalizeCommandApprovalSettings(value = {}) {
+    const autoReview = value.autoReview === true;
+    return {autoReview, autoApprove: !autoReview && value.autoApprove === true};
+}
+
+// 审查模式覆盖所有命令，不依赖主 AI 自报的命令名单和风险判断。
+export function getCommandApprovalReason({autoApprove = false, autoReview = false, whitelist, mainCommands, highRisk = false, hasUnsavedFiles = false} = {}) {
+    if (autoReview === true) return 'auto-review';
     if (autoApprove === true) return null;
     if (highRisk) return 'high-risk';
     if (!areMainCommandsWhitelisted(whitelist, mainCommands)) return 'not-whitelisted';

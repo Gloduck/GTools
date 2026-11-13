@@ -89,7 +89,7 @@ test('场景：凭据仅放请求头，禁止重定向并原样传递输出游�
         return {ok: true, json: async () => ({id: 'task-12345', cursor: 12})};
     }});
     await client.read('task-12345', 8);
-    assert.equal(request.url, 'http://127.0.0.1:32100/v1/tasks/task-12345?cursor=8');
+    assert.equal(request.url, 'http://127.0.0.1:32100/v1/tasks/task-12345?cursor=8&max_chars=5000');
     assert.equal(request.options.headers.Authorization, `Bearer ${connection.token}`);
     assert.equal(request.options.redirect, 'error');
     assert.equal(request.options.credentials, 'omit');

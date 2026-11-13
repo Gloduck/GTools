@@ -75,6 +75,7 @@ public final class ExecutorTests {
             tests.run("特殊路径与指定工作目录", tests::testPaths);
             tests.run("空输出和命令失败状态", tests::testEmptyOutputAndFailure);
             tests.run("分页保持中文及表情完整", tests::testPagination);
+            tests.run("UTF-8 解码损失单独标记并保留命令状态", tests::testDecodingLoss);
             tests.run("输出缓存滚动明确提示丢失", tests::testOutputRollover);
             tests.run("运行期间实时输出且终态稳定", tests::testStreamingOutput);
             tests.run("取消任务清理子进程", tests::testCancellation);
@@ -225,13 +226,18 @@ public final class ExecutorTests {
     }
 
     private void testPagination() throws Exception {
-        // 首个表情恰好跨越默认分页边界，检查 JSON 中不会生成孤立代理对。
+        // 包含跨 UTF-16 边界的表情，检查读取数量和 JSON 字符往返。
         String expected = repeat("a", 16383) + repeat("😀中文\n", 12000);
         Files.write(new File(directory, "pages.txt").toPath(), expected.getBytes(StandardCharsets.UTF_8));
         String task = submit("cat pages.txt");
         JSONObject done = waitTask(task);
         check(done.getBoolean("has_more") && !done.getBoolean("truncated"), "分页夹具未产生预期分页");
         check(output(task, done).equals(expected), "多页中文或表情内容不完整");
+        JSONObject page = request("GET", "/v1/tasks/" + task + "?cursor=16383&max_chars=1", null).expect(200);
+        check(page.getString("output").equals("😀") && page.getLong("cursor") == 16385, "读取量没有按完整 Unicode 字符计算");
+        check(!page.getBoolean("decoding_loss"), "正常 Unicode 输出被标为解码损失");
+        request("GET", "/v1/tasks/" + task + "?max_chars=0", null).expect(400);
+        request("GET", "/v1/tasks/" + task + "?max_chars=20001", null).expect(400);
         request("GET", "/v1/tasks/" + task + "?cursor=16384", null).expect(400);
         JSONObject again = request("GET", "/v1/tasks/" + task, null).expect(200);
         check(again.getLong("cursor") == done.getLong("cursor") && again.getString("output").equals(done.getString("output")), "终态后分页内容发生变化");
@@ -244,9 +250,23 @@ public final class ExecutorTests {
         String task = submit("cat rolling.txt");
         JSONObject done = waitTask(task);
         check(done.getBoolean("truncated") && done.getBoolean("output_lost"), "输出滚动未报告丢失");
-        int start = expected.length() - limit;
-        if (Character.isLowSurrogate(expected.charAt(start))) start++;
+        int start = expected.offsetByCodePoints(0, expected.codePointCount(0, expected.length()) - limit);
         check(output(task, done).equals(expected.substring(start)), "滚动缓存未保留完整末尾字符");
+    }
+
+    private void testDecodingLoss() throws Exception {
+        String valid = "中文😀�\n#< CLIXML\n<Objs>原文</Objs>";
+        for (boolean invalid : new boolean[]{false, true}) {
+            ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+            bytes.write(valid.getBytes(StandardCharsets.UTF_8));
+            if (invalid) bytes.write(new byte[]{(byte) 255, (byte) 226, (byte) 130});
+            Files.write(new File(directory, "encoded-output.txt").toPath(), bytes.toByteArray());
+            String task = submit("cat encoded-output.txt");
+            JSONObject done = waitTask(task);
+            check(output(task, done).equals(valid + (invalid ? "��" : "")), "解码输出未保留有效正文");
+            check(done.getBoolean("decoding_loss") == invalid, "解码损失标记错误");
+            check(done.getInt("exit_code") == 0 && done.getString("status").equals("completed"), "解码损失改变了实际命令状态");
+        }
     }
 
     private void testStreamingOutput() throws Exception {

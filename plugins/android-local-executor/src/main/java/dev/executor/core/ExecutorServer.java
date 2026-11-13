@@ -186,7 +186,9 @@ public final class ExecutorServer extends NanoHTTPD implements AutoCloseable {
                 else if (request.getMethod() == Method.GET && route.group(2) == null) {
                     String cursor = request.getParms().getOrDefault("cursor", "0");
                     if (!cursor.matches("[0-9]{1,16}")) throw new ApiException(400, "Invalid output cursor");
-                    result = task.snapshot(Long.parseLong(cursor));
+                    String maxChars = request.getParms().getOrDefault("max_chars", String.valueOf(CommandTask.DEFAULT_READ_CHARS));
+                    if (!maxChars.matches("[0-9]{1,9}")) throw new ApiException(400, "Invalid max_chars");
+                    result = task.snapshot(Long.parseLong(cursor), Integer.parseInt(maxChars));
                 } else throw new ApiException(405, "Unsupported method");
             } else throw new ApiException(405, "Unsupported method");
             return respond(request, 200, result);

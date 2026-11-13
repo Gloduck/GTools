@@ -5,7 +5,7 @@ $tokens = $null
 $errors = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile((Join-Path $ExecutorRoot 'executor.ps1'), [ref]$tokens, [ref]$errors)
 if ($errors.Count) { throw '执行端脚本存在语法错误' }
-if (-not ('ExecutorTaskV3' -as [type])) {
+if (-not ('ExecutorTaskV4' -as [type])) {
     $addType = $ast.Find({ param($node)
         $node -is [System.Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq 'Add-Type'
     }, $true)
@@ -89,12 +89,12 @@ public sealed class ExecutorTestWorker {
 
 function Assert-True($Value, [string]$Message) { if (-not $Value) { throw "场景失败：$Message" } }
 function New-ExitedTask([string]$Id) {
-    $task = New-Object ExecutorTaskV3
+    $task = New-Object ExecutorTaskV4
     $task.Id = $Id
     $task.Status = 'running'
     $task.ExitCode = 0
     # 不伪造原生句柄，只标记主进程已退出，真实 Tick 仍必须等待输出读取完成。
-    [ExecutorTaskV3].GetField('processExited', [Reflection.BindingFlags]'Instance,NonPublic').SetValue($task,$true)
+    [ExecutorTaskV4].GetField('processExited', [Reflection.BindingFlags]'Instance,NonPublic').SetValue($task,$true)
     return $task
 }
 function Wait-FirstOutput($Task) {
@@ -154,12 +154,12 @@ try {
 }
 
 # 模拟线程对象已创建但 Thread.Start 失败，清理不得 Join 未启动线程或覆盖启动错误。
-$task = New-Object ExecutorTaskV3
+$task = New-Object ExecutorTaskV4
 $task.Id = 'reader-start-error'
 $task.Status = 'failed'
 $task.Error = '模拟读取线程启动失败'
 $unstarted = [ExecutorTestWorker]::UnstartedThread()
-[ExecutorTaskV3].GetField('reader',[Reflection.BindingFlags]'Instance,NonPublic').SetValue($task,$unstarted)
+[ExecutorTaskV4].GetField('reader',[Reflection.BindingFlags]'Instance,NonPublic').SetValue($task,$unstarted)
 $task.Dispose()
 $task.Dispose()
 $final = $task.Snapshot(0)
@@ -168,34 +168,34 @@ Assert-True ($final.status -eq 'failed' -and $final.error -ceq '模拟读取线�
 Assert-True ($null -eq $final.exit_code -and $final.output -ceq '') '未启动任务不伪造退出码或输出'
 Write-Output '场景通过：读取线程未启动时安全清理且保留失败结果'
 
-Assert-True ([ExecutorTerminalLogV3]::Flush(5000)) '先排空已有终端日志'
+Assert-True ([ExecutorTerminalLogV4]::Flush(5000)) '先排空已有终端日志'
 $previousError = [Console]::Error
 $writer = New-Object ExecutorTestBlockedWriter
 $logTask = New-ExitedTask 'slow-terminal'
 $worker = $null
 try {
     [Console]::SetError($writer)
-    [ExecutorTerminalLogV3]::Append('占用终端写入')
+    [ExecutorTerminalLogV4]::Append('占用终端写入')
     Assert-True ($writer.Entered.WaitOne(5000)) '模拟终端已经阻塞'
     # 每次输出不超采集块大小，累计积压超过日志队列容量。
     $chunk = '中' * 4096
     $worker = [ExecutorTestWorker]::Append($logTask,$chunk,100)
     Assert-True ($worker.Thread.Join(2000) -and -not $worker.Error) '慢终端不得阻塞任务输出采集'
-    Assert-True (-not [ExecutorTerminalLogV3]::Flush(30)) '阻塞时 Flush 应按超时返回'
-    $buffered = [ExecutorTerminalLogV3].GetField('pendingChars',[Reflection.BindingFlags]'Static,NonPublic').GetValue($null)
+    Assert-True (-not [ExecutorTerminalLogV4]::Flush(30)) '阻塞时 Flush 应按超时返回'
+    $buffered = [ExecutorTerminalLogV4].GetField('pendingChars',[Reflection.BindingFlags]'Static,NonPublic').GetValue($null)
     Assert-True ($buffered -le 262144) '日志队列容量有界'
     $snapshot = $logTask.Snapshot(0)
     $output = $snapshot.output
     while ($snapshot.has_more) { $snapshot=$logTask.Snapshot($snapshot.cursor); $output+=$snapshot.output }
     Assert-True ($output -ceq ('中' * 262144) -and $snapshot.truncated) '接口输出只按自身缓存滚动，不受日志丢弃影响'
     [void]$writer.ContinueWrite.Set()
-    Assert-True ([ExecutorTerminalLogV3]::Flush(5000)) '终端恢复后日志队列排空'
+    Assert-True ([ExecutorTerminalLogV4]::Flush(5000)) '终端恢复后日志队列排空'
     Assert-True ($writer.ToString().Contains('终端日志积压，已省略')) '日志被省略后有明确说明'
     Write-Output '场景通过：慢终端日志有界、提示省略且不阻塞接口输出'
 } finally {
     [void]$writer.ContinueWrite.Set()
     if ($worker) { [void]$worker.Thread.Join(5000) }
-    [void][ExecutorTerminalLogV3]::Flush(5000)
+    [void][ExecutorTerminalLogV4]::Flush(5000)
     [Console]::SetError($previousError)
     $writer.Entered.Dispose()
     $writer.ContinueWrite.Dispose()

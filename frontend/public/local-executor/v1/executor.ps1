@@ -33,7 +33,7 @@ if ($wildcard -and -not $PublicUrl) { throw 'PublicUrl is required when listenin
 # 使用系统作业对象管理任务进程树。先创建挂起进程并加入作业，
 # 再执行用户命令，避免后台子进程抢先脱离任务管理。
 # 辅助类型带版本，重新启动时不会复用当前 PowerShell 会话中旧版的已编译类型。
-if (-not ('ExecutorTaskV3' -as [type])) {
+if (-not ('ExecutorTaskV4' -as [type])) {
 Add-Type -TypeDefinition @'
 using System;
 using System.IO;
@@ -43,14 +43,14 @@ using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
 // 终端日志只是结果副本，独立线程和有界队列避免慢终端阻塞请求及输出采集。
-public static class ExecutorTerminalLogV3 {
+public static class ExecutorTerminalLogV4 {
     static readonly object gate=new object();
     static readonly Queue<string> pending=new Queue<string>();
     const int Limit=262144;
     static int pendingChars;
     static long droppedChars;
     static bool writing;
-    static ExecutorTerminalLogV3() {
+    static ExecutorTerminalLogV4() {
         var worker=new Thread(WriteLoop); worker.IsBackground=true; worker.Start();
     }
     public static void Append(string text) {
@@ -89,7 +89,7 @@ public static class ExecutorTerminalLogV3 {
         }
     }
 }
-public sealed class ExecutorTaskV3 : IDisposable {
+public sealed class ExecutorTaskV4 : IDisposable {
     [StructLayout(LayoutKind.Sequential)] struct Security { public int size; public IntPtr descriptor; public int inherit; }
     [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)] struct Startup {
         public int cb; public string reserved, desktop, title;
@@ -121,12 +121,13 @@ public sealed class ExecutorTaskV3 : IDisposable {
     IntPtr job, process; Thread reader; long outputStart; string stopReason;
     public string Id, Command, Cwd, Fingerprint, Shell, ScriptPath;
     public string Status = "queued", Error = "";
-    public int? ExitCode; public bool Truncated; public double CreatedAt;
+    public int? ExitCode; public bool Truncated, DecodingLoss; public double CreatedAt;
+    int outputChars;
     const int Limit = 262144;
     bool completionLogged, processExited, outputFinished, readerStarted;
     void Log(string text) {
         if(String.IsNullOrEmpty(text)) return;
-        ExecutorTerminalLogV3.Append("["+Id+"] "+text+(text.EndsWith("\n") ? "" : "\n"));
+        ExecutorTerminalLogV4.Append("["+Id+"] "+text+(text.EndsWith("\n") ? "" : "\n"));
     }
     void LogCompletion() {
         if(completionLogged) return;
@@ -169,12 +170,30 @@ public sealed class ExecutorTaskV3 : IDisposable {
             if(input!=IntPtr.Zero && input!=new IntPtr(-1)) CloseHandle(input);
         }
     }
+    // 由解码器报告真实非法字节；用户本来输出的替换字符不会被误判。
+    sealed class OutputFallback : DecoderFallback {
+        public bool Loss;
+        public override int MaxCharCount { get { return 1; } }
+        public override DecoderFallbackBuffer CreateFallbackBuffer() { return new Buffer(this); }
+        sealed class Buffer : DecoderFallbackBuffer {
+            readonly OutputFallback owner;
+            readonly DecoderFallbackBuffer replacement=new DecoderReplacementFallback("\uFFFD").CreateFallbackBuffer();
+            public Buffer(OutputFallback value) { owner=value; }
+            public override bool Fallback(byte[] bytes,int index) { owner.Loss=true; return replacement.Fallback(bytes,index); }
+            public override char GetNextChar() { return replacement.GetNextChar(); }
+            public override bool MovePrevious() { return replacement.MovePrevious(); }
+            public override int Remaining { get { return replacement.Remaining; } }
+            public override void Reset() { replacement.Reset(); }
+        }
+    }
     void ReadOutput(Stream stream) {
-        var decoder=new UTF8Encoding(false,false).GetDecoder(); byte[] bytes=new byte[4096]; char[] chars=new char[8192];
+        var fallback=new OutputFallback(); var decoder=new UTF8Encoding(false,false).GetDecoder(); decoder.Fallback=fallback;
+        byte[] bytes=new byte[4096]; char[] chars=new char[8192];
         try {
             using(stream) { int n; while((n=stream.Read(bytes,0,bytes.Length))>0) {
                 lock(gate) {
                     AppendOutput(chars,decoder.GetChars(bytes,0,n,chars,0,false));
+                    DecodingLoss=fallback.Loss;
                 }
             }}
         } catch(Exception e) {
@@ -182,16 +201,31 @@ public sealed class ExecutorTaskV3 : IDisposable {
         } finally {
             lock(gate) {
                 AppendOutput(chars,decoder.GetChars(new byte[0],0,0,chars,0,true));
+                DecodingLoss=fallback.Loss;
                 outputFinished=true;
             }
         }
     }
     void AppendOutput(char[] chars,int count) {
-        // 缓存只保留最近输出，达到容量后继续读取，不终止任务。
+        // 容量按 Unicode 字符计数；跨读取块的代理对只计一个字符。
+        for(int i=0;i<count;i++) {
+            char previous=i>0 ? chars[i-1] : (output.Length>0 ? output[output.Length-1] : '\0');
+            if(!Char.IsLowSurrogate(chars[i]) || !Char.IsHighSurrogate(previous)) outputChars++;
+        }
         output.Append(chars,0,count);
         if(count>0) Log(new string(chars,0,count));
-        int overflow=output.Length-Limit;
-        if(overflow>0) { output.Remove(0,overflow); outputStart+=overflow; Truncated=true; }
+        int overflow=outputChars-Limit;
+        if(overflow>0) {
+            int removed=AdvanceCharacters(0,overflow,output.Length);
+            output.Remove(0,removed); outputStart+=removed; outputChars-=overflow; Truncated=true;
+        }
+    }
+    int AdvanceCharacters(int start,int count,int end) {
+        int index=start;
+        while(index<end && count-->0) {
+            index+=Char.IsHighSurrogate(output[index]) && index+1<end && Char.IsLowSurrogate(output[index+1]) ? 2 : 1;
+        }
+        return index;
     }
     void CleanupScript() { if(!String.IsNullOrEmpty(ScriptPath)) { try { File.Delete(ScriptPath); ScriptPath=null; } catch(IOException) {} catch(UnauthorizedAccessException) {} } }
     void Kill() { if(job!=IntPtr.Zero) { CloseHandle(job); job=IntPtr.Zero; } }
@@ -219,14 +253,20 @@ public sealed class ExecutorTaskV3 : IDisposable {
             }
         }
     }
-    public object Snapshot(long cursor) {
+    public object Snapshot(long cursor) { return Snapshot(cursor,5000); }
+    public object Snapshot(long cursor,int maxChars) {
         lock(gate) {
-            long total=outputStart+output.Length;
+            if(maxChars<1 || maxChars>20000) throw new ArgumentException("max_chars must be an integer between 1 and 20000");
+            int visible=output.Length;
+            if(visible>0 && Char.IsHighSurrogate(output[visible-1])) visible--;
+            long total=outputStart+visible;
             if(cursor<0 || cursor>total) throw new ArgumentException("Invalid output cursor");
-            long start=Math.Max(cursor,outputStart), end=Math.Min(total,start+16384);
-            // 此实现的游标按 UTF-16 单元计数；浏览器只传回游标，不自行换算。
+            long start=Math.Max(cursor,outputStart);
+            if(start<total && Char.IsLowSurrogate(output[(int)(start-outputStart)])) throw new ArgumentException("Cursor splits a character");
+            long end=outputStart+AdvanceCharacters((int)(start-outputStart),maxChars,visible);
+            // 游标仍是不透明的 UTF-16 位置；返回数量按完整字符计算。
             return new { id=Id,status=Status,cwd=Cwd,shell=Shell,output=output.ToString((int)(start-outputStart),(int)(end-start)),cursor=end,has_more=end<total,output_lost=cursor<outputStart,
-                         exit_code=ExitCode,truncated=Truncated,error=Error,created_at=CreatedAt };
+                         exit_code=ExitCode,truncated=Truncated,decoding_loss=DecodingLoss,error=Error,created_at=CreatedAt };
         }
     }
     public void Dispose() {
@@ -274,13 +314,21 @@ try { $listener.Start() } catch {
 $tasks = @{}
 $utf8 = New-Object Text.UTF8Encoding($false)
 
+function ConvertTo-WindowsArgument([string]$Value) {
+    # Windows argv 引用规则：引号前的反斜杠翻倍并转义引号，末尾反斜杠翻倍。
+    $quoted = [regex]::Replace($Value, '(\\*)"', '$1$1\"')
+    $quoted = [regex]::Replace($quoted, '(\\+)\z', '$1$1')
+    return '"' + $quoted + '"'
+}
+
 function New-PowerShellTaskArguments([string]$Command) {
     # 顶层原样执行正文，让 PowerShell 自行确定最终状态和完成格式化。
     # 不追加 exit，也不读取可能由更早外部程序残留的 LASTEXITCODE。
     # 原生程序非零结果按 CLI 返回 1；需要原值时由用户显式 exit $LASTEXITCODE。
-    $scriptText = '[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false); $env:PYTHONIOENCODING="utf-8"; $ProgressPreference="SilentlyContinue";' + "`n" + $Command
-    $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($scriptText))
-    return '-NoLogo -NoProfile -NonInteractive -OutputFormat Text -EncodedCommand '+$encoded
+    # 初始化不调用 cmdlet，避免首次加载模块时进度和错误流尚未切换编码。
+    $scriptText = '$ProgressPreference="SilentlyContinue"; [Console]::OutputEncoding = [Activator]::CreateInstance([Text.UTF8Encoding], [object[]]@($false)); $env:PYTHONIOENCODING="utf-8";' + "`n" + $Command
+    # Windows PowerShell 5.1 的 EncodedCommand 即使指定 Text 也会输出错误 XML。
+    return '-NoLogo -NoProfile -NonInteractive -OutputFormat Text -Command ' + (ConvertTo-WindowsArgument $scriptText)
 }
 
 function Fail-Request([int]$Status, [string]$Message) {
@@ -386,7 +434,7 @@ try {
                     if ($tasks[$body.id].Fingerprint -cne $fingerprint) { Fail-Request 409 'Task id already belongs to different execution content' }
                     $result = $tasks[$body.id].Snapshot(0)
                 } else {
-                    $task = New-Object ExecutorTaskV3
+                    $task = New-Object ExecutorTaskV4
                     $task.Shell=$shellName; $task.Id=$body.id; $task.Command=$body.command; $task.Cwd=$directory; $task.Fingerprint=$fingerprint
                     $task.CreatedAt=([DateTime]::UtcNow-[DateTime]'1970-01-01').TotalSeconds
                     if ($shellName -eq 'cmd') {
@@ -411,8 +459,11 @@ try {
                 if ($request.HttpMethod -eq 'POST' -and $taskPath.Groups[2].Success) { $task.Stop('cancelled'); $result=$task.Snapshot(0) }
                 elseif ($request.HttpMethod -eq 'GET' -and -not $taskPath.Groups[2].Success) {
                     [long]$cursor=0
-                    if ($request.QueryString['cursor'] -and -not [long]::TryParse($request.QueryString['cursor'],[ref]$cursor)) { Fail-Request 400 'Invalid output cursor' }
-                    try { $result=$task.Snapshot($cursor) } catch { Fail-Request 400 'Invalid output cursor' }
+                    if ($null -ne $request.QueryString['cursor'] -and -not [long]::TryParse($request.QueryString['cursor'],[ref]$cursor)) { Fail-Request 400 'Invalid output cursor' }
+                    [int]$maxChars=5000
+                    if ($null -ne $request.QueryString['max_chars'] -and -not [int]::TryParse($request.QueryString['max_chars'],[ref]$maxChars)) { Fail-Request 400 'Invalid max_chars' }
+                    if ($maxChars -lt 1 -or $maxChars -gt 20000) { Fail-Request 400 'max_chars must be an integer between 1 and 20000' }
+                    try { $result=$task.Snapshot($cursor,$maxChars) } catch { Fail-Request 400 'Invalid output cursor' }
                 } else { Fail-Request 405 'Unsupported method' }
             } else { Fail-Request 405 'Unsupported method' }
             Send-Json $context 200 $result
@@ -425,6 +476,6 @@ try {
 } finally {
     $listener.Close()
     foreach ($task in $tasks.Values) { $task.Dispose() }
-    [void][ExecutorTerminalLogV3]::Flush(1000)
+    [void][ExecutorTerminalLogV4]::Flush(1000)
     [Console]::Error.WriteLine('Local executor stopped.')
 }

@@ -5,7 +5,6 @@
 命令使用启动服务的当前用户权限执行。
 """
 import argparse
-import base64
 import codecs
 import ctypes
 from collections import deque
@@ -30,6 +29,8 @@ from urllib.parse import parse_qs, urlsplit
 VERSION = 1
 MAX_BODY = 128 * 1024
 MAX_OUTPUT_CHARS = 256 * 1024
+DEFAULT_READ_CHARS = 5000
+MAX_READ_CHARS = 20000
 MAX_LOG_CHARS = 256 * 1024
 TASK_ID = re.compile(r"^[a-zA-Z0-9_-]{8,80}$")
 FINAL = {"completed", "failed", "cancelled"}
@@ -39,11 +40,35 @@ def powershell_arguments(command):
     # 正文在顶层原样执行，由 PowerShell 自己完成格式化并确定最终退出状态。
     # 不追加命令或外层脚本块，避免覆盖 $?、沿用残留 LASTEXITCODE 或提前退出。
     # 原生程序非零结果按 CLI 返回 1；用户可用 exit $LASTEXITCODE 显式传出原值。
-    script = ("[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false); "
-              "$env:PYTHONIOENCODING='utf-8'; $ProgressPreference='SilentlyContinue'; "
+    # 先关闭进度并直接构造编码对象，避免模块首次加载发生在编码设置之前。
+    script = ("$ProgressPreference='SilentlyContinue'; "
+              "[Console]::OutputEncoding = [Activator]::CreateInstance([Text.UTF8Encoding], [object[]]@($false)); "
+              "$env:PYTHONIOENCODING='utf-8'; "
               "\n" + command)
+    # Windows PowerShell 5.1 的 EncodedCommand 会将重定向的错误流强制序列化。
+    # 正文作为独立参数交给 subprocess，由它完成 Windows 参数引用。
     return ["-NoLogo", "-NoProfile", "-NonInteractive", "-OutputFormat", "Text",
-            "-EncodedCommand", base64.b64encode(script.encode("utf-16le")).decode()]
+            "-Command", script]
+
+
+class OutputDecoder:
+    """保留增量解码状态；只在真实非法字节发生时标记损失，普通的 � 不算错误。"""
+    def __init__(self):
+        self.decoder = codecs.getincrementaldecoder("utf-8")("strict")
+        self.loss = False
+
+    def decode(self, data, final=False):
+        state = self.decoder.getstate()
+        try:
+            return self.decoder.decode(data, final)
+        except UnicodeDecodeError:
+            self.loss = True
+            self.decoder.setstate(state)
+            self.decoder.errors = "replace"
+            try:
+                return self.decoder.decode(data, final)
+            finally:
+                self.decoder.errors = "strict"
 
 
 class ApiError(Exception):
@@ -247,22 +272,25 @@ class Task:
         self.status, self.exit_code, self.error = "queued", None, ""
         self.output, self.output_start = "", 0
         self.truncated = False
+        self.decoding_loss = False
         self.process, self.job, self.stop_reason = None, None, None
         self.done = threading.Event()
         self.created_at = time.time()
 
-    def snapshot(self, cursor):
+    def snapshot(self, cursor, max_chars=DEFAULT_READ_CHARS):
         with self.lock:
+            if type(max_chars) is not int or not 1 <= max_chars <= MAX_READ_CHARS:
+                raise ApiError(400, "max_chars must be an integer between 1 and 20000")
             total = self.output_start + len(self.output)
             if cursor < 0 or cursor > total:
                 raise ApiError(400, "Invalid output cursor")
             start = max(cursor, self.output_start)
-            end = min(total, start + 16384)
+            end = min(total, start + max_chars)
             return {"id": self.id, "status": self.status, "cwd": self.cwd, "shell": self.shell,
                     "output": self.output[start - self.output_start:end - self.output_start],
                     "cursor": end, "has_more": end < total, "exit_code": self.exit_code,
                     "truncated": self.truncated, "output_lost": cursor < self.output_start,
-                    "error": self.error, "created_at": self.created_at}
+                    "decoding_loss": self.decoding_loss, "error": self.error, "created_at": self.created_at}
 
     def append_output(self, text):
         # 仅保留最近的输出；缓存滚动不会停止命令或阻塞输出管道。
@@ -295,7 +323,7 @@ class Task:
                 pass
 
     def read_output(self):
-        decoder = codecs.getincrementaldecoder("utf-8")("replace")
+        decoder = OutputDecoder()
         try:
             while True:
                 chunk = self.process.stdout.read(4096)
@@ -303,6 +331,7 @@ class Task:
                     break
                 with self.lock:
                     text = decoder.decode(chunk)
+                    self.decoding_loss = decoder.loss
                     self.append_output(text)
                 self.executor.log(self.id, text)
         except Exception as exc:
@@ -312,6 +341,7 @@ class Task:
         finally:
             with self.lock:
                 text = decoder.decode(b"", final=True)
+                self.decoding_loss = decoder.loss
                 self.append_output(text)
             self.executor.log(self.id, text)
 
@@ -529,8 +559,10 @@ class Handler(BaseHTTPRequestHandler):
                     task.stop("cancelled")
                     result = task.snapshot(0)
                 elif self.command == "GET" and not task_match[2]:
-                    cursor = int(parse_qs(parsed.query).get("cursor", ["0"])[0])
-                    result = task.snapshot(cursor)
+                    query = parse_qs(parsed.query, keep_blank_values=True)
+                    cursor = int(query.get("cursor", ["0"])[0])
+                    max_chars = int(query.get("max_chars", [str(DEFAULT_READ_CHARS)])[0])
+                    result = task.snapshot(cursor, max_chars)
                 else:
                     raise ApiError(405, "Unsupported method")
             else:

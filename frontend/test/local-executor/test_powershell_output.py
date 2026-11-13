@@ -1,5 +1,5 @@
 """使用已有 PowerShell 验证两个执行端的真实命令包装，不启动 Windows 进程管理代码。"""
-import base64
+import json
 import hashlib
 import importlib.util
 import os
@@ -23,25 +23,28 @@ class PowerShellOutputTest(unittest.TestCase):
     def setUpClass(cls):
         # 只加载降级端生成启动参数的函数，测试不监听端口，也不调用 Windows API。
         source = r"""
+$ProgressPreference='SilentlyContinue'
+[Console]::OutputEncoding = [Activator]::CreateInstance([Text.UTF8Encoding], [object[]]@($false))
 $tokens = $null; $errors = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile($env:EXECUTOR_TEST_EXECUTOR_PS1, [ref]$tokens, [ref]$errors)
 if ($errors.Count) { throw '执行端语法错误' }
-$function = $ast.Find({ param($node)
-    $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'New-PowerShellTaskArguments'
-}, $true)
-if (-not $function) { throw '未找到命令包装函数' }
-. ([scriptblock]::Create($function.Extent.Text))
-New-PowerShellTaskArguments '__EXECUTOR_OUTPUT_TEST_COMMAND__'
+$functions = @('ConvertTo-WindowsArgument', 'New-PowerShellTaskArguments') | ForEach-Object {
+    $name = $_
+    $function = $ast.Find({ param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name
+    }, $true)
+    if (-not $function) { throw '未找到命令包装函数' }
+    $function.Extent.Text
+}
+ConvertTo-Json -InputObject ($functions -join "`n") -Compress
 """
         result = subprocess.run(
-            [POWERSHELL, '-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand',
-             base64.b64encode(source.encode('utf-16le')).decode()],
+            [POWERSHELL, '-NoLogo', '-NoProfile', '-NonInteractive', '-Command', source],
             env={**os.environ, 'EXECUTOR_TEST_EXECUTOR_PS1': str(ROOT / 'executor.ps1')},
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=20)
         if result.returncode:
             raise RuntimeError('加载命令包装函数失败：' + result.stderr.decode('utf-8', errors='replace'))
-        cls.fallback_arguments = result.stdout.decode('utf-8').strip().split()
-        cls.fallback_script = base64.b64decode(cls.fallback_arguments[-1]).decode('utf-16le')
+        cls.fallback_functions = json.loads(result.stdout.decode('utf-8'))
 
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory(prefix='executor-output-')
@@ -49,13 +52,30 @@ New-PowerShellTaskArguments '__EXECUTOR_OUTPUT_TEST_COMMAND__'
         (Path(self.directory.name) / 'config.toml').write_text('name = "测试"', encoding='utf-8')
 
     def command_arguments(self, command):
-        fallback_script = self.fallback_script.replace('__EXECUTOR_OUTPUT_TEST_COMMAND__', command)
+        # 使用真实 ProcessStartInfo 消费降级端生成的参数，不在测试中另写一份转义解析器。
+        executable = str(POWERSHELL).replace("'", "''")
+        literal = command.replace("'", "''")
+        launcher = self.fallback_functions + "\n" + """
+$p = [Diagnostics.Process]::new()
+$p.StartInfo.FileName = '%s'
+$p.StartInfo.Arguments = New-PowerShellTaskArguments '%s'
+$p.StartInfo.UseShellExecute = $false
+$p.StartInfo.RedirectStandardOutput = $true
+$p.StartInfo.RedirectStandardError = $true
+[void]$p.Start()
+$outCopy = $p.StandardOutput.BaseStream.CopyToAsync([Console]::OpenStandardOutput())
+$errCopy = $p.StandardError.BaseStream.CopyToAsync([Console]::OpenStandardError())
+$p.WaitForExit()
+[void]$outCopy.GetAwaiter().GetResult()
+[void]$errCopy.GetAwaiter().GetResult()
+exit $p.ExitCode
+""" % (executable, literal)
         return {
             'Python 执行端': executor.powershell_arguments(command),
-            'PowerShell 执行端': self.fallback_arguments[:-1] + [base64.b64encode(fallback_script.encode('utf-16le')).decode()],
+            'PowerShell 执行端': ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', launcher],
         }
 
-    def check_command(self, command, expected, exit_code=0, absent=(), exact=None):
+    def check_command(self, command, expected, exit_code=0, absent=(), exact=None, allow_xml=False):
         for runtime, argv in self.command_arguments(command).items():
             with self.subTest(runtime=runtime):
                 result = subprocess.run([POWERSHELL, *argv], cwd=self.directory.name,
@@ -64,17 +84,19 @@ New-PowerShellTaskArguments '__EXECUTOR_OUTPUT_TEST_COMMAND__'
                 self.assertEqual(result.returncode, exit_code, output)
                 for value in expected:
                     self.assertIn(value, output)
-                for value in ('#< CLIXML', '<Objs ', '\ufffd', *absent):
+                unexpected = ['\ufffd', *absent]
+                if not allow_xml:
+                    unexpected += ['#< CLIXML', '<Objs ']
+                for value in unexpected:
                     self.assertNotIn(value, output)
                 if exact is not None:
                     self.assertEqual(output.replace('\r\n', '\n'), exact)
 
     def check_native_result(self, command, expected, exit_code, absent=(), exact=None):
         # 原生 CLI 是状态语义的对照组，只设置输出编码，不改错误策略及用户控制流。
-        source = "[Console]::OutputEncoding = New-Object Text.UTF8Encoding($false);\n" + command
+        source = "$ProgressPreference='SilentlyContinue'; [Console]::OutputEncoding = [Activator]::CreateInstance([Text.UTF8Encoding], [object[]]@($false));\n" + command
         native = subprocess.run([POWERSHELL, '-NoLogo', '-NoProfile', '-NonInteractive',
-                                 '-OutputFormat', 'Text', '-EncodedCommand',
-                                 base64.b64encode(source.encode('utf-16le')).decode()],
+                                 '-OutputFormat', 'Text', '-Command', source],
                                 cwd=self.directory.name, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=20)
         self.assertEqual(native.returncode, exit_code, native.stdout.decode('utf-8', errors='replace'))
         self.check_command(command, expected, exit_code=native.returncode, absent=absent, exact=exact)
@@ -82,6 +104,12 @@ New-PowerShellTaskArguments '__EXECUTOR_OUTPUT_TEST_COMMAND__'
     def native_failure_command(self):
         executable = str(POWERSHELL).replace("'", "''")
         return "& '" + executable + "' -NoLogo -NoProfile -NonInteractive -Command 'exit 9'"
+
+    def test_command_text_round_trip(self):
+        """复杂引号、多行、反斜杠和普通 XML 文本必须按正文原样执行。"""
+        content = '中文😀 "双引号" \\"引用" C:\\目录\\ & | % $ ` #< CLIXML <Objs>原文</Objs>'
+        command = "$value = @'\n" + content + "\n'@\n$value\nWrite-Output C:\\\n"
+        self.check_command(command, [], exact=content + '\nC:\\\n', allow_xml=True)
 
     def test_目录对象及后续存在性文本完整输出(self):
         self.check_command("Get-ChildItem -Force | Select-Object Name,Mode; Write-Output ('CONFIG_EXISTS=' + (Test-Path -LiteralPath './config.toml'))",

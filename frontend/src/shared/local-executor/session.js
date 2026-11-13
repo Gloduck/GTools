@@ -1,5 +1,5 @@
 import {reactive, watch} from 'vue';
-import {isLocalTaskFinished, LocalExecutorClient, normalizeLocalWaitSeconds} from './client.js';
+import {isLocalTaskFinished, LocalExecutorClient, normalizeLocalWaitSeconds, normalizeLocalMaxChars, LOCAL_OUTPUT_MAX_CHARS} from './client.js';
 
 // 仅将非敏感展示状态放入响应式对象；凭据不进入设置、
 // 会话序列化、模型上下文、URL 或组件属性。
@@ -18,6 +18,7 @@ export function createLocalExecutorSession({onFinished = () => {}, heartbeatMs =
         task.exit_code = snapshot.exit_code;
         task.error = snapshot.error || '';
         task.truncated ||= !!snapshot.truncated;
+        task.decoding_loss ||= !!snapshot.decoding_loss;
         task.has_more = snapshot.has_more;
         task.cwd = snapshot.cwd;
         task.cursor = snapshot.cursor;
@@ -44,7 +45,7 @@ export function createLocalExecutorSession({onFinished = () => {}, heartbeatMs =
             for (const task of state.tasks) {
                 if (task.status !== 'submitting' && (!isLocalTaskFinished(task) || task.has_more)) {
                     try {
-                        const result = await current.read(task.id, task.cursor);
+                        const result = await current.read(task.id, task.cursor, undefined, LOCAL_OUTPUT_MAX_CHARS);
                         if (version !== generation) return;
                         apply(task, result);
                     } catch (error) {
@@ -87,7 +88,7 @@ export function createLocalExecutorSession({onFinished = () => {}, heartbeatMs =
             function check() {
                 if (signal?.aborted) return onAbort();
                 if (version !== generation) return finish(new Error('Connection changed during execution'));
-                if (task.error || !state.reachable || (isLocalTaskFinished(task) && !task.has_more)) finish();
+                if (task.error || !state.reachable || isLocalTaskFinished(task)) finish();
             }
             function checkDeadline() {
                 if (settled) return;
@@ -143,13 +144,14 @@ export function createLocalExecutorSession({onFinished = () => {}, heartbeatMs =
         async execute(args, owner, signal) {
             if (!client || !state.reachable) throw new Error('Executor is not connected');
             const waitSeconds = normalizeLocalWaitSeconds(args.wait_seconds);
+            const maxChars = normalizeLocalMaxChars(args.max_chars);
             if (signal?.aborted) throw signal.reason || new DOMException('Aborted', 'AbortError');
             const current = client;
             const version = generation;
             const id = crypto.randomUUID();
             const shell = args.shell || state.shell || state.info.shell;
             if (!(state.info.shells || [state.info.shell]).includes(shell)) throw new Error('Shell is unavailable on this connection');
-            const task = reactive({id, shell, command: args.command, reason: args.reason || '', cwd: args.cwd || state.info.default_cwd, status: 'submitting', output: '', cursor: 0, has_more: false, exit_code: null, error: '', truncated: false, output_lost: false});
+            const task = reactive({id, shell, command: args.command, reason: args.reason || '', cwd: args.cwd || state.info.default_cwd, status: 'submitting', output: '', cursor: 0, has_more: false, exit_code: null, error: '', truncated: false, output_lost: false, decoding_loss: false});
             state.tasks.unshift(task);
             owners.set(id, owner);
             try {
@@ -174,21 +176,23 @@ export function createLocalExecutorSession({onFinished = () => {}, heartbeatMs =
             }
             try {
                 await waitForTask(task, waitSeconds, version, signal);
+                // AI 的读取游标与页面轮询独立。页面裁剪日志不能推进 AI 尚未收到的内容。
+                const result = await current.read(id, 0, signal, maxChars);
+                if (version !== generation) throw new Error('Connection changed during execution');
+                return {...result, task_id: id, summary: `Executor command ${result.status}`};
             } catch (error) {
                 // 用户停止等待中的 AI 调用时请求取消任务；等待窗口到期不会进入这里。
                 if (signal?.aborted && version === generation && !isLocalTaskFinished(task)) current.cancel(id).catch(() => {});
-                throw error;
+                if (signal?.aborted || version !== generation) throw error;
+                // 读取失败不表示命令未执行，也不能把页面尾缓存当作完整结果。
+                return {task_id: id, status: 'unknown', shell, cwd: task.cwd, cursor: 0, output: '', error: error.message,
+                    has_more: true, summary: 'Executor output is unavailable. Read this task id; do not repeat the command automatically.'};
             }
-            const error = task.error || (!state.reachable ? state.error : '');
-            const status = error && !isLocalTaskFinished(task) ? 'unknown' : task.status;
-            return {task_id: id, status, shell, cwd: task.cwd, cursor: task.cursor, output: task.output,
-                exit_code: task.exit_code, error, has_more: task.has_more, truncated: task.truncated, output_lost: task.output_lost,
-                summary: `Executor command ${status}`};
         },
-        async read(id, cursor, owner, signal) {
+        async read(id, cursor, owner, signal, maxChars) {
             if (!client) throw new Error('No executor connection');
             if (owners.get(id)?.sessionId !== owner.sessionId) throw new Error('Task does not belong to this AI session');
-            const result = await client.read(id, cursor, signal);
+            const result = await client.read(id, cursor, signal, maxChars);
             return {...result, task_id: id, summary: `Executor task ${result.status}`};
         },
         async cancel(id, owner) {

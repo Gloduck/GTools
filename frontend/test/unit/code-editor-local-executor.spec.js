@@ -113,6 +113,34 @@ test('场景：任务列表不展示失败任务，错误输出和退出码仍�
     expect(result.output).toContain('失败信息');
 });
 
+test('场景：AI 指定读取量并续读，Unicode 正文和解码损失标记原样回传', async ({page}) => {
+    const args = {command: "printf '中文😀�'; printf '\\377'", commands: ['printf'], reason: '核对输出传递', high_risk: false, max_chars: 2};
+    await setup(page, args.command, {}, {localExecutor: {autoApprove: true}});
+    await page.unroute('https://api.openai.com/v1/responses');
+    await page.route('https://api.openai.com/v1/responses', async (route) => {
+        requests.push(route.request().postDataJSON());
+        let output;
+        if (requests.length === 1) {
+            output = [{type: 'function_call', call_id: 'execute', name: 'execute_executor_command', arguments: JSON.stringify(args)}];
+        } else if (requests.length === 2) {
+            const result = JSON.parse(requests[1].input.find((item) => item.type === 'function_call_output').output);
+            output = [{type: 'function_call', call_id: 'read', name: 'read_executor_task', arguments: JSON.stringify({task_id: result.task_id, cursor: result.cursor, max_chars: 10})}];
+        }
+        const response = output ? {output} : {output_text: '读取完成。', output: []};
+        await route.fulfill({contentType: 'text/event-stream', body: `data: ${JSON.stringify({type: 'response.completed', response})}\n\n`});
+    });
+    await connect(page);
+    await ask(page);
+    await expect(page.locator('.ai-message-assistant')).toContainText('读取完成。');
+    const results = requests[2].input.filter((item) => item.type === 'function_call_output').map((item) => JSON.parse(item.output));
+    expect(results).toHaveLength(2);
+    expect(results[0]).toMatchObject({ok: true, output: '中文', has_more: true, exit_code: 0, decoding_loss: true});
+    expect(results[1]).toMatchObject({ok: true, output: '😀��', has_more: false, exit_code: 0, decoding_loss: true});
+    expect(results.map((item) => item.output).join('')).toBe('中文😀��');
+    const schema = requests[0].tools.find((tool) => tool.name === 'read_executor_task').parameters.properties;
+    expect(schema.max_chars).toMatchObject({type: 'integer', minimum: 1, maximum: 20000});
+});
+
 test('场景：拒绝本机命令授权后不提交执行任务', async ({page}) => {
     await setup(page, "printf '不应执行'");
     let submissions = 0;

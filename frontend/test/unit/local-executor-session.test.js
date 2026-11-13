@@ -23,7 +23,7 @@ test('场景：会话隔离阻止其他 AI 会话读取或取消任务，凭据�
         assert.equal(JSON.parse(requests[1].options.body).reason, undefined);
         await assert.rejects(session.read(result.task_id, 0, {sessionId: 'b'}), /does not belong/);
         await assert.rejects(session.cancel(result.task_id, {sessionId: 'b'}), /does not belong/);
-        assert.equal(requests.length, 2);
+        assert.equal(requests.length, 3);
         assert.ok(!JSON.stringify(session.state).includes(connection.token));
         session.disconnect({cancel: false});
         assert.equal(session.state.whitelistText, '');
@@ -112,6 +112,7 @@ test('场景：任务使用用户选择的 Shell，显式选择会覆盖默认�
     const submissions = [];
     globalThis.fetch = async (url, options) => {
         if (url.endsWith('/info')) return response({...info, shell: 'powershell', shells: ['powershell', 'cmd']});
+        if (options.method !== 'POST') return response({...submissions.at(-1), status: 'completed', cursor: 0, output: '', has_more: false});
         const task = JSON.parse(options.body);
         submissions.push(task);
         return response({...task, status: 'completed', cursor: 0, output: '', has_more: false});
@@ -127,36 +128,38 @@ test('场景：任务使用用户选择的 Shell，显式选择会覆盖默认�
     } finally { session.disconnect({cancel: false}); globalThis.fetch = originalFetch; }
 });
 
-test('场景：默认等待短任务完成，合并多页输出并返回真实退出码和原始游标', async () => {
+test('场景：同步返回指定长度的首段，AI 游标独立于页面轮询并可继续读取', async () => {
     const originalFetch = globalThis.fetch;
     const requests = [];
     let id;
-    let reads = 0;
+    const text = '开始\n中文😀错误原因\n';
     globalThis.fetch = async (url, options) => {
         requests.push({url, options});
         if (url.endsWith('/info')) return response(info);
         if (options.method === 'POST') {
-            const body = JSON.parse(options.body);
-            id = body.id;
-            assert.equal('wait_seconds' in body, false);
-            return response({id, status: 'running', output: '开始\n', cursor: 4, has_more: false});
+            id = JSON.parse(options.body).id;
+            return response({id, status: 'running', output: '', cursor: 0, has_more: false});
         }
-        reads++;
-        return response({id, status: 'failed', output: reads === 1 ? '执行输出\n' : '错误原因\n', cursor: reads === 1 ? 10 : 17, has_more: reads === 1, exit_code: 7});
+        const query = new URL(url).searchParams;
+        const start = Number(query.get('cursor'));
+        const output = Array.from(text.slice(start)).slice(0, Number(query.get('max_chars'))).join('');
+        const cursor = start + output.length;
+        return response({id, status: 'failed', output, cursor, has_more: cursor < text.length, exit_code: 7, decoding_loss: true});
     };
     const completed = [];
     const session = createLocalExecutorSession({onFinished: (task) => completed.push(task.id)});
     try {
         await session.connect(connection);
-        const result = await session.execute({command: '运行并返回错误'}, {sessionId: 'a'});
-        assert.equal(result.status, 'failed');
-        assert.equal(result.exit_code, 7);
-        assert.equal(result.output, '开始\n执行输出\n错误原因\n');
-        assert.equal(result.has_more, false);
-        assert.equal(result.cursor, 17);
+        const first = await session.execute({command: '运行并返回错误', max_chars: 4}, {sessionId: 'a'});
+        assert.equal(first.status, 'failed');
+        assert.equal(first.exit_code, 7);
+        assert.equal(first.decoding_loss, true);
+        assert.equal(first.output, '开始\n中');
+        assert.equal(first.has_more, true);
+        const tail = await session.read(id, first.cursor, {sessionId: 'a'}, undefined, 20);
+        assert.equal(first.output + tail.output, text);
+        assert.equal(tail.has_more, false);
         assert.equal(requests.filter((item) => item.options.method === 'POST').length, 1);
-        assert.ok(requests[2].url.endsWith('?cursor=4'));
-        assert.ok(requests[3].url.endsWith('?cursor=10'));
         assert.deepEqual(completed, [id]);
     } finally { session.disconnect({cancel: false}); globalThis.fetch = originalFetch; }
 });
@@ -245,55 +248,74 @@ test('场景：等待期间读取失败保留任务编号，不重新提交也�
         const result = await session.execute({command: '运行一次'}, {sessionId: 'a'});
         assert.equal(result.status, 'unknown');
         assert.equal(result.task_id, session.state.tasks[0].id);
-        assert.equal(result.output, '已开始');
+        assert.equal(result.output, '');
+        assert.equal(result.cursor, 0);
         assert.match(result.error, /Cannot reach/);
         assert.equal(requests.filter((url) => url.endsWith('/tasks')).length, 1);
         assert.ok(!requests.some((url) => url.endsWith('/cancel')));
     } finally { session.disconnect({cancel: false}); globalThis.fetch = originalFetch; }
 });
 
-test('场景：同步结果超过前端输出缓存时明确标记截断并保留可继续读取的游标', async () => {
+test('场景：页面尾缓存裁剪后，AI 仍从执行端读取完整结果且不继承页面损失标记', async () => {
     const originalFetch = globalThis.fetch;
+    const text = '开头😀' + '字'.repeat(120000) + '结束';
+    let id;
     globalThis.fetch = async (url, options) => {
         if (url.endsWith('/info')) return response(info);
-        return response({id: JSON.parse(options.body).id, status: 'completed', output: '字'.repeat(100005), cursor: 200010, has_more: false, exit_code: 0});
+        if (options.method === 'POST') {
+            id = JSON.parse(options.body).id;
+            return response({id, status: 'running', output: '', cursor: 0, has_more: false});
+        }
+        const query = new URL(url).searchParams;
+        const start = Number(query.get('cursor'));
+        const output = Array.from(text.slice(start)).slice(0, Number(query.get('max_chars'))).join('');
+        const cursor = start + output.length;
+        // 让后台轮询实际累积超过页面容量，再完成任务。
+        return response({id, status: cursor >= text.length ? 'completed' : 'running', output, cursor, has_more: cursor < text.length, truncated: false, output_lost: false, exit_code: 0});
     };
     const session = createLocalExecutorSession();
     try {
         await session.connect(connection);
-        const result = await session.execute({command: '大量输出'}, {sessionId: 'a'});
-        assert.equal(result.output.length, 100000);
-        assert.equal(result.truncated, true);
-        assert.equal(result.output_lost, true);
-        assert.equal(result.cursor, 200010);
+        const result = await session.execute({command: '输出长文本', max_chars: 20000}, {sessionId: 'a'});
+        assert.equal(session.state.tasks[0].output_lost, true);
+        assert.ok(session.state.tasks[0].output.length <= 100000);
+        assert.equal(result.output_lost, false);
+        assert.equal(result.truncated, false);
+        let all = result.output;
+        let page = result;
+        while (page.has_more) {
+            page = await session.read(id, page.cursor, {sessionId: 'a'}, undefined, 20000);
+            all += page.output;
+        }
+        assert.equal(all, text);
     } finally { session.disconnect({cancel: false}); globalThis.fetch = originalFetch; }
 });
 
-test('场景：执行端输出滚动后丢弃不连续的旧片段，保留后续分页及丢失标记', async () => {
+test('场景：执行端滚动丢失标记原样交付 AI，后续从返回游标读取', async () => {
     const originalFetch = globalThis.fetch;
     let id;
-    const cursors = [];
     globalThis.fetch = async (url, options) => {
         if (url.endsWith('/info')) return response(info);
         if (options.method === 'POST') {
             id = JSON.parse(options.body).id;
             return response({id, status: 'running', output: '旧输出', cursor: 3, has_more: false});
         }
-        cursors.push(Number(new URL(url).searchParams.get('cursor')));
-        return response(cursors.length === 1
+        const cursor = Number(new URL(url).searchParams.get('cursor'));
+        return response(cursor < 300006
             ? {id, status: 'completed', output: '保留片段\n', cursor: 300006, has_more: true, output_lost: true, truncated: true, exit_code: 0}
-            : {id, status: 'completed', output: '末尾中文😀', cursor: 300011, has_more: false, output_lost: false, truncated: true, exit_code: 0});
+            : {id, status: 'completed', output: '末尾中文😀', cursor: 300012, has_more: false, output_lost: false, truncated: true, exit_code: 0});
     };
     const session = createLocalExecutorSession();
     try {
         await session.connect(connection);
         const result = await session.execute({command: '持续输出直到缓冲滚动'}, {sessionId: 'a'});
-        assert.equal(result.output, '保留片段\n末尾中文😀');
+        assert.equal(result.output, '保留片段\n');
         assert.equal(result.output_lost, true);
         assert.equal(result.truncated, true);
-        assert.equal(result.has_more, false);
-        assert.equal(result.cursor, 300011);
-        assert.deepEqual(cursors, [3, 300006]);
+        const tail = await session.read(id, result.cursor, {sessionId: 'a'});
+        assert.equal(tail.output, '末尾中文😀');
+        assert.equal(tail.output_lost, false);
+        assert.equal(tail.has_more, false);
     } finally { session.disconnect({cancel: false}); globalThis.fetch = originalFetch; }
 });
 
@@ -312,11 +334,11 @@ test('场景：任务记录消失时明确表示结果无法确认，不把已�
     try {
         await session.connect(connection);
         const result = await session.execute({command: '只执行一次的检查'}, {sessionId: 'a'});
-        assert.equal(result.status, 'failed');
-        assert.equal(result.exit_code, null);
-        assert.equal(result.output, '已开始检查');
-        assert.match(result.error, /执行结果无法确认/);
-        assert.equal(result.has_more, false);
+        assert.equal(result.status, 'unknown');
+        assert.equal(result.output, '');
+        assert.equal(result.cursor, 0);
+        assert.match(result.summary, /do not repeat/);
+        assert.match(result.error, /Task not found/);
         assert.equal(submissions, 1);
     } finally { session.disconnect({cancel: false}); globalThis.fetch = originalFetch; }
 });

@@ -2,6 +2,13 @@ import { normalizeCommandWhitelist, normalizeMainCommands } from "../command-whi
 
 const TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled']);
 const TASK_ID = /^[a-zA-Z0-9_-]{8,80}$/;
+export const LOCAL_OUTPUT_DEFAULT_MAX_CHARS = 5000;
+export const LOCAL_OUTPUT_MAX_CHARS = 20000;
+
+export function normalizeLocalMaxChars(value = LOCAL_OUTPUT_DEFAULT_MAX_CHARS) {
+    if (!Number.isSafeInteger(value) || value < 1 || value > LOCAL_OUTPUT_MAX_CHARS) throw new Error('max_chars must be an integer between 1 and 20000');
+    return value;
+}
 
 export function isLocalTaskFinished(task) {
     return TERMINAL_STATUSES.has(task?.status);
@@ -76,14 +83,14 @@ export function normalizeLocalWaitSeconds(value = 10) {
     return value;
 }
 
-export function normalizeLocalCommand({command, cwd = '', reason, shell = '', wait_seconds, commands, high_risk} = {}) {
+export function normalizeLocalCommand({command, cwd = '', reason, shell = '', wait_seconds, max_chars, commands, high_risk} = {}) {
     if (typeof command !== 'string' || !command.trim() || command.includes('\0') || new TextEncoder().encode(command).length > 65536) throw new Error('Invalid command');
     if (typeof cwd !== 'string' || cwd.includes('\0') || cwd.length > 4096) throw new Error('Invalid working directory');
     if (typeof reason !== 'string' || !reason.trim() || reason.length > 4096) throw new Error('A concise execution reason is required');
     if (!['', 'sh', 'powershell', 'cmd'].includes(shell)) throw new Error('Unsupported shell');
     if (!Array.isArray(commands) || !commands.length || commands.some((name) => typeof name !== 'string' || !name.trim() || /\s/.test(name.trim()))) throw new Error('commands must list the main commands');
     if (typeof high_risk !== 'boolean') throw new Error('high_risk must be a boolean');
-    return Object.freeze({command, cwd, reason: reason.trim(), shell, commands: Object.freeze(normalizeMainCommands(commands)), high_risk, wait_seconds: normalizeLocalWaitSeconds(wait_seconds)});
+    return Object.freeze({command, cwd, reason: reason.trim(), shell, commands: Object.freeze(normalizeMainCommands(commands)), high_risk, wait_seconds: normalizeLocalWaitSeconds(wait_seconds), max_chars: normalizeLocalMaxChars(max_chars)});
 }
 
 export function buildLocalStartupCommand({platform, assetBase, origin, terminal = 'powershell', token = '', listenAddress = '127.0.0.1', port = 0, publicUrl = ''}) {
@@ -160,10 +167,10 @@ export class LocalExecutorClient {
         return info;
     }
     submit(task, signal) { return this.request('/v1/tasks', {method: 'POST', body: task, signal}); }
-    read(id, cursor = 0, signal) {
+    read(id, cursor = 0, signal, maxChars) {
         this.validateTask(id);
         if (!Number.isSafeInteger(cursor) || cursor < 0) throw new Error('Invalid output cursor');
-        return this.request(`/v1/tasks/${id}?cursor=${cursor}`, {signal});
+        return this.request(`/v1/tasks/${id}?cursor=${cursor}&max_chars=${normalizeLocalMaxChars(maxChars)}`, {signal});
     }
     cancel(id, {signal, keepalive = false} = {}) {
         this.validateTask(id);

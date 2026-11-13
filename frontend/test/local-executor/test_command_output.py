@@ -28,6 +28,36 @@ class ShellOutputTest(unittest.TestCase):
             result += task['output']
         return task, result
 
+    def test_output_page_contract(self):
+        """读取量按完整字符计算，游标续读不重复、不遗漏，也不过滤 XML 外观的原文。"""
+        expected = '中文😀�\n#< CLIXML\n<Objs>原文</Objs>\n'
+        task_id, _ = self.submit(self.python('print(' + repr(expected) + ', end="")'))
+        self.wait_task(task_id)
+        for limit in (1, 7, 20000):
+            cursor, output = 0, ''
+            while True:
+                status, _, page = self.request('GET', '/v1/tasks/%s?cursor=%d&max_chars=%d' % (task_id, cursor, limit))
+                self.assertEqual(status, 200)
+                self.assertLessEqual(len(page['output']), limit)
+                self.assertFalse(page['decoding_loss'])
+                output += page['output']
+                cursor = page['cursor']
+                if not page['has_more']:
+                    break
+            self.assertEqual(output, expected)
+        for value in ('0', '20001', '1.5'):
+            self.assertEqual(self.request('GET', '/v1/tasks/' + task_id + '?max_chars=' + value)[0], 400)
+
+    def test_decoding_loss_is_separate_from_exit_status(self):
+        """非法及末尾不完整字节会标记损失，但保留实际退出码并继续采集。"""
+        data = '前😀�'.encode() + b'\xff' + '后'.encode() + b'\xe2\x82'
+        task_id, _ = self.submit(self.python('import os; os.write(1, ' + repr(data) + ')'))
+        task, output = self.read_all(task_id)
+        self.assertEqual(output, '前😀��后�')
+        self.assertTrue(task['decoding_loss'])
+        self.assertEqual(task['status'], 'completed')
+        self.assertEqual(task['exit_code'], 0)
+
     def test_目录及中文特殊文件路径读取(self):
         (Path(self.directory.name) / '中文 文件 [1]&.txt').write_text('第一行\n第二行\n', encoding='utf-8')
         task_id, _ = self.submit("pwd; cat '中文 文件 [1]&.txt'; test -f '中文 文件 [1]&.txt' && printf 'EXISTS=True\\n'")

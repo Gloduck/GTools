@@ -6,6 +6,10 @@ backend/src/main/resources/META-INF/resources/
 logs/
 .env
 
+# Python 运行和测试生成的字节码缓存。
+__pycache__/
+*.py[cod]
+
 ### IntelliJ IDEA ###
 .idea/*
 *.iws

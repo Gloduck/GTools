@@ -101,6 +101,24 @@ try {
                 Assert-True (-not $task.output.Contains($text)) "输出不包含序列化进度或乱码：$text"
             }
             Write-Output "场景通过：$runtime 对象格式化、后续文本、中文错误及进度处理"
+            # 正文同时包含 here-string、引号和末尾反斜杠，检查 Windows argv 引用未改写命令。
+            $literal = '中文😀 "双引号" \"引用" C:\目录\ & | % $ ` #< CLIXML <Objs>原文</Objs>'
+            $command = '$value = @' + "'" + "`n" + $literal + "`n'@`n" + '$value' + "`nWrite-Output C:\`n"
+            $id = [Guid]::NewGuid().ToString('N')
+            [void](Request-Api POST /v1/tasks @{id=$id; command=$command; shell='powershell'; cwd=$directory})
+            $task = Wait-Task $id
+            Assert-True ($task.output.Replace("`r`n", "`n") -ceq ($literal + "`nC:\`n")) '复杂命令正文和输出原样往返'
+            Assert-True (-not $task.decoding_loss -and $task.exit_code -eq 0) '合法字符不产生解码损失'
+
+            # 同一输出中混合合法替换字符和真正非法字节；损失标记独立于命令退出码。
+            $command = '[byte[]]$bytes = [Text.Encoding]::UTF8.GetBytes("😀�中文") + [byte[]]@(255,226,130); [Console]::OpenStandardOutput().Write($bytes,0,$bytes.Length)'
+            $id = [Guid]::NewGuid().ToString('N')
+            [void](Request-Api POST /v1/tasks @{id=$id; command=$command; shell='powershell'; cwd=$directory})
+            $task = Wait-Task $id
+            Assert-True ($task.output -ceq '😀�中文��' -and $task.decoding_loss -and $task.exit_code -eq 0) '解码损失与退出码分别保留'
+            $page = Request-Api GET ('/v1/tasks/' + $id + '?cursor=0&max_chars=1')
+            Assert-True ($page.output -ceq '😀' -and $page.has_more -and $page.decoding_loss) '分页按完整字符返回并保留损失标记'
+            Write-Output "场景通过：$runtime 命令引用、完整字符分页及解码损失标记"
             # 任务状态遵循原生 PowerShell CLI，不用历史 LASTEXITCODE 推断最后一条命令。
             $nativeFailure = '& '+(Quote-Ps (Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/powershell.exe'))+" -NoLogo -NoProfile -NonInteractive -Command 'exit 9'"
             $resultCases = @(

@@ -146,8 +146,7 @@ test('场景：同步返回指定长度的首段，AI 游标独立于页面轮�
         const cursor = start + output.length;
         return response({id, status: 'failed', output, cursor, has_more: cursor < text.length, exit_code: 7, decoding_loss: true});
     };
-    const completed = [];
-    const session = createLocalExecutorSession({onFinished: (task) => completed.push(task.id)});
+    const session = createLocalExecutorSession();
     try {
         await session.connect(connection);
         const first = await session.execute({command: '运行并返回错误', max_chars: 4}, {sessionId: 'a'});
@@ -160,7 +159,6 @@ test('场景：同步返回指定长度的首段，AI 游标独立于页面轮�
         assert.equal(first.output + tail.output, text);
         assert.equal(tail.has_more, false);
         assert.equal(requests.filter((item) => item.options.method === 'POST').length, 1);
-        assert.deepEqual(completed, [id]);
     } finally { session.disconnect({cancel: false}); globalThis.fetch = originalFetch; }
 });
 

@@ -743,8 +743,6 @@
             </div>
             <p v-if="!localExecutor.state.autoApprove && !localExecutor.state.autoReview">{{ tr('local.templateHint') }}</p>
             <p v-if="!localExecutor.state.autoApprove && !localExecutor.state.autoReview">{{ tr('local.approvalHint') }}</p>
-            <label v-if="localWorkspaceName" class="local-check"><input v-model="localExecutor.state.bindWorkspace" type="checkbox" />{{ tr('local.bindWorkspace') }}: {{ localWorkspaceName }}</label>
-            <p v-if="localExecutor.state.bindWorkspace">{{ tr('local.bindHint') }}</p>
             <section v-if="localActiveTasks.length" class="local-tasks" :aria-label="tr('local.tasks')">
               <h3>{{ tr('local.tasks') }}</h3>
               <article v-for="task in localActiveTasks" :key="task.id" class="local-task">
@@ -1184,7 +1182,7 @@ const previewType = ref("");
 const dirtyRevision = ref(0);
 const previewContentRevision = ref(0);
 const activeView = ref("explorer");
-const localExecutor = createLocalExecutorSession({ onFinished: refreshAfterLocalTask });
+const localExecutor = createLocalExecutorSession();
 const localIsWindows = /Windows/i.test(navigator.userAgent);
 const localDialog = reactive({ visible: false, platform: localIsWindows ? 'windows' : /Android/i.test(navigator.userAgent) ? 'android' : 'unix', terminal: 'powershell', token: '', listenAddress: '127.0.0.1', port: 0, template: localIsWindows ? 'powershell' : 'sh', connection: '', copied: false });
 const localDialogElement = ref(null);
@@ -1193,7 +1191,6 @@ const localActiveTasks = computed(() => localExecutor.state.tasks.filter((task) 
 // 展开和停止请求状态只用于当前连接的界面，不进入设置或 AI 上下文。
 const localTaskUi = ref({});
 watch(() => localExecutor.state.connected, (connected) => { if (!connected) localTaskUi.value = {}; });
-const localWorkspaceName = computed(() => rootKind.value === 'local' ? rootName.value : '');
 const localConnectionStatus = computed(() => localExecutor.state.connecting ? 'connecting' : localExecutor.state.connected ? (localExecutor.state.reachable ? 'connected' : 'unreachable') : 'disconnected');
 const localStartup = computed(() => {
   try {
@@ -1422,8 +1419,6 @@ const dialogIconClass = computed(() => {
   if (dialogState.mode.startsWith("confirm")) return dialogState.tone === "danger" ? "codicon-warning" : "codicon-question";
   return dialogState.tone === "danger" ? "codicon-error" : "codicon-info";
 });
-
-watch(fileSession, () => { localExecutor.state.bindWorkspace = false; });
 
 watch(currentLocale, (locale, previousLocale) => {
   const previousMessages = codeEditorMessages[previousLocale]?.codeEditor || {};
@@ -6802,7 +6797,7 @@ async function runAiToolCall(call, args = {}, session = getActiveAiSession(), si
       case "sftp_download_file": return okTool(await aiToolSftpDownloadFile(args));
       case "sftp_list_tasks": return okTool(aiToolSftpListTasks(args));
       case "sftp_cancel_task": return okTool(aiToolSftpCancelTask(args));
-      case "get_executor_info": return okTool({ summary: "Connected executor", endpoint: localExecutor.state.url, ...localExecutor.state.info, selected_shell: localExecutor.state.shell, whitelist: normalizeCommandWhitelist(localExecutor.state.whitelistText), auto_approve: localExecutor.state.autoApprove, auto_review: localExecutor.state.autoReview, workspace_linked: localExecutor.state.bindWorkspace });
+      case "get_executor_info": return okTool({ summary: "Connected executor", endpoint: localExecutor.state.url, ...localExecutor.state.info, selected_shell: localExecutor.state.shell, whitelist: normalizeCommandWhitelist(localExecutor.state.whitelistText), auto_approve: localExecutor.state.autoApprove, auto_review: localExecutor.state.autoReview });
       case "execute_executor_command": return okTool(await aiToolExecuteLocalCommand(args, signal, session));
       case "read_executor_task": return okTool(await localExecutor.read(args.task_id, args.cursor ?? 0, {sessionId: session.id}, signal, args.max_chars));
       case "cancel_executor_task": return okTool(await localExecutor.cancel(args.task_id, {sessionId: session.id}));
@@ -8879,7 +8874,6 @@ async function aiToolExecuteLocalCommand(input, signal, session) {
   const version = localExecutor.generation;
   const info = localExecutor.state.info;
   if (!info || !localExecutor.state.reachable) throw new Error(tr("local.notConnected"));
-  const workspace = localExecutor.state.bindWorkspace ? captureWorkspace() : null;
   const dirtyHint = dirtyFiles.value.length ? tr("local.dirtyHint", { count: dirtyFiles.value.length }) : "";
   const action = {type: 'executor', target: {endpoint: localExecutor.state.url, platform: info.platform}, command: args.command,
     shell: args.shell, cwd: args.cwd || info.default_cwd, claimed_purpose: args.reason, unsaved_files: dirtyFiles.value.map((file) => file.path)};
@@ -8896,44 +8890,7 @@ async function aiToolExecuteLocalCommand(input, signal, session) {
   }, session, signal);
   throwIfAiAborted(signal);
   if (version !== localExecutor.generation) throw new Error(tr("local.connectionChanged"));
-  return { ...await localExecutor.execute(args, { sessionId: session.id, workspace }, signal), command: args.command, commands: args.commands, high_risk: args.high_risk, reason: args.reason, approval };
-}
-
-async function refreshAfterLocalTask(task, owner) {
-  const workspace = owner?.workspace;
-  if (!workspace?.session || !isCurrentWorkspace(workspace)) return;
-  await refreshTree({ workspace });
-  if (!isCurrentWorkspace(workspace)) return;
-  // 保留未保存内容及原有冲突基线；仅刷新没有修改的文本文件，
-  // 二进制文件由用户重新打开，避免覆盖编辑中的内容。
-  const paths = Array.from(openFiles.values()).filter((file) => !file.dirty && isTextFileState(file)).map((file) => file.path);
-  for (const path of paths) {
-    if (!isCurrentWorkspace(workspace)) return;
-    const file = openFiles.get(path);
-    if (!file || file.dirty) continue;
-    try {
-      const opened = await workspace.session.fileSystem.openRead(path);
-      workspace.session.policy.assertMemoryRead(path, opened.size);
-      const blob = opened.blob || await FileUtils.streamToBlob(opened.stream);
-      workspace.session.policy.assertMemoryRead(path, blob.size);
-      const content = await FileUtils.blobToText(blob);
-      if (!isCurrentWorkspace(workspace) || openFiles.get(path) !== file || file.dirty) continue;
-      workspace.session.forgetBase(path);
-      file.suppressStage = true;
-      try { file.model.setValue(content); } finally { file.suppressStage = false; }
-      file.savedValue = content;
-      file.lastLegalValue = content;
-      file.lastStagedValue = content;
-      file.originalModel?.setValue(content);
-      file.version = opened.version;
-    } catch (error) {
-      if (error?.code === "FILE_NOT_FOUND" && isCurrentWorkspace(workspace) && !file.dirty) removeFileState(path, { removed: true });
-    }
-  }
-  if (isCurrentWorkspace(workspace)) {
-    touchDirtyState();
-    if (dirtyFiles.value.length) setStatus(tr("local.diskChanged"), tr("local.dirtyHint", { count: dirtyFiles.value.length }));
-  }
+  return { ...await localExecutor.execute(args, { sessionId: session.id }, signal), command: args.command, commands: args.commands, high_risk: args.high_risk, reason: args.reason, approval };
 }
 
 async function aiToolExecuteSshCommand({ connection, command, commands, high_risk: highRisk, reason, wait_seconds: waitSeconds } = {}, signal, session = getActiveAiSession()) {

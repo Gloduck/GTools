@@ -685,7 +685,7 @@ test('场景：设置链接明文导出自定义 token，导入后回填并生�
     // 自定义凭据正常导入，连接地址和运行状态不从设置恢复。
     const imported = {token: connection.token, whitelist: ['Get-WinEvent', 'Get-NetTCPConnection'], listenAddress: '::1', port: 0, autoApprove: true, autoReview: false};
     snapshot.localExecutor = {...imported, ...connection,
-        connected: true, shell: 'cmd', bindWorkspace: true, tasks: [{id: '不应保存'}]};
+        connected: true, shell: 'cmd', tasks: [{id: '不应保存'}]};
     const importUrl = '/codeEditor#settings=' + deflateRawSync(Buffer.from(JSON.stringify(snapshot))).toString('base64url');
     await page.goto(importUrl);
     // 只修改 hash 属于同页导航；实际导入在打开页面时检查。

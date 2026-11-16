@@ -10,7 +10,7 @@ test('场景：执行器设置兼容旧白名单，保存自定义凭据和网�
     assert.deepEqual(normalizeLocalExecutorSettings({whitelist: ['pwd', 'pwd']}), {...defaults, whitelist: ['pwd']});
     assert.deepEqual(normalizeLocalExecutorSettings({
         whitelist: 'pwd\ncat\npwd', listenAddress: ' 192.168.1.25 ', port: 8321, autoApprove: true,
-        ...connection, connected: true, shell: 'cmd', bindWorkspace: true, tasks: [{id: '不应导入'}],
+        ...connection, connected: true, shell: 'cmd', tasks: [{id: '不应导入'}],
     }), {token: connection.token, whitelist: ['pwd', 'cat'], listenAddress: '192.168.1.25', port: 8321, autoApprove: true, autoReview: false});
     assert.deepEqual(normalizeLocalExecutorSettings({listenAddress: '0:0:0:0:0:0:0:1', port: 65535}), {...defaults, listenAddress: '::1', port: 65535});
 });

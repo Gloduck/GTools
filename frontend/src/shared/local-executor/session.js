@@ -3,14 +3,13 @@ import {isLocalTaskFinished, LocalExecutorClient, normalizeLocalWaitSeconds, nor
 
 // 仅将非敏感展示状态放入响应式对象；凭据不进入设置、
 // 会话序列化、模型上下文、URL 或组件属性。
-export function createLocalExecutorSession({onFinished = () => {}, heartbeatMs = 5000} = {}) {
-    const state = reactive({connected: false, connecting: false, reachable: false, shell: '', info: null, url: '', error: '', whitelistText: '', autoApprove: false, autoReview: false, bindWorkspace: false, tasks: []});
+export function createLocalExecutorSession({heartbeatMs = 5000} = {}) {
+    const state = reactive({connected: false, connecting: false, reachable: false, shell: '', info: null, url: '', error: '', whitelistText: '', autoApprove: false, autoReview: false, tasks: []});
     let client = null;
     let generation = 0;
     let timer = null;
     let lastHeartbeat = 0;
     const owners = new Map();
-    const finished = new Set();
     const waiting = new Set();
     function apply(task, snapshot) {
         if (snapshot.id !== task.id || !Number.isSafeInteger(snapshot.cursor) || snapshot.cursor < task.cursor) throw new Error('Invalid task response');
@@ -26,10 +25,6 @@ export function createLocalExecutorSession({onFinished = () => {}, heartbeatMs =
         task.output_lost ||= !!snapshot.output_lost || output.length > 100000;
         task.truncated ||= output.length > 100000;
         task.output = output.slice(-100000);
-        if (isLocalTaskFinished(task) && !finished.has(task.id)) {
-            finished.add(task.id);
-            Promise.resolve(onFinished(task, owners.get(task.id))).catch(() => {});
-        }
     }
     async function poll() {
         if (!client) return;
@@ -115,9 +110,8 @@ export function createLocalExecutorSession({onFinished = () => {}, heartbeatMs =
         }
         client = null;
         owners.clear();
-        finished.clear();
         // 清理当前连接的授权状态；重新配对时由页面应用用户保存的配置。
-        Object.assign(state, {connected: false, connecting: false, reachable: false, shell: '', info: null, url: '', error: '', whitelistText: '', autoApprove: false, autoReview: false, bindWorkspace: false, tasks: []});
+        Object.assign(state, {connected: false, connecting: false, reachable: false, shell: '', info: null, url: '', error: '', whitelistText: '', autoApprove: false, autoReview: false, tasks: []});
     }
     return {
         state,

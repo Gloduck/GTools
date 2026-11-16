@@ -92,9 +92,10 @@ function localReviewCall(id, command) {
     })};
 }
 
-test('场景：自动审查要求补证据，同一命令经真实只读核实后通过且不重复执行', async ({page}) => {
-    const command = "printf 'context-review-ok'";
-    await setup(page, command, {}, reviewSettings);
+test('场景：自动审查不附带历史和本轮工具结果，主 AI 仍能读取执行输出', async ({page}) => {
+    const oldCommand = "printf 'prior-tool-output-marker'";
+    const currentCommand = "printf 'current-tool-output-marker'";
+    await setup(page, oldCommand, {}, reviewSettings);
     await page.unroute('https://api.openai.com/v1/responses');
     const reviews = [];
     const mainRequests = [];
@@ -106,30 +107,74 @@ test('场景：自动审查要求补证据，同一命令经真实只读核实�
         const body = route.request().postDataJSON();
         if (body.model === 'test-review') {
             reviews.push(body);
-            const context = JSON.parse(body.input);
-            const verified = context.evidence.some((entry) => entry.name === 'execute_executor_command' && entry.args.command === 'pwd'
-                && entry.result.output.trim() === context.action.cwd);
-            const decision = context.action.command === 'pwd' || verified ? 'approve' : 'needs_evidence';
-            return respondToReviewTest(route, {output_text: JSON.stringify({decision, reason: verified ? '当前目录已核实，允许本次操作' : '先用 pwd 核实执行目录'})});
+            return respondToReviewTest(route, {output_text: JSON.stringify({decision: 'approve', reason: '允许输出文本和查询当前目录'})});
         }
         mainRequests.push(body);
-        const commands = [localReviewCall('before-check', command), localReviewCall('inspect', 'pwd'), localReviewCall('after-check', command)];
-        return respondToReviewTest(route, mainRequests.length <= commands.length
-            ? {output: [commands[mainRequests.length - 1]]} : {output_text: '场景审查完成', output: []});
+        const responses = [
+            {output: [localReviewCall('prior-command', oldCommand)]},
+            {output_text: '上一轮命令完成', output: []},
+            {output: [{type: 'function_call', call_id: 'connection-info', name: 'get_executor_info', arguments: '{}'}, localReviewCall('current-command', currentCommand)]},
+            {output: [localReviewCall('last-command', 'pwd')]},
+            {output_text: '场景审查完成', output: []},
+        ];
+        return respondToReviewTest(route, responses[mainRequests.length - 1]);
     });
     await connect(page);
     await ask(page);
-    await expect(page.locator('.ai-message-assistant')).toContainText('场景审查完成');
+    await expect(page.locator('.ai-message-assistant').last()).toContainText('上一轮命令完成');
+    await page.locator('.ai-chat-form textarea').fill('继续执行两条检查命令');
+    await page.getByRole('button', {name: '发送', exact: true}).click();
+    await expect(page.locator('.ai-message-assistant').last()).toContainText('场景审查完成');
     expect(reviews).toHaveLength(3);
     expect(reviews.every((request) => request.tools === undefined && request.text.format.type === 'json_schema')).toBe(true);
     expect(JSON.parse(reviews[0].input).authorizations).toContainEqual({type: 'user_message', content: '执行一次本机命令'});
-    expect(JSON.parse(reviews[0].input).action.command).toBe(JSON.parse(reviews[2].input).action.command);
-    expect(submitted.map((task) => task.command)).toEqual(['pwd', command]);
-    const firstResult = JSON.parse(mainRequests[1].input.find((item) => item.type === 'function_call_output').output);
-    expect(firstResult).toMatchObject({ok: false, approval: {decision: 'needs_evidence'}});
-    expect(firstResult.summary).toContain('命令尚未执行');
+    const lastContext = JSON.parse(reviews[2].input);
+    expect(Object.keys(lastContext).sort()).toEqual(['action', 'authorizations', 'locale']);
+    expect(lastContext.action.command).toBe('pwd');
+    expect(reviews[2].input).not.toContain('prior-tool-output-marker');
+    expect(reviews[2].input).not.toContain('current-tool-output-marker');
+    expect(submitted.map((task) => task.command)).toEqual([oldCommand, currentCommand, 'pwd']);
+    const priorResult = JSON.parse(mainRequests[1].input.find((item) => item.type === 'function_call_output' && item.call_id === 'prior-command').output);
+    const currentResult = JSON.parse(mainRequests[3].input.find((item) => item.type === 'function_call_output' && item.call_id === 'current-command').output);
+    expect(priorResult.output).toBe('prior-tool-output-marker');
+    expect(currentResult.output).toBe('current-tool-output-marker');
     expect(JSON.stringify(reviews)).not.toContain(connection.token);
     await expect(page.locator('.ai-interaction-dialog')).toHaveCount(0);
+});
+
+test('场景：自动审查信息不足时等待人工确认，确认后只执行一次', async ({page}) => {
+    const command = "printf 'confirmed-review-ok'";
+    const reason = '无法从提供的上下文核实目标状态，请确认本次操作';
+    await setup(page, command, {}, reviewSettings);
+    await page.unroute('https://api.openai.com/v1/responses');
+    const mainRequests = [];
+    const submitted = [];
+    let reviewCalls = 0;
+    page.on('request', (request) => {
+        if (request.method() === 'POST' && request.url() === `${connection.url}/v1/tasks`) submitted.push(request.postDataJSON());
+    });
+    await page.route('https://api.openai.com/v1/responses', async (route) => {
+        const body = route.request().postDataJSON();
+        if (body.model === 'test-review') {
+            reviewCalls += 1;
+            return respondToReviewTest(route, {output_text: JSON.stringify({decision: 'needs_confirmation', reason})});
+        }
+        mainRequests.push(body);
+        return respondToReviewTest(route, mainRequests.length === 1 ? {output: [localReviewCall('manual-confirmation', command)]}
+            : {output_text: '人工确认后执行完成', output: []});
+    });
+    await connect(page);
+    await ask(page);
+    const dialog = page.getByRole('dialog', {name: '执行命令', exact: true});
+    await expect(dialog).toContainText(reason);
+    await expect(dialog).toContainText(command);
+    expect(submitted).toHaveLength(0);
+    await dialog.getByRole('button', {name: '执行命令', exact: true}).click();
+    await expect(page.locator('.ai-message-assistant')).toContainText('人工确认后执行完成');
+    expect(submitted.map((task) => task.command)).toEqual([command]);
+    expect(reviewCalls).toBe(1);
+    const result = JSON.parse(mainRequests[1].input.find((item) => item.type === 'function_call_output').output);
+    expect(result).toMatchObject({ok: true, output: 'confirmed-review-ok', approval: {method: 'user', review: {decision: 'needs_confirmation', reason}}});
 });
 
 for (const scenario of ['needs_confirmation', 'invalid_response', 'api_error']) {

@@ -225,6 +225,7 @@ test('场景：SSH 自动审查按连接启用，白名单低风险命令也经�
     await expect(dialog).toContainText('另一个 SSH');
     expect(reviews).toHaveLength(1);
     const input = JSON.parse(reviews[0].input);
+    expect(Object.keys(input).sort()).toEqual(['action', 'authorizations', 'locale']);
     expect(input.action).toMatchObject({type: 'ssh', command: 'pwd', target: {host: 'example.com', username: 'tester', port: 22}});
     expect(input.authorizations).toContainEqual({type: 'user_message', content: '执行 SSH 测试命令'});
     expect(JSON.stringify(reviews)).not.toContain('secret');
@@ -233,6 +234,32 @@ test('场景：SSH 自动审查按连接启用，白名单低风险命令也经�
     await expect(page.locator('.ai-message-assistant')).toContainText('SSH 自动审查完成');
     const result = JSON.parse(mainRequests[1].input.find((entry) => entry.type === 'function_call_output' && entry.call_id === 'execute-review').output);
     expect(result).toMatchObject({ok: true, connection: {auto_review: true}, approval: {method: 'ai', model: 'test-review', decision: 'approve'}});
+});
+
+test('场景：SSH 自动审查信息不足时展示原因并等待人工确认', async ({page}) => {
+    await installSshMock(page, [{...defaultConnection, autoReview: true}], {reviewModel: 'test-review'});
+    const reason = '无法核实远程环境中的实际影响，请确认执行';
+    const mainRequests = [];
+    await page.route('https://api.openai.com/v1/responses', async (route) => {
+        const body = route.request().postDataJSON();
+        if (body.model === 'test-review') {
+            return respondToAi(route, {output_text: JSON.stringify({decision: 'needs_confirmation', reason})});
+        }
+        mainRequests.push(body);
+        return respondToAi(route, mainRequests.length === 1 ? {output: commandCalls('ssh-test', '-confirmation')}
+            : {output_text: 'SSH 人工确认完成', output: []});
+    });
+    await page.goto('/codeEditor');
+    await sendAiPrompt(page);
+    const dialog = page.getByRole('dialog', {name: '执行', exact: true});
+    await expect(dialog).toContainText(reason);
+    await expect(dialog).toContainText("printf 'SSH 测试'");
+    expect(await page.evaluate(() => window.sshInputs)).toEqual([]);
+    await dialog.getByRole('button', {name: '执行', exact: true}).click();
+    await expect(page.locator('.ai-message-assistant')).toContainText('SSH 人工确认完成');
+    expect(await page.evaluate(() => window.sshInputs)).toEqual([{host: 'example.com', data: "printf 'SSH 测试'\n"}]);
+    const result = JSON.parse(mainRequests[1].input.find((entry) => entry.type === 'function_call_output' && entry.call_id === 'execute-confirmation').output);
+    expect(result).toMatchObject({ok: true, approval: {method: 'user', review: {decision: 'needs_confirmation', reason}}});
 });
 
 test('场景：SSH 自动审查设置互斥、按连接保存并在刷新后恢复', async ({page}) => {

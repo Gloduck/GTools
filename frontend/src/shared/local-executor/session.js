@@ -1,5 +1,8 @@
 import {reactive, watch} from 'vue';
+import {t} from '../../i18n/index.js';
 import {isLocalTaskFinished, LocalExecutorClient, normalizeLocalWaitSeconds, normalizeLocalMaxChars, normalizeLocalLifecycle, LOCAL_OUTPUT_MAX_CHARS} from './client.js';
+
+const tr = (key, params) => t(`codeEditor.${key}`, params);
 
 // 摘要会进入后续对话；仅从本次真实响应摘取游标，不能复用页面轮询位置。
 function formatTaskResult(endpoint, task, snapshot = {}, extra = {}) {
@@ -7,15 +10,16 @@ function formatTaskResult(endpoint, task, snapshot = {}, extra = {}) {
         ...snapshot, ...extra};
     result.status ||= 'unknown';
     if (result.status === 'unknown' && result.error) result.ok = false;
-    const details = [`${result.status}`, `lifecycle=${result.lifecycle}`];
-    if (result.exit_code !== undefined && result.exit_code !== null) details.push(`root exit_code=${result.exit_code}`);
-    if (Number.isSafeInteger(snapshot.cursor)) details.push(`cursor=${snapshot.cursor}`, `has_more=${!!snapshot.has_more}`);
-    if (extra.cancel_requested) details.push('cancellation requested');
-    if (result.error) details.push(`error=${String(result.error).slice(0, 500)}`);
-    result.summary = `Task ${task.id} at ${endpoint}: ${details.join('; ')}.`;
-    if (result.execution_state === 'not_started') result.summary += ' Submission was rejected; the command was not started.';
-    else if (result.output_unavailable || result.status === 'unknown') result.summary += ' State or output is unconfirmed. Read this task id; do not repeat the command automatically.';
-    else if (!isLocalTaskFinished(result)) result.summary += ' Execution may still be running; read this task id for its state and output.';
+    const details = [tr(`ai.summary.state.${result.status}`)];
+    if (result.lifecycle) details.push(tr('ai.summary.localLifecycle', {lifecycle: tr(`local.lifecycle.${result.lifecycle}`)}));
+    if (result.exit_code !== undefined && result.exit_code !== null) details.push(tr('ai.summary.localExit', {code: result.exit_code}));
+    if (Number.isSafeInteger(snapshot.cursor)) details.push(tr('ai.summary.localCursor', {cursor: snapshot.cursor, more: tr(snapshot.has_more ? 'ai.summary.yes' : 'ai.summary.no')}));
+    if (extra.cancel_requested) details.push(tr('ai.summary.localCancelRequested'));
+    if (result.error) details.push(tr('ai.summary.error', {error: String(result.error).slice(0, 500)}));
+    result.summary = tr('ai.summary.localTask', {id: task.id, endpoint, details: details.join('; ')});
+    if (result.execution_state === 'not_started') result.summary += ` ${tr('ai.summary.localNotStarted')}`;
+    else if (result.output_unavailable || result.status === 'unknown') result.summary += ` ${tr('ai.summary.localUnconfirmed')}`;
+    else if (!isLocalTaskFinished(result)) result.summary += ` ${tr('ai.summary.localRunning')}`;
     return result;
 }
 
@@ -68,7 +72,7 @@ export function createLocalExecutorSession({heartbeatMs = 5000} = {}) {
                         task.error = error.message;
                         if (error.status === 404) {
                             task.status = 'unknown';
-                            task.error = '任务记录不存在，执行结果无法确认。请检查终端，不要自动重跑命令。';
+                            task.error = tr('ai.summary.localMissing');
                             task.has_more = false;
                         }
                         // 单个任务读取失败不能阻塞其他任务的取消结果和输出。
@@ -265,7 +269,7 @@ export function createLocalExecutorSession({heartbeatMs = 5000} = {}) {
             const tasks = state.tasks.filter((task) => owner?.sessionId && owners.get(task.id)?.sessionId === owner.sessionId)
                 .map((task) => ({task_id: task.id, endpoint, lifecycle: task.lifecycle, status: task.status, command: task.command,
                     reason: task.reason, shell: task.shell, cwd: task.cwd, exit_code: task.exit_code, created_at: task.created_at}));
-            return {tasks, endpoint, reachable: state.reachable, summary: `Last observed executor tasks at ${endpoint} (reachable=${state.reachable}): ${tasks.map((task) => `${task.task_id} (${task.lifecycle}, ${task.status})`).join(', ') || 'none'}. Read a task id for a current snapshot.`};
+            return {tasks, endpoint, reachable: state.reachable, summary: tr('ai.summary.localTasks', {endpoint, reachable: tr(state.reachable ? 'ai.summary.yes' : 'ai.summary.no'), details: tasks.map((task) => `${task.task_id} (${tr(`local.lifecycle.${task.lifecycle}`)}, ${tr(`ai.summary.state.${task.status}`)})`).join(', ') || tr('ai.summary.none')})};
         },
         dispose() { disconnect(); },
     };

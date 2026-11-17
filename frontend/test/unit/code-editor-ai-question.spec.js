@@ -73,13 +73,14 @@ test('AI ask_user 弹框按会话隔离', async ({page}) => {
     await expect(dialog).toContainText('会话 A 的问题');
 });
 
-async function openQuestion(page) {
+async function openQuestion(page, locale = 'zh-CN') {
     const requests = [];
-    await page.addInitScript(() => {
+    await page.addInitScript((locale) => {
+        localStorage.setItem('ui-locale', locale);
         localStorage.setItem('browser-code-editor-settings', JSON.stringify({
             ai: {apiKey: 'test-key', agentModels: 'test-model', baseUrl: 'https://api.openai.com/v1'},
         }));
-    });
+    }, locale);
     await page.route('https://api.openai.com/v1/responses', async (route) => {
         requests.push(route.request().postDataJSON());
         const response = requests.length === 1
@@ -104,11 +105,11 @@ async function openQuestion(page) {
     });
 
     await page.goto('/codeEditor');
-    await page.getByRole('button', {name: 'AI 助手'}).click();
+    await page.getByRole('button', {name: locale === 'zh-CN' ? 'AI 助手' : 'AI Assistant', exact: true}).click();
     await page.locator('.ai-chat-form textarea').fill('帮我决定实现语言');
-    await page.getByRole('button', {name: '发送'}).click();
+    await page.getByRole('button', {name: locale === 'zh-CN' ? '发送' : 'Send', exact: true}).click();
 
-    const dialog = page.getByRole('dialog', {name: 'AI 需要你的回答'});
+    const dialog = page.getByRole('dialog', {name: locale === 'zh-CN' ? 'AI 需要你的回答' : 'AI needs your answer'});
     await expect(dialog).toBeVisible();
     return {dialog, requests};
 }
@@ -117,4 +118,22 @@ function getToolResult(requests) {
     expect(requests).toHaveLength(2);
     const output = requests[1].input.find((item) => item.type === 'function_call_output');
     return JSON.parse(output.output);
+}
+
+for (const locale of ['zh-CN', 'en-US']) {
+    test(`问题摘要使用 ${locale}，后续普通对话保留用户真实回答`, async ({page}) => {
+        const {dialog, requests} = await openQuestion(page, locale);
+        await dialog.getByRole('textbox').fill('改用 Kotlin');
+        await dialog.getByRole('textbox').press('Enter');
+        await expect(page.locator('.ai-message-assistant')).toContainText('已记录你的选择。');
+        const result = getToolResult(requests);
+        expect(result.summary).toContain(locale === 'zh-CN' ? '用户回答：改用 Kotlin' : 'User answer: 改用 Kotlin');
+        for (const line of result.summary.split('\n')) await expect(page.locator('.ai-message-tool').first()).toContainText(line);
+        await page.locator('.ai-chat-form textarea').fill('接着按刚才的选择继续');
+        await page.getByRole('button', {name: locale === 'zh-CN' ? '发送' : 'Send', exact: true}).click();
+        await expect.poll(() => requests.length).toBe(3);
+        const history = JSON.stringify(requests[2].input);
+        expect(history).toContain('选择实现语言');
+        expect(history).toContain('改用 Kotlin');
+    });
 }

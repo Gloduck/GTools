@@ -36,6 +36,11 @@ async function setup(page) {
             body: `data: ${JSON.stringify({type: 'response.completed', response})}\n\ndata: [DONE]\n\n`,
         });
     });
+    // 无头浏览器可能拒绝持久化授权，确认提示不影响后续真实文件与预览操作。
+    const storageNotice = page.getByRole('dialog', {name: 'Notice', exact: true}).filter({hasText: 'persistent storage'});
+    await page.addLocatorHandler(storageNotice, async () => {
+        await storageNotice.getByRole('button', {name: 'OK', exact: true}).click();
+    });
     await page.goto('/codeEditor');
     await expect(page.locator('.monaco-host:not(.diff-host) .monaco-editor')).toBeAttached({timeout: 15000});
     await page.evaluate(async () => {

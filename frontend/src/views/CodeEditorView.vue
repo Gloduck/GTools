@@ -2351,7 +2351,7 @@ async function submitSftpUpload(config, { localPath, remotePath, useUnsaved = fa
   const task = createSftpTask("upload", config, normalizedLocalPath, normalizedRemotePath, uploadSource.size);
   setStatus(tr("sftp.uploadStarted", { path: normalizedLocalPath }), normalizedRemotePath);
   void runSftpUploadTask(task, config, normalizedLocalPath, normalizedRemotePath, uploadSource);
-  return formatSftpTaskForTool(task, "SFTP upload submitted");
+  return formatSftpTaskForTool(task, "ai.summary.sftpSubmitted");
 }
 
 async function runSftpUploadTask(task, config, normalizedLocalPath, normalizedRemotePath, uploadSource) {
@@ -2360,7 +2360,7 @@ async function runSftpUploadTask(task, config, normalizedLocalPath, normalizedRe
     if (completeSftpTask(task, uploadSource.size)) {
       setStatus(tr("sftp.uploadCompleted", { path: normalizedLocalPath }), normalizedRemotePath);
     }
-    return { summary: `Uploaded ${normalizedLocalPath} to ${normalizedRemotePath}`, local_path: normalizedLocalPath, remote_path: normalizedRemotePath, size: result?.data?.size ?? uploadSource.size, result };
+    return { summary: tr("ai.summary.uploaded", { local: normalizedLocalPath, remote: normalizedRemotePath }), local_path: normalizedLocalPath, remote_path: normalizedRemotePath, size: result?.data?.size ?? uploadSource.size, result };
   } catch (error) {
     failSftpTask(task, error);
     console.error("SFTP upload failed", error);
@@ -2377,7 +2377,7 @@ async function submitSftpDownload(config, { localPath, remotePath } = {}) {
   const task = createSftpTask("download", config, normalizedLocalPath, normalizedRemotePath, 0);
   setStatus(tr("sftp.downloadStarted", { path: normalizedRemotePath }), normalizedLocalPath);
   void runSftpDownloadTask(task, config, normalizedLocalPath, normalizedRemotePath, workspace);
-  return formatSftpTaskForTool(task, "SFTP download submitted");
+  return formatSftpTaskForTool(task, "ai.summary.sftpSubmitted");
 }
 
 async function runSftpDownloadTask(task, config, normalizedLocalPath, normalizedRemotePath, workspace) {
@@ -2386,7 +2386,7 @@ async function runSftpDownloadTask(task, config, normalizedLocalPath, normalized
     if (completeSftpTask(task, size)) {
       setStatus(tr("sftp.downloadCompleted", { path: normalizedRemotePath }), normalizedLocalPath);
     }
-    return { summary: `Downloaded ${normalizedRemotePath} to ${normalizedLocalPath}`, local_path: normalizedLocalPath, remote_path: normalizedRemotePath, size };
+    return { summary: tr("ai.summary.downloaded", { local: normalizedLocalPath, remote: normalizedRemotePath }), local_path: normalizedLocalPath, remote_path: normalizedRemotePath, size };
   } catch (error) {
     failSftpTask(task, error);
     console.error("SFTP download failed", error);
@@ -2452,13 +2452,14 @@ function failSftpTask(task, error) {
   task.cancel = null;
 }
 
-function formatSftpTaskForTool(task, summary = "SFTP task") {
+function formatSftpTaskForTool(task, actionKey) {
   return {
-    summary: `${summary}: ${task.id}`,
+    summary: tr("ai.summary.sftpTask", { action: actionKey ? tr(actionKey) : tr(`sftp.${task.type}`), id: task.id, status: tr(`sftp.status.${task.status}`), connection: `${task.connectionId} (${task.connectionName})`, local: task.localPath, direction: task.type === "upload" ? "→" : "←", remote: task.remotePath, error: task.error ? `; ${tr("ai.summary.error", { error: task.error })}` : "" }),
     task_id: task.id,
     type: task.type,
     status: task.status,
     connection: task.connectionName,
+    connection_id: task.connectionId,
     local_path: task.localPath,
     remote_path: task.remotePath,
     loaded: task.loaded,
@@ -6023,7 +6024,7 @@ async function runAiReadImageToolCall(args, imageInputs) {
     imageInputs.push(image);
     return {
       ok: true,
-      summary: `Attached image ${image.path} to the next model turn`,
+      summary: tr("ai.summary.imageAttached", { path: image.path }),
       path: image.path,
       mime_type: image.mimeType,
       size: image.size,
@@ -6524,7 +6525,7 @@ function aiToolGetToolAvailability({ names } = {}) {
     };
   });
   return {
-    summary: `${tools.filter((tool) => tool.found !== false && tool.available).length}/${tools.length} tool(s) available`,
+    summary: tr("ai.summary.availableTools", { available: tools.filter((tool) => tool.found !== false && tool.available).length, total: tools.length }),
     requirements: ["workspace", "backend", "ssh_exposed", "executor", "preview", "preview_capture"].map((requirement) => {
       const status = getAiRequirementStatus(requirement);
       return { name: requirement, available: status.met, reason: status.met ? "" : status.reason };
@@ -6600,13 +6601,13 @@ function getAiToolDefinitionByName(name) {
 
 function getAiRequirementStatus(requirement) {
   switch (requirement) {
-    case "executor": return { met: localExecutor.state.connected && localExecutor.state.reachable, description: "requires an executor explicitly connected by the user; no application backend is needed", reason: "Connect an executor using the Executor connection button in the AI Agent header" };
-    case "workspace": return { met: isWorkspaceLoaded(), description: "requires an open workspace folder", reason: "No workspace folder is open" };
-    case "backend": return { met: isBackendEnabled(), description: "requires backend server enabled", reason: "Backend server setting is disabled" };
-    case "ssh_exposed": return { met: getAiExposedSshConfigs().length > 0, description: "requires at least one SSH setting exposed to AI", reason: "No SSH setting is exposed to AI" };
-    case "preview": return { met: Boolean(previewPaneVisible.value && previewFrame.value && previewPath.value && previewSession.getState().attached), description: "requires an attached internal preview iframe", reason: "No internal preview iframe is open; use preview_open first" };
-    case "preview_capture": return { met: previewSession.getState().capture.status === "active", description: "requires preview sharing already enabled by the user", reason: "The user must enable sharing in the preview toolbar first. Do not retry alternate capture methods or execute scripts to bypass sharing" };
-    default: return { met: false, description: `requires ${requirement}`, reason: `Unknown requirement: ${requirement}` };
+    case "executor": return { met: localExecutor.state.connected && localExecutor.state.reachable, description: "requires an executor explicitly connected by the user; no application backend is needed", reason: tr("ai.summary.requires.executor") };
+    case "workspace": return { met: isWorkspaceLoaded(), description: "requires an open workspace folder", reason: tr("ai.summary.requires.workspace") };
+    case "backend": return { met: isBackendEnabled(), description: "requires backend server enabled", reason: tr("ai.summary.requires.backend") };
+    case "ssh_exposed": return { met: getAiExposedSshConfigs().length > 0, description: "requires at least one SSH setting exposed to AI", reason: tr("ai.summary.requires.ssh") };
+    case "preview": return { met: Boolean(previewPaneVisible.value && previewFrame.value && previewPath.value && previewSession.getState().attached), description: "requires an attached internal preview iframe", reason: tr("ai.summary.requires.preview") };
+    case "preview_capture": return { met: previewSession.getState().capture.status === "active", description: "requires preview sharing already enabled by the user", reason: tr("ai.summary.requires.capture") };
+    default: return { met: false, description: `requires ${requirement}`, reason: tr("ai.summary.requires.unknown", { requirement }) };
   }
 }
 
@@ -6619,7 +6620,7 @@ async function runAiToolCall(call, args = {}, session = getActiveAiSession(), si
   try {
     throwIfAiAborted(signal);
     const availability = getAiToolAvailability(call.name);
-    if (availability.found && !availability.available) return { ok: false, summary: `Tool ${call.name} is unavailable because ${availability.reason}` };
+    if (availability.found && !availability.available) return { ok: false, summary: tr("ai.summary.toolUnavailable", { tool: call.name, reason: availability.reason }) };
     switch (call.name) {
       case "get_tool_availability": return okTool(aiToolGetToolAvailability(args));
       case "preview_get_state":
@@ -6630,7 +6631,7 @@ async function runAiToolCall(call, args = {}, session = getActiveAiSession(), si
       case "preview_evaluate":
       case "preview_get_errors":
       case "preview_screenshot": {
-        if (call.name === "preview_get_state" && !getAiRequirementStatus("preview").met) return okTool({ summary: "No internal preview bridge is attached", ...getAiPreviewState() });
+        if (call.name === "preview_get_state" && !getAiRequirementStatus("preview").met) return okTool({ summary: tr("ai.summary.previewDetached"), ...getAiPreviewState() });
         const controller = new AbortController();
         const abort = () => controller.abort();
         signal?.addEventListener("abort", abort, { once: true });
@@ -6662,7 +6663,7 @@ async function runAiToolCall(call, args = {}, session = getActiveAiSession(), si
       case "sftp_download_file": return okTool(await aiToolSftpDownloadFile(args));
       case "sftp_list_tasks": return okTool(aiToolSftpListTasks(args));
       case "sftp_cancel_task": return okTool(aiToolSftpCancelTask(args));
-      case "get_executor_info": return okTool({ summary: "Connected executor", endpoint: localExecutor.state.url, ...localExecutor.state.info, selected_shell: localExecutor.state.shell, whitelist: normalizeCommandWhitelist(localExecutor.state.whitelistText), auto_approve: localExecutor.state.autoApprove, auto_review: localExecutor.state.autoReview });
+      case "get_executor_info": return okTool({ summary: tr("ai.summary.executorInfo", { endpoint: localExecutor.state.url, platform: localExecutor.state.info.platform, runtime: localExecutor.state.info.runtime, shell: localExecutor.state.shell || localExecutor.state.info.shell, cwd: localExecutor.state.info.default_cwd }), endpoint: localExecutor.state.url, ...localExecutor.state.info, selected_shell: localExecutor.state.shell, whitelist: normalizeCommandWhitelist(localExecutor.state.whitelistText), auto_approve: localExecutor.state.autoApprove, auto_review: localExecutor.state.autoReview });
       case "execute_executor_command": return okTool(await aiToolExecuteLocalCommand(args, signal, session));
       case "read_executor_task": return okTool(await localExecutor.read(args.task_id, args.cursor ?? 0, {sessionId: session.id}, signal, args.max_chars));
       case "cancel_executor_task": return okTool(await localExecutor.cancel(args.task_id, {sessionId: session.id}));
@@ -6676,7 +6677,7 @@ async function runAiToolCall(call, args = {}, session = getActiveAiSession(), si
       case "delete_file": return okTool(await aiToolDeleteFile(args.path, session));
       case "open_file": return okTool(await aiToolOpenFile(args.path));
       case "show_diff": return okTool(await aiToolShowDiff(args.path));
-      default: return { ok: false, summary: `Unknown tool: ${call.name}` };
+      default: return { ok: false, summary: tr("ai.summary.unknownTool", { tool: call.name }) };
     }
   } catch (error) {
     if (error.name === "AbortError") throw error;
@@ -6701,6 +6702,10 @@ function getAiPreviewState() {
     visible: Boolean(previewPaneVisible.value && state.display.width && state.display.height),
     target_path: previewPath.value, rendering: Boolean(previewSyncSerial),
   };
+}
+
+function formatAiPreviewSummary(state) {
+  return tr("ai.summary.previewDetails", { path: state.path, revision: state.revision, viewport: state.viewport ? `${state.viewport.width}x${state.viewport.height}` : tr("ai.summary.auto") });
 }
 
 function awaitAiPreviewOperation(promise, signal) {
@@ -6790,24 +6795,25 @@ async function aiToolPreview(name, args, session, signal, imageInputs) {
   if (name === "preview_set_viewport") {
     await awaitAiPreviewOperation(previewSession.setViewport(args.reset === true ? null : { width: args.width, height: args.height }), signal);
     assertTarget();
-    return { summary: "Updated internal preview viewport without reloading", ...getAiPreviewState() };
+    const state = getAiPreviewState();
+    return { summary: tr("ai.summary.previewViewport", { details: formatAiPreviewSummary(state) }), ...state };
   }
   const state = previewSession.getState();
   if (!state.ready || state.error || state.path !== previewPath.value || state.suffix !== previewUrlSuffix.value || previewSyncSerial) throw new Error(state.error || "Preview frame is not ready or has pending rendering");
   rendered = { path: state.path, revision: state.revision, viewportRevision: state.viewportRevision, serial: previewRenderSerial, contentRevision: previewContentRevision.value, diskTree: diskTree.value };
   assertTarget();
-  if (["preview_get_state", "preview_open", "preview_refresh"].includes(name)) return { summary: `Preview bridge connected for ${state.path}; use preview_get_state for loading progress`, ...getAiPreviewState() };
+  if (["preview_get_state", "preview_open", "preview_refresh"].includes(name)) return { summary: tr("ai.summary.previewConnected", { details: formatAiPreviewSummary(state) }), ...getAiPreviewState() };
   if (name === "preview_get_errors") {
     const errors = previewSession.getErrors({ limit: args.limit, since: args.since });
     assertTarget();
-    return { summary: `${errors.length} preview error(s)`, path: state.path, revision: state.revision, errors };
+    return { summary: tr("ai.summary.previewErrors", { count: errors.length, details: formatAiPreviewSummary(state) }), path: state.path, revision: state.revision, errors };
   }
   if (name === "preview_inspect" || name === "preview_evaluate") {
     const result = await awaitAiPreviewOperation(name === "preview_inspect"
       ? previewSession.inspect({ selector: args.selector, limit: args.limit, includeStyles: args.include_styles, timeoutMs: args.timeout_ms })
       : previewSession.evaluate({ code: args.code, args: args.args, timeoutMs: args.timeout_ms }), signal);
     assertTarget();
-    return { summary: `${name === "preview_inspect" ? "Inspected" : "Evaluated"} preview ${state.path}`, ...result };
+    return { summary: tr(name === "preview_inspect" ? "ai.summary.previewInspected" : "ai.summary.previewEvaluated", { details: formatAiPreviewSummary(state) }), ...result };
   }
 
   const captureStatus = getAiRequirementStatus("preview_capture");
@@ -6833,7 +6839,7 @@ async function aiToolPreview(name, args, session, signal, imageInputs) {
   assertTarget();
   imageInputs.push({ source: "preview_screenshot", path: image.path, revision: image.revision, stagedPath: destination, mimeType: "image/png", size: image.blob.size, dataUrl });
   return {
-    summary: destination ? `Staged unsaved preview screenshot at ${destination} and attached it to the next model turn; not written to disk` : `Attached preview screenshot of ${image.path} to the next model turn`,
+    summary: tr(destination ? "ai.summary.previewScreenshotStaged" : "ai.summary.previewScreenshot", { path: destination, details: formatAiPreviewSummary(image) }),
     path: image.path, revision: image.revision, width: image.width, height: image.height, capturedAt: image.capturedAt,
     viewport: image.viewport, display: image.display, viewportRevision: image.viewportRevision,
     mime_type: "image/png", size: image.blob.size, image_path: destination || null, dirty: Boolean(destination),
@@ -7444,12 +7450,12 @@ async function aiToolLoadCredentials({ path } = {}) {
   const file = await ensureFileState(normalized, { closed: true });
   if (file.deleted) throw new Error(`File is marked for deletion: ${file.path}`);
   const result = aiCredentialStore.load(file.path, file.model.getValue());
-  return { summary: `Loaded ${result.loaded_keys.length} credential Key(s) from ${file.path}`, ...result };
+  return { summary: tr("ai.summary.credentialsLoaded", { count: result.loaded_keys.length, path: file.path }), ...result };
 }
 
 function aiToolListCredentials() {
   const credentials = aiCredentialStore.list();
-  return { summary: `${credentials.length} credential Key(s) loaded`, credentials };
+  return { summary: tr("ai.summary.credentialsListed", { count: credentials.length }), credentials };
 }
 
 async function aiToolListFiles({ path = "", max_items: maxItems = 200, recursive = false } = {}) {
@@ -7460,14 +7466,14 @@ async function aiToolListFiles({ path = "", max_items: maxItems = 200, recursive
   const limit = Math.max(1, Math.min(Number(maxItems) || 200, 1000));
   const sourceNodes = normalizedPath && nodes[0]?.kind === "directory" ? nodes[0].children || [] : nodes;
   const items = recursive ? flattenTree(nodes, limit) : listTreeLevel(sourceNodes, limit);
-  return { summary: `${items.length} item(s)`, items };
+  return { summary: tr("ai.summary.filesListed", { count: items.length, path: normalizedPath || "." }), items };
 }
 
 async function aiToolRefreshTree({ collapse_all: collapseAll = false } = {}) {
   if (!rootHandle.value) throw new Error("No workspace loaded");
   await refreshTree({ collapseAll: Boolean(collapseAll) });
   const count = countTreeNodes(diskTree.value);
-  return { summary: `Refreshed ${count} item(s)`, count };
+  return { summary: tr("ai.summary.filesRefreshed", { count }), count };
 }
 
 async function aiToolReadFile({ path, offset, limit, max_chars: maxChars } = {}) {
@@ -7475,7 +7481,18 @@ async function aiToolReadFile({ path, offset, limit, max_chars: maxChars } = {})
   const content = file.model.getValue();
   const maxLength = clampToolCharLimit(maxChars);
   const partial = getLineBasedContentSlice(content, { offset, limit, maxChars: maxLength });
-  return { path: file.path, language: file.language, dirty: file.dirty, deleted: Boolean(file.deleted), ...partial };
+  const result = { path: file.path, language: file.language, dirty: file.dirty, deleted: Boolean(file.deleted), ...partial };
+  return { summary: tr("ai.summary.readFile", { details: formatAiReadFileSummary(result) }), ...result };
+}
+
+function formatAiFileSummaryFlags(file) {
+  const flags = [file.truncated && tr("ai.summary.partial"), file.dirty && tr("status.unsaved"), file.deleted && tr("ai.summary.pendingDelete")].filter(Boolean);
+  return flags.length ? `; ${flags.join("; ")}` : "";
+}
+
+function formatAiReadFileSummary(file) {
+  // 行范围可能再次被字符上限截断，只记录起始行，避免声称已读到范围末尾。
+  return tr("ai.summary.readDetails", { path: file.path, line: file.start_line ?? 1, returned: file.returned_chars, total: file.content_chars, flags: formatAiFileSummaryFlags(file) });
 }
 
 async function aiToolReadImage(path) {
@@ -7571,7 +7588,7 @@ async function stageGeneratedImage({ path, blob, inputPath = null, session, sign
     workspace,
   }));
   assertCurrentWorkspace(workspace);
-  const summary = tr(inputPath ? "ai.imageEdited" : "ai.imageGenerated", { path: file.path });
+  const summary = tr(inputPath ? "ai.imageEdited" : "ai.imageGenerated", { path: file.path }) + (file.dirty ? ` (${tr("status.unsaved")})` : "");
   setStatus(summary, tr("status.unsaved"));
   return {
     summary,
@@ -7758,7 +7775,7 @@ async function aiToolReadFiles({ paths, offset, limit, max_chars_per_file: maxCh
     const content = file.model.getValue();
     files.push({ path: file.path, language: file.language, dirty: file.dirty, deleted: Boolean(file.deleted), ...getLineBasedContentSlice(content, { offset, limit, maxChars }) });
   }
-  return { summary: `Read ${files.length} file(s)`, files };
+  return { summary: tr("ai.summary.readFiles", { count: files.length, details: files.map(formatAiReadFileSummary).join("; ") }), files };
 }
 
 function getLineBasedContentSlice(content, { offset, limit, maxChars }) {
@@ -7809,7 +7826,7 @@ async function aiToolSearchText({ query, path = "", max_results: maxResults = 30
       // Ignore unreadable files during broad searches.
     }
   }
-  return { summary: `${results.length} match(es)`, results };
+  return { summary: tr("ai.summary.search", { count: results.length, path: path || ".", query }), results };
 }
 
 async function aiToolRunJavaScript({ reason, code, entry_file: entryFile, format, resolve_from: resolveFrom, cwd, input = {}, env, args, dependencies, registry_url: registryUrl, credentials, proxy_options: proxyOptions = {}, input_files: inputFiles, output_files: outputFiles, output_directories: outputDirectories, timeout_ms: timeoutMs } = {}, signal, session = getActiveAiSession()) {
@@ -7976,10 +7993,10 @@ async function aiToolRunJavaScript({ reason, code, entry_file: entryFile, format
     const stagedFiles = workspace
       ? await stageAiJavaScriptOutputs(validatedOutputs, workspace, session, signal)
       : [];
-    const filesSummary = stagedFiles.length ? tr("ai.javascriptProducedFiles", { count: stagedFiles.length }) : "";
+    const filesSummary = stagedFiles.length ? `${tr("ai.javascriptProducedFiles", { count: stagedFiles.length })}: ${stagedFiles.map((file) => `${file.path}${file.dirty ? ` (${tr("status.unsaved")})` : ""}`).join(", ")}` : "";
     return {
       ok: true,
-      summary: appendAiToolPurpose(tr("ai.javascriptCompleted", { elapsed: data.elapsedMs || 0, files: filesSummary }), normalizedReason),
+      summary: appendAiToolPurpose(tr("ai.javascriptCompleted", { elapsed: data.elapsedMs || 0, exitCode: data.exitCode || 0, files: filesSummary }), normalizedReason),
       reason: normalizedReason,
       result: data.result,
       exit_code: data.exitCode || 0,
@@ -8505,7 +8522,7 @@ async function aiToolRequestProxy({ url, method = "GET", headers = {}, body, cre
 
     const result = {
       ok: response.ok,
-      summary: `${requestMethod} ${String(url)} -> ${response.status} (${clipped.returned_chars}/${clipped.text_chars} chars${filtered ? `, filtered from ${text.length} chars` : ""})`,
+      summary: tr("ai.summary.proxy", { method: requestMethod, url: String(url), status: response.status, returned: clipped.returned_chars, total: clipped.text_chars, filter: filtered ? tr("ai.summary.filtered", { count: text.length }) : "" }),
       url: String(url),
       status: response.status,
       status_text: response.statusText,
@@ -8536,14 +8553,15 @@ function clampToolCharLimit(value, defaultValue = AI_TOOL_OUTPUT_DEFAULT_MAX_CHA
 
 function aiToolGetSshConnections() {
   const connections = getAiExposedSshConfigs().map((connection) => formatAiSshConnection(connection, sshSessions.get(connection.id)));
-  return { summary: `${connections.length} SSH connection(s) exposed to AI`, connections };
+  return { summary: tr("ai.summary.sshConnections", { count: connections.length, details: connections.map((connection) => `${formatAiSshTarget(connection)} (${tr(connection.active ? "ai.summary.sshConnected" : "ai.summary.sshDisconnected")})`).join("; ") || tr("ai.summary.none") }), connections };
 }
 
 async function aiToolOpenSshConnection(identifier) {
   const config = getAiExposedSshConfig(identifier);
   const session = await connectSshConfig(config);
   await waitForSshSessionConnected(session);
-  return { summary: `Opened SSH connection ${config.name || config.host}`, connection: formatAiSshConnection(config, session) };
+  const connection = formatAiSshConnection(config, session);
+  return { summary: tr("ai.summary.sshOpened", { target: formatAiSshTarget(connection) }), connection };
 }
 
 async function waitForSshSessionConnected(session, timeoutMs = SSH_CONNECT_TIMEOUT_MS) {
@@ -8562,20 +8580,24 @@ function aiToolActivateSshTerminal(identifier) {
   const config = getAiExposedSshConfig(identifier);
   const session = getActiveSshSessionForConfig(config);
   activateSshTerminal(config.id);
-  return { summary: `Activated SSH terminal ${config.name || config.host}`, connection: formatAiSshConnection(config, session) };
+  const connection = formatAiSshConnection(config, session);
+  return { summary: tr("ai.summary.sshActivated", { target: formatAiSshTarget(connection) }), connection };
 }
 
 function aiToolCloseSshConnection(identifier) {
   const config = getAiExposedSshConfig(identifier);
+  const connection = formatAiSshConnection(config, sshSessions.get(config.id));
   disconnectSshConfig(config.id);
-  return { summary: `Closed SSH connection ${config.name || config.host}`, connection: formatAiSshConnection(config, sshSessions.get(config.id)) };
+  connection.active = false;
+  return { summary: tr("ai.summary.sshClosed", { target: formatAiSshTarget(connection) }), connection };
 }
 
 function aiToolReadSshOutput({ connection, max_chars: maxChars } = {}) {
   const config = getAiExposedSshConfig(connection);
   const session = getActiveSshSessionForConfig(config);
   const clipped = clipAiToolTailText(sanitizeAiTerminalOutput(session.output), maxChars);
-  return { summary: `Read ${clipped.returned_chars}/${clipped.text_chars} SSH output chars from ${config.name || config.host}`, connection: formatAiSshConnection(config, session), output_chars: clipped.text_chars, returned_chars: clipped.returned_chars, truncated: clipped.truncated, output: clipped.text };
+  const target = formatAiSshConnection(config, session);
+  return { summary: tr("ai.summary.sshOutput", { target: formatAiSshTarget(target), returned: clipped.returned_chars, total: clipped.text_chars, flags: clipped.truncated ? `; ${tr("ai.summary.partial")}` : "" }), connection: target, output_chars: clipped.text_chars, returned_chars: clipped.returned_chars, truncated: clipped.truncated, output: clipped.text };
 }
 
 async function aiToolAskUser({ question, options } = {}, signal, session = getActiveAiSession()) {
@@ -8586,11 +8608,11 @@ async function aiToolAskUser({ question, options } = {}, signal, session = getAc
   if (!normalizedOptions.length) throw new Error("options must contain at least one labeled option");
   const result = await showAiUserQuestion(session, normalizedQuestion, normalizedOptions, signal);
   if (result === null) {
-    if (signal?.aborted) return { ok: false, interrupted: true, execution_state: "finished", question: normalizedQuestion, summary: tr("ai.toolInterrupted") };
-    return { summary: tr("ai.askUser.cancelled"), question: normalizedQuestion, cancelled: true };
+    if (signal?.aborted) return { ok: false, interrupted: true, execution_state: "finished", question: normalizedQuestion, summary: `${tr("ai.toolInterrupted")}: ${normalizedQuestion}` };
+    return { summary: `${tr("ai.askUser.cancelled")}: ${normalizedQuestion}`, question: normalizedQuestion, cancelled: true };
   }
   return {
-    summary: tr("ai.askUser.answered"),
+    summary: tr("ai.askUser.answerSummary", { question: normalizedQuestion, answer: result.value + (result.selectedOption?.description ? ` (${result.selectedOption.description})` : "") }),
     question: normalizedQuestion,
     answer: result.value,
     selected_option: result.selectedOption,
@@ -8624,16 +8646,16 @@ function aiToolSftpListTasks({ status } = {}) {
   const normalizedStatus = String(status || "").trim().toLowerCase();
   const tasks = sftpTasks
     .filter((task) => !normalizedStatus || task.status === normalizedStatus)
-    .map((task) => formatSftpTaskForTool(task, `${task.type} ${task.status}`));
-  return { summary: `${tasks.length} SFTP task(s)`, tasks };
+    .map((task) => formatSftpTaskForTool(task));
+  return { summary: tr("ai.summary.sftpTasks", { count: tasks.length, details: tasks.map((task) => task.summary).join("; ") || tr("ai.summary.none") }), tasks };
 }
 
 function aiToolSftpCancelTask({ task_id: taskId } = {}) {
   const task = sftpTasks.find((item) => item.id === String(taskId || ""));
   if (!task) throw new Error(`SFTP task not found: ${taskId}`);
-  if (!canCancelSftpTask(task)) return { ...formatSftpTaskForTool(task, "SFTP task is not running"), cancelled: false };
+  if (!canCancelSftpTask(task)) return { ...formatSftpTaskForTool(task, "ai.summary.sftpNotRunning"), cancelled: false };
   const cancelled = cancelSftpTask(task.id);
-  return { ...formatSftpTaskForTool(task, cancelled ? "SFTP task cancelled" : "SFTP task was not cancelled"), cancelled };
+  return { ...formatSftpTaskForTool(task, cancelled ? "ai.summary.sftpCancelled" : "ai.summary.sftpNotCancelled"), cancelled };
 }
 
 function toggleLocalTask(id) {
@@ -8816,8 +8838,9 @@ async function aiToolExecuteSshCommand({ connection, command, commands, high_ris
     // SSH 只有交互终端输入，没有本命令的终止确认；保留原主机和已捕获输出。
     const clipped = clipAiToolTailText(sanitizeAiTerminalOutput(capture.output));
     return { ok: !interrupted, interrupted, execution_state: "unknown", remote_may_be_running: true,
-      summary: interrupted ? tr("ssh.toolInterruptedCommand", { command: normalizedCommand, host: executedConnection.host })
-        : tr("ssh.toolExecutedCommand", { command: normalizedCommand, reason: normalizedReason }),
+      summary: (interrupted ? tr("ssh.toolInterruptedCommand", { command: normalizedCommand, host: executedConnection.host })
+        : tr("ssh.toolExecutedCommand", { command: normalizedCommand, reason: normalizedReason }))
+        + `\n${tr("ai.summary.sshUnconfirmed", { target: formatAiSshTarget(executedConnection), returned: clipped.returned_chars, total: clipped.text_chars, flags: clipped.truncated ? `; ${tr("ai.summary.partial")}` : "" })}`,
       connection: executedConnection, command: normalizedCommand, commands: mainCommands, high_risk: highRisk, reason: normalizedReason,
       wait_seconds: normalizedWaitSeconds, output_chars: clipped.text_chars, returned_chars: clipped.returned_chars, truncated: clipped.truncated, output: clipped.text, approval };
   } finally {
@@ -8841,6 +8864,10 @@ function getActiveSshSessionForConfig(config) {
 function formatAiSshConnection(config, session) {
   const target = session?.connected ? session : config;
   return { id: config.id, name: session?.connected ? session.title : config.name, host: target.host, port: target.port || 22, username: target.username, active: Boolean(session?.connected), whitelist: config.whitelist || [], auto_approve: config.autoApprove === true, auto_review: config.autoReview === true };
+}
+
+function formatAiSshTarget(connection) {
+  return `${connection.id} (${connection.name || connection.host}) ${connection.username}@${connection.host}:${connection.port}`;
 }
 
 async function authorizeAiSshCommand(config, sshSession, command, mainCommands, highRisk, reason, session, signal) {
@@ -8885,11 +8912,12 @@ function delay(ms, signal) {
 
 function aiToolGetCurrentFile() {
   const file = activeFile.value;
-  if (!file) return { summary: "No active file" };
+  if (!file) return { summary: tr("ai.summary.noActiveFile") };
   const selection = editor.value?.getSelection();
   const selectedText = selection && isTextFileState(file) ? file.model.getValueInRange(selection) : "";
   const clipped = clipAiToolText(selectedText);
-  return { path: file.path, language: file.language, file_type: file.fileType, dirty: file.dirty, deleted: Boolean(file.deleted), position: isTextFileState(file) ? editor.value?.getPosition() : null, selection_chars: clipped.text_chars, returned_chars: clipped.returned_chars, truncated: clipped.truncated, selection: clipped.text };
+  const position = isTextFileState(file) ? editor.value?.getPosition() : null;
+  return { summary: tr("ai.summary.currentFile", { path: file.path, cursor: position ? `; ${tr("ai.summary.cursor", { line: position.lineNumber, column: position.column })}` : "", returned: clipped.returned_chars, total: clipped.text_chars, flags: formatAiFileSummaryFlags({ ...file, truncated: clipped.truncated }) }), path: file.path, language: file.language, file_type: file.fileType, dirty: file.dirty, deleted: Boolean(file.deleted), position, selection_chars: clipped.text_chars, returned_chars: clipped.returned_chars, truncated: clipped.truncated, selection: clipped.text };
 }
 
 async function aiToolReplaceInFile({ path, old_text: oldText, new_text: newText }, session = getActiveAiSession()) {
@@ -8903,7 +8931,7 @@ async function aiToolReplaceInFile({ path, old_text: oldText, new_text: newText 
   markAiTouchedFile(file, session);
   updateDirtyState(file);
   setStatus(tr("status.aiChangedFile", { path: file.path }), tr("status.unsaved"));
-  return { summary: `Changed ${file.path}`, path: file.path, dirty: file.dirty };
+  return { summary: tr("ai.summary.fileChanged", { path: file.path, state: tr(file.dirty ? "status.unsaved" : "ai.summary.noUnsaved") }), path: file.path, dirty: file.dirty };
 }
 
 async function aiToolReplaceInFiles({ edits } = {}, session = getActiveAiSession()) {
@@ -8926,7 +8954,7 @@ async function aiToolReplaceInFiles({ edits } = {}, session = getActiveAiSession
   const applied = results.filter((result) => result.ok).length;
   const failed = results.length - applied;
   const failedEditNumbers = results.filter((result) => !result.ok).map((result) => result.edit_number);
-  return { summary: `Applied ${applied}/${results.length} edit(s)${failed ? `; failed edit(s): ${failedEditNumbers.join(", ")}` : ""}`, applied, failed, failed_edit_numbers: failedEditNumbers, results };
+  return { summary: tr("ai.summary.editedFiles", { applied, total: results.length, details: results.map((result) => tr(result.ok ? "ai.summary.editApplied" : "ai.summary.editFailed", { number: result.edit_number, path: result.path ?? tr("ai.summary.missingPath"), state: tr(result.dirty ? "status.unsaved" : "ai.summary.noUnsaved"), error: result.error })).join("; ") }), applied, failed, failed_edit_numbers: failedEditNumbers, results };
 }
 
 async function aiToolWriteFile({ path, content }, session = getActiveAiSession()) {
@@ -8937,7 +8965,7 @@ async function aiToolWriteFile({ path, content }, session = getActiveAiSession()
   file.deleted = false;
   await replaceTextFileContent(file, String(content ?? ""));
   setStatus(tr("status.aiChangedFile", { path: file.path }), tr("status.unsaved"));
-  return { summary: `${created ? "Created" : "Changed"} ${file.path}`, path: file.path, dirty: file.dirty, created };
+  return { summary: tr(created ? "ai.summary.fileCreated" : "ai.summary.fileChanged", { path: file.path, state: tr(file.dirty ? "status.unsaved" : "ai.summary.noUnsaved") }), path: file.path, dirty: file.dirty, created };
 }
 
 async function aiToolDeleteFile(path, session = getActiveAiSession()) {
@@ -8946,23 +8974,23 @@ async function aiToolDeleteFile(path, session = getActiveAiSession()) {
   const deletedFile = await markFileDeleted(normalized, { closed: true });
   if (wasUnsavedNew) {
     setStatus(tr("status.deleted", { path: normalized }), tr("status.unsaved"));
-    return { summary: `Removed unsaved new file ${normalized}`, path: normalized, deleted: true, pending: false };
+    return { summary: tr("ai.summary.fileRemoved", { path: normalized }), path: normalized, deleted: true, pending: false };
   }
   markAiTouchedFile(deletedFile, session);
-  return { summary: `Marked ${deletedFile.path} for deletion`, path: deletedFile.path, deleted: true, pending: true, dirty: deletedFile.dirty };
+  return { summary: tr("ai.summary.filePendingDelete", { path: deletedFile.path }), path: deletedFile.path, deleted: true, pending: true, dirty: deletedFile.dirty };
 }
 
 async function aiToolOpenFile(path) {
   const file = await ensureAnyFileState(path, { closed: false });
   file.closed = false;
   activateFile(file.path);
-  return { summary: `Opened ${file.path}`, path: file.path };
+  return { summary: tr("ai.summary.fileOpened", { path: file.path }), path: file.path };
 }
 
 async function aiToolShowDiff(path) {
   const file = await ensureAnyFileState(path, { closed: true });
   activateDiff(file.path);
-  return { summary: `Showing diff for ${file.path}`, path: file.path, file_type: file.fileType, dirty: file.dirty };
+  return { summary: tr("ai.summary.fileDiff", { path: file.path }), path: file.path, file_type: file.fileType, dirty: file.dirty };
 }
 
 async function markFileDeleted(path, options = {}, workspace = captureWorkspace()) {

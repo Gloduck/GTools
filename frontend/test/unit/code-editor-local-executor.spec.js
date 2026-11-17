@@ -926,7 +926,7 @@ test('session 任务摘要跨新一轮保留真实游标，列表仅返回元数
         } else if (turns.length === 3) {
             const history = JSON.stringify(body.input);
             expect(history).toContain(first.task_id);
-            expect(history).toContain(`cursor=${first.cursor}`);
+            expect(history).toContain(`游标=${first.cursor}`);
             expect(history).toContain(connection.url);
             result = {output: [{type: 'function_call', call_id: 'list-session', name: 'list_executor_tasks', arguments: '{}'}]};
         } else if (turns.length === 4) {
@@ -939,7 +939,7 @@ test('session 任务摘要跨新一轮保留真实游标，列表仅返回元数
         } else if (turns.length === 5) {
             const tail = toolResult('read-session');
             expect(first.output + tail.output).toBe('ABCDEFGHIJK');
-            expect(tail.summary).toContain(`cursor=${tail.cursor}`);
+            expect(tail.summary).toContain(`游标=${tail.cursor}`);
             result = {output: [{type: 'function_call', call_id: 'cancel-session', name: 'cancel_executor_task', arguments: JSON.stringify({task_id: first.task_id})}]};
         } else {
             const stopped = toolResult('cancel-session');

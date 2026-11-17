@@ -1,6 +1,9 @@
 import test from 'node:test';
+import {setLocale} from '../../src/i18n/index.js';
 import assert from 'node:assert/strict';
 import {createLocalExecutorSession} from '../../src/shared/local-executor/session.js';
+
+setLocale('en-US');
 
 const connection = {url: 'http://127.0.0.1:32100', token: 'a'.repeat(43)};
 const info = {protocol_version: 2, runtime: 'python', platform: 'linux', shell: 'sh', default_cwd: '/tmp/project'};
@@ -497,6 +500,18 @@ test('场景：任务列表只含当前连接 owner 元数据，summary 游标�
         const tail = await session.read(first.task_id, first.cursor, {sessionId: 'a'}, undefined, 100);
         assert.equal(first.output + tail.output, text);
         assert.match(tail.summary, new RegExp(`cursor=${text.length}(?:;|\\b)`));
+        // 切换界面语言只改变新摘要，任务状态和读取游标仍取真实响应。
+        setLocale('zh-CN');
+        try {
+            const localized = await session.read(first.task_id, first.cursor, {sessionId: 'a'}, undefined, 100);
+            assert.equal(localized.cursor, tail.cursor);
+            assert.equal(localized.status, tail.status);
+            assert.match(localized.summary, /已完成/);
+            assert.ok(localized.summary.includes(`游标=${tail.cursor}`));
+            assert.ok(localized.summary.includes(first.task_id));
+            assert.match(session.list({sessionId: 'a'}).summary, /最近观测到的任务/);
+            assert.doesNotMatch(localized.summary, /codeEditor\./);
+        } finally { setLocale('en-US'); }
         session.disconnect({cancel: false});
         await session.connect({...connection, url: 'http://127.0.0.1:32101'});
         assert.deepEqual((await session.list({sessionId: 'a'})).tasks, []);

@@ -205,7 +205,11 @@ test('场景：用户停止正在同步等待的调用时请求取消，已经�
         await session.connect(connection);
         const running = session.execute({command: '长任务'}, {sessionId: 'a'}, controller.signal);
         timer = setTimeout(() => controller.abort(new Error('用户停止')), 20);
-        await assert.rejects(running, /用户停止/);
+        const result = await running;
+        assert.equal(result.task_id, id);
+        assert.equal(result.status, 'running');
+        assert.equal(result.interrupted, true);
+        assert.equal(result.cancel_requested, true);
         assert.equal(requests.filter((url) => url.endsWith('/cancel')).length, 1);
         await assert.rejects(session.execute({command: '不应提交'}, {sessionId: 'a'}, controller.signal), /用户停止/);
         assert.equal(requests.filter((url) => url.endsWith('/tasks')).length, 1);
@@ -364,4 +368,37 @@ test('场景：连接之间的白名单和免审批设置相互独立，切换�
         assert.equal(first.state.autoApprove, false);
         assert.equal(second.state.whitelistText, 'Get-Location');
     } finally { first.dispose(); second.dispose(); globalThis.fetch = originalFetch; }
+});
+
+
+test('场景：打断后取消和快照均失败时保留任务编号并明确未知，不能伪造取消成功', async () => {
+    const originalFetch = globalThis.fetch;
+    const requests = [];
+    let id;
+    const controller = new AbortController();
+    globalThis.fetch = async (url, options) => {
+        requests.push(url);
+        if (url.endsWith('/info')) return response(info);
+        if (url.endsWith('/tasks')) {
+            id = JSON.parse(options.body).id;
+            return response({id, status: 'running', output: '', cursor: 0, has_more: false});
+        }
+        if (controller.signal.aborted) throw new TypeError('执行端连接已断开');
+        return response({id, status: 'running', output: '', cursor: 0, has_more: false});
+    };
+    const session = createLocalExecutorSession();
+    let timer;
+    try {
+        await session.connect(connection);
+        const running = session.execute({command: '长任务'}, {sessionId: 'a'}, controller.signal);
+        timer = setTimeout(() => controller.abort(new Error('新消息打断')), 20);
+        const result = await running;
+        assert.equal(result.task_id, id);
+        assert.equal(result.status, 'unknown');
+        assert.equal(result.interrupted, true);
+        assert.equal(result.output_unavailable, true);
+        assert.equal(result.output, '');
+        assert.equal(requests.filter((url) => url.endsWith('/tasks')).length, 1);
+        assert.equal(requests.filter((url) => url.endsWith('/cancel')).length, 1);
+    } finally { clearTimeout(timer); session.disconnect({cancel: false}); globalThis.fetch = originalFetch; }
 });

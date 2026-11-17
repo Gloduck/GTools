@@ -184,7 +184,7 @@
             <article v-for="message in aiMessages" :key="message.id" class="ai-message" :class="`ai-message-${message.role}`">
               <template v-if="message.role === 'tool' && message.tool">
                 <button type="button" class="ai-tool-toggle" @click="message.expanded = !message.expanded">
-                  <span>{{ tr('ai.role.tool') }} · {{ message.tool.name }} · {{ message.tool.pending ? tr('ai.toolRunning') : (message.tool.cancelled ? tr('ai.toolCancelled') : (message.tool.ok ? tr('ai.toolSuccess') : tr('ai.toolError'))) }} · {{ message.tool.batchIndex }}/{{ message.tool.batchSize }}</span>
+                  <span>{{ tr('ai.role.tool') }} · {{ message.tool.name }} · {{ message.tool.pending ? tr('ai.toolRunning') : (message.tool.interrupted ? tr('ai.toolInterrupted') : message.tool.cancelled ? tr('ai.toolCancelled') : (message.tool.ok ? tr('ai.toolSuccess') : tr('ai.toolError'))) }} · {{ message.tool.batchIndex }}/{{ message.tool.batchSize }}</span>
                   <span class="codicon" :class="message.tool.pending ? 'codicon-loading codicon-modifier-spin' : (message.tool.cancelled ? 'codicon-circle-slash' : (message.expanded ? 'codicon-chevron-down' : 'codicon-chevron-right'))" aria-hidden="true"></span>
                 </button>
                 <div class="ai-message-content" v-html="renderMarkdown(message.content)"></div>
@@ -199,7 +199,7 @@
                   </div>
                   <div>
                     <strong>{{ tr('ai.toolResult') }}</strong>
-                    <pre>{{ message.tool.pending ? tr('ai.toolRunning') : (message.tool.cancelled ? tr('ai.toolCancelled') : formatJsonForDisplay(message.tool.result)) }}</pre>
+                    <pre>{{ message.tool.pending ? tr('ai.toolRunning') : formatJsonForDisplay(message.tool.result) }}</pre>
                   </div>
                 </div>
               </template>
@@ -213,24 +213,48 @@
                 <a v-for="(source, index) in message.sources" :key="source.url" :href="source.url" :title="source.url" target="_blank" rel="noopener noreferrer">[{{ index + 1 }}] {{ source.title }}</a>
               </div>
             </article>
+            <div v-if="activeAiSession?.interactionDialog?.visible" class="ai-interaction-dialog-container" role="presentation">
+              <form class="ai-interaction-dialog" role="dialog" aria-modal="false" aria-labelledby="ai-interaction-dialog-title" @submit.prevent="submitAiInteraction(activeAiSession)" @keydown.esc.prevent.stop="cancelAiInteraction(activeAiSession)" @click.stop>
+                <div class="editor-dialog-header">
+                  <span class="codicon" :class="activeAiSession.interactionDialog.mode === 'confirm' ? 'codicon-warning' : 'codicon-question'" aria-hidden="true"></span>
+                  <h2 id="ai-interaction-dialog-title">{{ activeAiSession.interactionDialog.title }}</h2>
+                </div>
+                <p class="editor-dialog-message">{{ activeAiSession.interactionDialog.message }}</p>
+                <div v-if="activeAiSession.interactionDialog.mode === 'question'" class="editor-dialog-question-options">
+                  <button v-for="option in activeAiSession.interactionDialog.options" :key="option.label" type="button" class="editor-dialog-choice" :class="{ selected: activeAiSession.interactionDialog.selectedOption?.label === option.label }" @click="selectAiInteractionOption(activeAiSession, option)">
+                    <strong>{{ option.label }}</strong>
+                    <small v-if="option.description">{{ option.description }}</small>
+                  </button>
+                </div>
+                <label v-if="activeAiSession.interactionDialog.mode === 'question'" class="editor-dialog-input-row">
+                  <span>{{ tr('ai.askUser.customAnswerLabel') }}</span>
+                  <textarea ref="aiInteractionInput" v-model="activeAiSession.interactionDialog.customValue" rows="3" :placeholder="tr('ai.askUser.customAnswerPlaceholder')" autocomplete="off" spellcheck="false" @input="activeAiSession.interactionDialog.selectedOption = null" @keydown="handleAiQuestionKeydown($event, activeAiSession)"></textarea>
+                </label>
+                <div class="editor-dialog-actions">
+                  <button type="button" @click="cancelAiInteraction(activeAiSession)">{{ activeAiSession.interactionDialog.cancelLabel }}</button>
+                  <button ref="aiInteractionPrimaryButton" type="submit" class="primary" :class="{ danger: activeAiSession.interactionDialog.tone === 'danger' }" :disabled="activeAiSession.interactionDialog.mode === 'question' && !activeAiSession.interactionDialog.selectedOption && !activeAiSession.interactionDialog.customValue.trim()">{{ activeAiSession.interactionDialog.confirmLabel }}</button>
+                </div>
+              </form>
+            </div>
           </div>
           <form class="ai-chat-form" @submit.prevent="sendAiPrompt">
-            <textarea v-model="aiPrompt" :placeholder="tr('ai.placeholder')" :disabled="aiBusy" rows="4" @keydown="handleAiPromptKeydown"></textarea>
+            <textarea v-model="aiPrompt" :placeholder="tr(aiCanInterrupt ? 'ai.interruptPlaceholder' : 'ai.placeholder')" rows="4" @keydown="handleAiPromptKeydown"></textarea>
             <input ref="aiAttachmentInput" class="ai-attachment-input" type="file" multiple accept="text/*,image/png,image/jpeg,image/webp,.json,.js,.jsx,.ts,.tsx,.vue,.css,.scss,.html,.md,.xml,.yaml,.yml,.java,.py,.go,.rs,.c,.h,.cpp,.hpp,.cs,.php,.rb,.sh,.sql" @change="handleAiAttachmentSelection" />
             <div v-if="aiAttachments.length" class="ai-attachment-list">
               <span v-for="attachment in aiAttachments" :key="attachment.id" class="ai-attachment-chip" :title="attachment.name">
                 <span class="codicon" :class="attachment.kind === 'image' ? 'codicon-file-media' : 'codicon-file-code'" aria-hidden="true"></span>
                 <span>{{ attachment.name }}</span>
                 <small>{{ FileUtils.formatFileSize(attachment.size) }}</small>
-                <button type="button" :title="tr('ai.removeAttachment', { name: attachment.name })" :aria-label="tr('ai.removeAttachment', { name: attachment.name })" :disabled="aiBusy" @click="removeAiAttachment(attachment.id)">×</button>
+                <button type="button" :title="tr('ai.removeAttachment', { name: attachment.name })" :aria-label="tr('ai.removeAttachment', { name: attachment.name })" @click="removeAiAttachment(attachment.id)">×</button>
               </span>
             </div>
             <div class="ai-chat-submit-row">
-              <button type="button" class="ai-attach-button" :title="tr('ai.attachFiles')" :aria-label="tr('ai.attachFiles')" :disabled="aiBusy || aiAttachments.length >= AI_ATTACHMENT_MAX_COUNT" @click="aiAttachmentInput?.click()">
+              <button type="button" class="ai-attach-button" :title="tr('ai.attachFiles')" :aria-label="tr('ai.attachFiles')" :disabled="aiAttachments.length >= AI_ATTACHMENT_MAX_COUNT" @click="aiAttachmentInput?.click()">
                 <span class="codicon codicon-attach" aria-hidden="true"></span>
               </button>
-              <button type="submit" :disabled="aiBusy || (!aiPrompt.trim() && aiAttachments.length === 0)">{{ aiBusy ? tr('ai.running') : tr('ai.send') }}</button>
+              <button type="submit" :disabled="!aiCanSend || (!aiPrompt.trim() && aiAttachments.length === 0)">{{ aiSubmitting ? tr('ai.sending') : aiCanInterrupt ? tr('ai.interruptAndSend') : aiBusy ? tr('ai.running') : tr('ai.send') }}</button>
             </div>
+            <small v-if="activeAiSession?.agent.run?.stopKind" class="ai-interrupt-hint" role="status">{{ tr('ai.waitingForHandoff') }}</small>
             <div class="ai-chat-options">
               <label>
                 <span>{{ tr('ai.agentModel') }}</span>
@@ -246,29 +270,6 @@
               </label>
             </div>
           </form>
-        <div v-if="activeAiSession?.interactionDialog?.visible" class="ai-interaction-dialog-backdrop" role="presentation">
-          <form class="ai-interaction-dialog" role="dialog" aria-modal="true" aria-labelledby="ai-interaction-dialog-title" @submit.prevent="submitAiInteraction(activeAiSession)" @keydown.esc.prevent.stop="cancelAiInteraction(activeAiSession)" @click.stop>
-            <div class="editor-dialog-header">
-              <span class="codicon" :class="activeAiSession.interactionDialog.mode === 'confirm' ? 'codicon-warning' : 'codicon-question'" aria-hidden="true"></span>
-              <h2 id="ai-interaction-dialog-title">{{ activeAiSession.interactionDialog.title }}</h2>
-            </div>
-            <p class="editor-dialog-message">{{ activeAiSession.interactionDialog.message }}</p>
-            <div v-if="activeAiSession.interactionDialog.mode === 'question'" class="editor-dialog-question-options">
-              <button v-for="option in activeAiSession.interactionDialog.options" :key="option.label" type="button" class="editor-dialog-choice" :class="{ selected: activeAiSession.interactionDialog.selectedOption?.label === option.label }" @click="selectAiInteractionOption(activeAiSession, option)">
-                <strong>{{ option.label }}</strong>
-                <small v-if="option.description">{{ option.description }}</small>
-              </button>
-            </div>
-            <label v-if="activeAiSession.interactionDialog.mode === 'question'" class="editor-dialog-input-row">
-              <span>{{ tr('ai.askUser.customAnswerLabel') }}</span>
-              <textarea ref="aiInteractionInput" v-model="activeAiSession.interactionDialog.customValue" rows="3" :placeholder="tr('ai.askUser.customAnswerPlaceholder')" autocomplete="off" spellcheck="false" @input="activeAiSession.interactionDialog.selectedOption = null" @keydown="handleAiQuestionKeydown($event, activeAiSession)"></textarea>
-            </label>
-            <div class="editor-dialog-actions">
-              <button type="button" @click="cancelAiInteraction(activeAiSession)">{{ activeAiSession.interactionDialog.cancelLabel }}</button>
-              <button ref="aiInteractionPrimaryButton" type="submit" class="primary" :class="{ danger: activeAiSession.interactionDialog.tone === 'danger' }" :disabled="activeAiSession.interactionDialog.mode === 'question' && !activeAiSession.interactionDialog.selectedOption && !activeAiSession.interactionDialog.customValue.trim()">{{ activeAiSession.interactionDialog.confirmLabel }}</button>
-            </div>
-          </form>
-        </div>
         </div>
         <aside v-if="aiHistoryVisible" class="ai-history-drawer" :aria-label="tr('ai.sessions')" @click.stop @keydown.esc.prevent.stop="closeAiHistory">
           <header class="ai-history-header">
@@ -296,7 +297,7 @@
                     {{ formatAiSessionState(session) }} · {{ tr('ai.messageCount', { count: session.messages.length }) }} · {{ formatAiHistoryTime(session.updatedAt) }}
                   </small>
                 </button>
-                <button type="button" class="ai-history-delete" :title="tr('ai.deleteSession')" :aria-label="tr('ai.deleteSession')" :disabled="session.busy || session.titleBusy" @click="deleteAiSessionById(session.id)">
+                <button type="button" class="ai-history-delete" :title="tr('ai.deleteSession')" :aria-label="tr('ai.deleteSession')" :disabled="session.busy || session.titleBusy || session.agent.submission" @click="deleteAiSessionById(session.id)">
                   <span class="codicon codicon-trash" aria-hidden="true"></span>
                 </button>
               </article>
@@ -879,7 +880,7 @@
 </template>
 
 <script setup>
-import { computed, defineComponent, h, markRaw, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowRef, watch } from "vue";
+import { computed, defineComponent, h, markRaw, nextTick, onBeforeUnmount, onMounted, reactive, ref, shallowReactive, shallowRef, watch } from "vue";
 import { createLocalExecutorSession } from "@/shared/local-executor/session.js";
 import { COMMAND_WHITELIST_TEMPLATES } from "@/shared/command-presets.js";
 import { normalizeCommandWhitelist, normalizeMainCommands, normalizeCommandApprovalSettings, getCommandApprovalReason } from "@/shared/command-whitelist.js";
@@ -1349,7 +1350,10 @@ const aiSessionSaved = computed({
     else aiSessionDraft.saved = Boolean(value);
   },
 });
-const aiBusy = computed(() => Boolean(activeAiSession.value?.busy || activeAiSession.value?.titleBusy));
+const aiSubmitting = computed(() => Boolean((activeAiSession.value || aiSessionDraft).agent.submission));
+const aiBusy = computed(() => Boolean(activeAiSession.value?.busy || activeAiSession.value?.titleBusy || aiSubmitting.value));
+const aiCanInterrupt = computed(() => Boolean(activeAiSession.value?.agent.task));
+const aiCanSend = computed(() => !aiSubmitting.value && !activeAiSession.value?.titleBusy && (!activeAiSession.value?.busy || aiCanInterrupt.value));
 const aiAvailableModels = ref([]);
 const aiModelsLoading = ref(false);
 const agentsMdContent = ref("");
@@ -1545,9 +1549,9 @@ onBeforeUnmount(() => {
   inlineCompletionDisposables.splice(0).forEach((disposable) => disposable.dispose());
   abortAiCompletionRequest();
   cancelRunningSftpTasks();
-  aiSessions.forEach((session) => session.abortController?.abort());
+  aiSessionDraft.agent.submission?.controller.abort();
+  aiSessions.forEach((session) => stopAiSession(session));
   aiSessions.forEach((session) => session.titleAbortController?.abort());
-  aiSessions.forEach((session) => session.messages.forEach(cancelAiToolMessage));
   flushAiSessionChanges();
   aiSessionStorageClosed = true;
   void aiSessionPersistTask.then(() => aiSessionStore.close()).catch((error) => console.warn("Failed to close AI session storage", error));
@@ -4843,6 +4847,10 @@ async function fetchAiModels() {
   }
 }
 
+function createAiAgentState() {
+  return shallowReactive({ run: null, pending: [], submission: null, task: null });
+}
+
 function createAiSessionDraft(options = {}) {
   return {
     title: "",
@@ -4851,10 +4859,12 @@ function createAiSessionDraft(options = {}) {
     prompt: "",
     saved: Boolean(settings.ai.autoSaveSessions),
     pendingAttachments: [],
+    agent: createAiAgentState(),
   };
 }
 
 function resetAiSessionDraft(options = {}) {
+  aiSessionDraft.agent.submission?.controller.abort();
   Object.assign(aiSessionDraft, createAiSessionDraft(options));
 }
 
@@ -4876,6 +4886,7 @@ function createAiSession(options = {}) {
     messages: [],
     commandAuthorizations: [],
     pendingAttachments: [],
+    agent: createAiAgentState(),
     touchedPaths: new Set(),
     saved: options.saved ?? Boolean(settings.ai.autoSaveSessions),
     busy: false,
@@ -4928,6 +4939,7 @@ function normalizeStoredAiSession(value, index) {
     commandAuthorizations: Array.isArray(value.commandAuthorizations) ? value.commandAuthorizations
       : value.messages.filter((message) => message.role === 'user').map((message) => ({type: 'user_message', content: String(message.content || '')})),
     pendingAttachments: [],
+    agent: createAiAgentState(),
     touchedPaths: new Set(),
     saved: true,
     busy: false,
@@ -5040,7 +5052,7 @@ function serializeAiSessionContent(session) {
     messages: session.messages.map((message) => ({
       id: message.id,
       role: message.role,
-      content: message.tool?.pending ? tr("ai.toolCancelled") : String(message.content || ""),
+      content: message.tool?.pending ? tr("ai.toolUnconfirmed") : String(message.content || ""),
       sources: message.sources?.length ? normalizeAiWebSources(message.sources) : undefined,
     })),
   };
@@ -5052,6 +5064,7 @@ function getActiveAiSession() {
 }
 
 function showAiInteraction(session, interaction, signal) {
+  throwIfAiAborted(signal);
   const dialog = session?.interactionDialog;
   if (!dialog) throw new Error("AI session interaction state is unavailable");
   if (dialog.visible || aiInteractionRequests.has(session.id)) throw new Error("This AI session is already waiting for a user interaction");
@@ -5292,9 +5305,10 @@ async function deleteAiSessionById(id) {
   const index = aiSessions.findIndex((session) => session.id === id);
   if (index === -1) return;
   const session = aiSessions[index];
-  if (session.busy || session.titleBusy) return;
+  if (session.busy || session.titleBusy || session.agent.submission) return;
   const confirmed = await showConfirm(tr("confirm.deleteAiSession"), { title: tr("ai.deleteSession"), tone: "danger" });
   if (!confirmed) return;
+  if (session.busy || session.titleBusy || session.agent.submission) return;
   disposeAiMessageResources(session.messages);
   aiSessions.splice(index, 1);
   if (activeAiSessionId.value === id) {
@@ -5330,29 +5344,15 @@ function appendAiToolPurpose(summary, reason) {
 }
 
 function completeAiToolMessage(message, result) {
-  if (message.tool.cancelled) return;
   message.content = result.summary || "";
   message.imagePreview = createAiImagePreview(result);
   message.sources = normalizeAiWebSources(result.sources);
   if (!result.ok) message.expanded = true;
   message.tool.pending = false;
-  message.tool.cancelled = false;
+  message.tool.cancelled = Boolean(result.cancelled);
+  message.tool.interrupted = Boolean(result.interrupted);
   message.tool.ok = Boolean(result.ok);
   message.tool.result = result;
-}
-
-function cancelAiToolMessage(message) {
-  if (!message?.tool?.pending) return;
-  const result = { ok: false, cancelled: true, summary: tr("ai.toolCancelled") };
-  message.content = result.summary;
-  message.tool.pending = false;
-  message.tool.cancelled = true;
-  message.tool.ok = false;
-  message.tool.result = result;
-}
-
-function cancelPendingAiToolMessages(entries, startIndex = 0) {
-  entries.slice(startIndex).forEach(({ message }) => cancelAiToolMessage(message));
 }
 
 function createAiAbortError() {
@@ -5464,7 +5464,6 @@ function getAiAttachmentFileKey(value) {
 }
 
 function removeAiAttachment(id) {
-  if (aiBusy.value) return;
   const index = aiAttachments.value.findIndex((attachment) => attachment.id === id);
   if (index !== -1) aiAttachments.value.splice(index, 1);
 }
@@ -5653,74 +5652,127 @@ async function requestAiCompletion(file, model, position, signal) {
 
 async function sendAiPrompt() {
   let session = activeAiSession.value;
-  const creatingSession = !session;
-  const rawPrompt = aiPrompt.value.trim();
-  const selectedAttachments = [...aiAttachments.value];
-  if ((!rawPrompt && !selectedAttachments.length) || session?.busy) return;
-  const prompt = rawPrompt || tr("ai.attachmentOnlyPrompt");
-  const model = aiSessionAgentModel.value.trim();
-  const reasoningEffort = aiSessionReasoningEffort.value;
+  const target = session || aiSessionDraft;
+  const state = target.agent;
+  const draft = target.prompt;
+  const selectedAttachments = [...target.pendingAttachments];
+  if ((!draft.trim() && !selectedAttachments.length) || state.submission || session?.titleBusy || (session?.busy && !state.task)) return;
+  const submission = { controller: new AbortController(), workspace: captureWorkspace(), model: target.agentModel.trim(), reasoningEffort: target.reasoningEffort };
+  const prompt = draft.trim() || tr("ai.attachmentOnlyPrompt");
+  state.submission = submission;
   try {
-    validateAiConfig(model);
+    validateAiConfig(submission.model);
+    const attachments = await prepareAiAttachments(selectedAttachments);
+    throwIfAiAborted(submission.controller.signal);
+    assertCurrentWorkspace(submission.workspace);
+    if (target.agent !== state || state.submission !== submission) return;
+    if (target.prompt === draft) target.prompt = "";
+    const selectedIds = new Set(selectedAttachments.map((attachment) => attachment.id));
+    target.pendingAttachments = target.pendingAttachments.filter((attachment) => !selectedIds.has(attachment.id));
+    if (!session) {
+      const created = createAiSession({ title: target.title, agentModel: submission.model, reasoningEffort: submission.reasoningEffort, saved: target.saved });
+      created.prompt = target.prompt;
+      created.pendingAttachments = target.pendingAttachments;
+      aiSessions.push(created);
+      session = aiSessions.find((item) => item.id === created.id);
+      if (!activeAiSession.value) activeAiSessionId.value = session.id;
+      state.submission = null;
+      resetAiSessionDraft();
+    }
+    const message = addAiMessage("user", formatAiUserMessage(prompt, attachments), {}, session);
+    const agent = session.agent;
+    agent.pending = [...agent.pending, { prompt, attachments, messageId: message.id,
+      workspace: submission.workspace, model: submission.model, reasoningEffort: submission.reasoningEffort }];
+    if (agent.run) {
+      if (agent.run.stopKind !== "stop") agent.run.stopKind = "interrupt";
+      agent.run.controller.abort();
+    }
+    if (!agent.task) {
+      session.busy = true;
+      agent.task = Promise.resolve().then(() => drainAiSubmissions(session));
+    }
   } catch (error) {
-    if (session) addAiMessage("assistant", error.message, {}, session);
-    else await showAlert(error.message || String(error), { tone: "danger" });
-    return;
-  }
-  let preparedAttachments;
-  try {
-    preparedAttachments = await prepareAiAttachments(selectedAttachments);
-  } catch (error) {
-    await showAlert(error.message || String(error), { tone: "danger" });
-    return;
-  }
-  if (creatingSession) {
-    session = createAiSession({
-      title: aiSessionDraft.title,
-      agentModel: model,
-      reasoningEffort,
-      saved: aiSessionDraft.saved,
-    });
-  }
-  session.prompt = "";
-  session.busy = true;
-  addAiMessage("user", formatAiUserMessage(prompt, preparedAttachments), {}, session);
-  if (creatingSession) {
-    aiSessions.push(session);
-    activeAiSessionId.value = session.id;
-    session = aiSessions.find((item) => item.id === session.id);
-    resetAiSessionDraft();
-    setStatus(tr("ai.sessionCreated"), session.title);
-  } else {
-    clearAiAttachments(session.pendingAttachments);
-  }
-  const controller = markRaw(new AbortController());
-  session.abortController = controller;
-  try {
-    await runAiAgent(prompt, controller.signal, session, { model, reasoningEffort, attachments: preparedAttachments });
-    setStatus(tr("status.aiCompleted"), model);
-  } catch (error) {
-    if (error.name === "AbortError") {
-      addAiMessage("assistant", tr("status.aiStopped"), {}, session);
-      setStatus(tr("status.aiStopped"), "");
-    } else {
-      addAiMessage("assistant", error.message || String(error), {}, session);
-      setStatus(tr("status.aiError"), error.message || String(error));
+    if (submission.controller.signal.aborted || target.agent !== state || state.submission !== submission) return;
+    if (error.name !== "AbortError") {
+      if (session) addAiMessage("assistant", error.message || String(error), {}, session);
+      else if (!activeAiSession.value) await showAlert(error.message || String(error), { tone: "danger" });
     }
   } finally {
-    if (session.abortController === controller) {
-      session.busy = false;
-      session.abortController = null;
+    if (state.submission === submission) state.submission = null;
+  }
+}
+
+async function drainAiSubmissions(session) {
+  const state = session.agent;
+  let context = null;
+  let workspace = null;
+  try {
+    while (state.pending.length) {
+      const submissions = state.pending;
+      state.pending = [];
+      workspace ||= submissions[0].workspace;
+      assertCurrentWorkspace(workspace);
+      submissions.forEach((submission) => assertCurrentWorkspace(submission.workspace));
+      const [first, ...rest] = submissions;
+      if (!context) {
+        context = { continuation: undefined, input: buildAgentInputMessages(first.prompt, session, first.attachments, submissions.map((item) => item.messageId)) };
+        rest.forEach((item) => context.input.push(buildAgentRequestInputMessage(item.prompt, session, item.attachments)));
+      } else {
+        submissions.forEach((item) => context.input.push(buildAgentRequestInputMessage(item.prompt, session, item.attachments)));
+      }
+      const run = shallowReactive({ controller: new AbortController(), stopKind: "", context, workspace });
+      state.run = run;
+      session.abortController = markRaw(run.controller);
+      try {
+        await runAiAgent(run, session, first);
+        if (!run.stopKind && activeAiSession.value === session) setStatus(tr("status.aiCompleted"), first.model);
+      } catch (error) {
+        if (error.name === "AbortError" || run.controller.signal.aborted) {
+          if (run.stopKind !== "interrupt") addAiMessage("assistant", tr("status.aiStopped"), {}, session);
+          if (run.stopKind !== "interrupt" && activeAiSession.value === session) setStatus(tr("status.aiStopped"), "");
+        } else {
+          addAiMessage("assistant", error.message || String(error), {}, session);
+          if (activeAiSession.value === session) setStatus(tr("status.aiError"), error.message || String(error));
+        }
+      } finally {
+        if (state.run === run) state.run = null;
+        if (session.abortController === run.controller) session.abortController = null;
+        flushAiSessionChanges();
+      }
+      if (run.stopKind === "stop") {
+        context = null;
+        workspace = null;
+      }
     }
+  } catch (error) {
+    state.pending = [];
+    addAiMessage("assistant", error.name === "AbortError" ? tr("ai.workspaceChanged") : error.message || String(error), {}, session);
+  } finally {
+    state.run = null;
+    state.task = null;
+    session.busy = false;
     flushAiSessionChanges();
   }
 }
 
+function stopAiSession(session) {
+  const state = session.agent;
+  state.submission?.controller.abort();
+  state.submission = null;
+  state.pending = [];
+  if (state.run) state.run.stopKind = "stop";
+  session.abortController?.abort();
+}
+
 function stopAiTask() {
   const session = activeAiSession.value;
-  session?.abortController?.abort();
-  session?.titleAbortController?.abort();
-  session?.messages.forEach(cancelAiToolMessage);
+  if (session) {
+    stopAiSession(session);
+    session.titleAbortController?.abort();
+  } else {
+    aiSessionDraft.agent.submission?.controller.abort();
+    aiSessionDraft.agent.submission = null;
+  }
   flushAiSessionChanges();
   void nextTick(scrollAiMessagesToBottom);
 }
@@ -5798,10 +5850,12 @@ function getResponseSources(response) {
   return normalizeAiWebSources((response.output || []).filter((item) => item.type === "message").flatMap((item) => item.sources || []));
 }
 
-async function requestAiAgentResponse(request, session) {
+async function requestAiAgentResponse(request, session, run) {
   let message = null;
   const display = (output) => {
     throwIfAiAborted(request.signal);
+    if (session.agent.run !== run) throw createAiAbortError();
+    assertCurrentWorkspace(run.workspace);
     const text = getResponseText({ output });
     const sources = getResponseSources({ output });
     if (!text && !sources.length) {
@@ -5813,89 +5867,110 @@ async function requestAiAgentResponse(request, session) {
     else Object.assign(message, { content: text, sources });
     void nextTick(() => { if (activeAiSession.value === session) scrollAiMessagesToBottom(); });
   };
-  // 每次模型响应占一条消息，流式快照与终态都覆盖它；异常保留已显示文字。
-  return aiClient.respond({ ...request, onEvent: (event) => {
-    if (event.type === "reset") display([]);
-    else if (event.type === "output") display(event.output);
-  } });
-}
-
-async function runAiAgent(prompt, signal, session = getActiveAiSession(), runConfig = {}) {
-  const workspace = captureWorkspace();
-  let input = buildAgentInputMessages(prompt, session, runConfig.attachments);
-  let continuation;
-  const instructions = getAgentInstructions();
-  const model = runConfig.model || session.agentModel.trim();
-  const reasoningEffort = runConfig.reasoningEffort || session.reasoningEffort;
-  const options = reasoningEffort && reasoningEffort !== "default" ? { reasoningEffort } : {};
-  while (true) {
-    throwIfAiAborted(signal);
-    const response = await requestAiAgentResponse({ model, instructions, input, continuation, tools: getAiToolDefinitions(), options, signal }, session);
-    throwIfAiAborted(signal);
-    updateAiContextUsage(response, session);
-    const text = getResponseText(response);
-    const outputCalls = response.output.filter((item) => !["message", "reasoning"].includes(item.type));
-    if (!text.trim() && !getResponseSources(response).length && !outputCalls.length) throw new Error(tr("ai.error.emptyResponse"));
-    continuation = response.continuation;
-    input = [];
-    const imageInputs = [];
-    const parsedToolCalls = outputCalls.map((call) => {
-      const args = call.type === "tool_call" ? call.arguments
-        : call.type === "image" ? { output_format: call.format }
-          : call.type === "web_search" ? call.action : {};
-      return { call, args };
-    });
-    const pendingToolCalls = parsedToolCalls.map(({ call, args }, index) => ({ call, args, message: addPendingAiToolMessage({ name: call.type === "tool_call" ? call.name : call.type }, args, session, index + 1, parsedToolCalls.length) }));
-    await nextTick();
-    if (activeAiSession.value === session) scrollAiMessagesToBottom();
-    for (let index = 0; index < pendingToolCalls.length; index += 1) {
-      if (signal.aborted) {
-        cancelPendingAiToolMessages(pendingToolCalls, index);
-        throw createAiAbortError();
-      }
-      const { call, args, message } = pendingToolCalls[index];
-      try {
-        let result;
-        switch (call.type) {
-          case "tool_call":
-            result = await handleAiFunctionCall(call, args, session, signal, imageInputs, input);
-            break;
-          case "image":
-            result = await handleAiImageGenerationCall(call, args, session, signal, workspace);
-            break;
-          case "web_search":
-            result = handleAiWebSearchCall(call);
-            break;
-          default:
-            result = { ok: false, summary: tr("ai.error.unsupportedOutput", { type: call.name || call.type }) };
-        }
-        throwIfAiAborted(signal);
-        completeAiToolMessage(message, result);
-      } catch (error) {
-        if (error.name !== "AbortError" && !signal.aborted) throw error;
-        cancelAiToolMessage(message);
-        cancelPendingAiToolMessages(pendingToolCalls, index + 1);
-        throw error.name === "AbortError" ? error : createAiAbortError();
-      }
-      await nextTick();
-      if (activeAiSession.value === session) scrollAiMessagesToBottom();
-      if (signal.aborted) {
-        cancelPendingAiToolMessages(pendingToolCalls, index + 1);
-        throw createAiAbortError();
-      }
-    }
-    if (!outputCalls.some((call) => call.type === "tool_call")) return;
-    if (imageInputs.length) input.push(buildImageInputMessage(imageInputs));
+  try {
+    return await aiClient.respond({ ...request, onEvent: (event) => {
+      if (event.type === "reset") display([]);
+      else if (event.type === "output") display(event.output);
+    } });
+  } catch (error) {
+    // 中断中的响应没有续接令牌，只把已经展示的文字记入尚未消费的输入。
+    if (message?.content) run.context.input.push({ role: "assistant", content: message.content });
+    throw error;
   }
 }
 
-async function handleAiFunctionCall(call, args, session, signal, imageInputs, input) {
-  const result = call.name === "read_image"
-    ? await runAiReadImageToolCall(args, imageInputs)
-    : await runAiToolCall(call, args, session, signal, imageInputs);
-  throwIfAiAborted(signal);
-  input.push({ type: "tool_result", callId: call.id, output: result });
-  return result;
+function interruptedAiToolResult(started) {
+  return { ok: false, interrupted: true, execution_state: started ? "unknown" : "not_started",
+    summary: tr(started ? "ai.toolUnconfirmed" : "ai.toolNotStarted") };
+}
+
+function interruptedAiOutputResult(entry) {
+  if (entry.call.type === "web_search") return handleAiWebSearchCall(entry.call);
+  if (entry.call.type === "image") return { ok: false, interrupted: true, status: entry.call.status,
+    local_save_state: entry.started ? "unknown" : "not_started",
+    summary: tr("ai.imageInterrupted", { status: entry.call.status }),
+    ...(entry.args.output_path ? { output_path: entry.args.output_path } : {}) };
+  return interruptedAiToolResult(entry.started);
+}
+
+function recordAiToolResult(entry, result, input) {
+  if (entry.result) return;
+  entry.result = result;
+  completeAiToolMessage(entry.message, result);
+  if (entry.call.type === "tool_call") input.push({ type: "tool_result", callId: entry.call.id, output: result });
+}
+
+async function runAiAgent(run, session, runConfig) {
+  const { context, workspace } = run;
+  const signal = run.controller.signal;
+  const instructions = getAgentInstructions();
+  const model = runConfig.model;
+  const reasoningEffort = runConfig.reasoningEffort;
+  const options = reasoningEffort && reasoningEffort !== "default" ? { reasoningEffort } : {};
+  while (true) {
+    throwIfAiAborted(signal);
+    assertCurrentWorkspace(workspace);
+    const response = await requestAiAgentResponse({ model, instructions, input: context.input, continuation: context.continuation, tools: getAiToolDefinitions(), options, signal }, session, run);
+    // 只有完整成功的响应才能替换续接点；此后的每个函数调用都必须有且仅有一个结果。
+    if (response.status === "completed") {
+      context.continuation = response.continuation;
+      context.input = [];
+    } else if (getResponseText(response)) {
+      context.input.push({ role: "assistant", content: getResponseText(response) });
+    }
+    updateAiContextUsage(response, session);
+    const outputCalls = response.output.filter((item) => !["message", "reasoning"].includes(item.type));
+    if (!getResponseText(response).trim() && !getResponseSources(response).length && !outputCalls.length) throw new Error(tr("ai.error.emptyResponse"));
+    const imageInputs = [];
+    const entries = outputCalls.map((call, index) => {
+      const args = call.type === "tool_call" ? call.arguments
+        : call.type === "image" ? { output_format: call.format }
+          : call.type === "web_search" ? call.action : {};
+      return { call, args, started: false, result: null,
+        message: addPendingAiToolMessage({ name: call.type === "tool_call" ? call.name : call.type }, args, session, index + 1, outputCalls.length) };
+    });
+    try {
+      await nextTick();
+      if (activeAiSession.value === session) scrollAiMessagesToBottom();
+      for (const entry of entries) {
+        throwIfAiAborted(signal);
+        assertCurrentWorkspace(workspace);
+        entry.started = true;
+        try {
+          let result;
+          switch (entry.call.type) {
+            case "tool_call":
+              result = entry.call.name === "read_image"
+                ? await runAiReadImageToolCall(entry.args, imageInputs)
+                : await runAiToolCall(entry.call, entry.args, session, signal, imageInputs);
+              break;
+            case "image":
+              result = await handleAiImageGenerationCall(entry.call, entry.args, session, signal, workspace);
+              break;
+            case "web_search":
+              result = handleAiWebSearchCall(entry.call);
+              break;
+            default:
+              result = { ok: false, summary: tr("ai.error.unsupportedOutput", { type: entry.call.name || entry.call.type }) };
+          }
+          // 工具真实返回的结果优先于打断标记，不能把已完成写入改成“已取消”。
+          recordAiToolResult(entry, result, context.input);
+        } catch (error) {
+          const result = error.name === "AbortError" || signal.aborted ? interruptedAiOutputResult(entry)
+            : { ok: false, summary: error.message || String(error) };
+          recordAiToolResult(entry, result, context.input);
+          throw error;
+        }
+        throwIfAiAborted(signal);
+        await nextTick();
+        if (activeAiSession.value === session) scrollAiMessagesToBottom();
+      }
+    } finally {
+      entries.forEach((entry) => { if (!entry.result) recordAiToolResult(entry, interruptedAiOutputResult(entry), context.input); });
+      if (imageInputs.length) context.input.push(buildImageInputMessage(imageInputs));
+    }
+    if (!outputCalls.some((call) => call.type === "tool_call")) return;
+  }
 }
 
 async function handleAiImageGenerationCall(image, args, session, signal, workspace) {
@@ -6037,10 +6112,10 @@ function formatAgentsMdInstructions(content) {
   ].filter(Boolean).join("\n");
 }
 
-function buildAgentInputMessages(prompt, session = getActiveAiSession(), attachments = []) {
+function buildAgentInputMessages(prompt, session = getActiveAiSession(), attachments = [], excludedMessageIds = []) {
   return [
     { role: "user", content: buildAgentWorkspaceContext() },
-    ...buildAgentRecentChatMessages(session),
+    ...buildAgentRecentChatMessages(session, excludedMessageIds),
     { role: "user", content: buildAgentTouchedFilesContext(session) },
     buildAgentRequestInputMessage(prompt, session, attachments),
   ];
@@ -6091,8 +6166,8 @@ function formatAiRequirementStatusLines() {
   });
 }
 
-function buildAgentRecentChatMessages(session = getActiveAiSession()) {
-  const messages = getRecentAiHistoryMessages({ session });
+function buildAgentRecentChatMessages(session = getActiveAiSession(), excludedMessageIds = []) {
+  const messages = getRecentAiHistoryMessages({ session, excludedMessageIds });
   if (!messages.length) return [{ role: "user", content: "Recent chat:\nnone" }];
   return [
     { role: "user", content: "Recent chat messages follow as separate input messages." },
@@ -6143,7 +6218,8 @@ function formatRecentAiMessages(options = {}) {
 
 function getRecentAiHistoryMessages(options = {}) {
   const messages = options.session?.messages || aiMessages.value;
-  return options.includePendingUserMessage ? messages : messages.slice(0, -1);
+  const excluded = new Set(options.excludedMessageIds || []);
+  return messages.filter((message) => !excluded.has(message.id));
 }
 
 function updateAiContextUsage(response, session = getActiveAiSession()) {
@@ -8506,7 +8582,7 @@ async function aiToolAskUser({ question, options } = {}, signal, session = getAc
   if (!normalizedOptions.length) throw new Error("options must contain at least one labeled option");
   const result = await showAiUserQuestion(session, normalizedQuestion, normalizedOptions, signal);
   if (result === null) {
-    if (signal?.aborted) throw createAiAbortError();
+    if (signal?.aborted) return { ok: false, interrupted: true, execution_state: "finished", question: normalizedQuestion, summary: tr("ai.toolInterrupted") };
     return { summary: tr("ai.askUser.cancelled"), question: normalizedQuestion, cancelled: true };
   }
   return {
@@ -8669,18 +8745,24 @@ async function aiToolExecuteLocalCommand(input, signal, session) {
   const dirtyHint = dirtyFiles.value.length ? tr("local.dirtyHint", { count: dirtyFiles.value.length }) : "";
   const action = {type: 'executor', target: {endpoint: localExecutor.state.url, platform: info.platform}, command: args.command,
     shell: args.shell, cwd: args.cwd || info.default_cwd, claimed_purpose: args.reason, unsaved_files: dirtyFiles.value.map((file) => file.path)};
-  const approval = await authorizeAiCommand({
-    getPolicy: () => ({autoApprove: localExecutor.state.autoApprove, autoReview: localExecutor.state.autoReview, whitelist: localExecutor.state.whitelistText,
-      mainCommands: args.commands, highRisk: args.high_risk, hasUnsavedFiles: dirtyFiles.value.length > 0}),
-    action, rejectedMessage: tr("local.rejected"),
-    confirmation: (approvalReason) => ({
-      mode: "confirm", title: tr("local.run"), tone: "danger",
-      message: tr(approvalReason === 'high-risk' ? "local.confirmHighRiskCommand" : approvalReason === 'not-whitelisted' ? "local.confirmUnauthorizedCommand" : "local.approve", {
-        command: args.command, commands: args.commands.join(", "), shell: args.shell, endpoint: action.target.endpoint, cwd: action.cwd, reason: args.reason, dirty: dirtyHint }),
-      confirmLabel: tr("local.run"), cancelLabel: tr("dialog.cancel"),
-    }),
-  }, session, signal);
-  throwIfAiAborted(signal);
+  let approval;
+  try {
+    approval = await authorizeAiCommand({
+      getPolicy: () => ({autoApprove: localExecutor.state.autoApprove, autoReview: localExecutor.state.autoReview, whitelist: localExecutor.state.whitelistText,
+        mainCommands: args.commands, highRisk: args.high_risk, hasUnsavedFiles: dirtyFiles.value.length > 0}),
+      action, rejectedMessage: tr("local.rejected"),
+      confirmation: (approvalReason) => ({
+        mode: "confirm", title: tr("local.run"), tone: "danger",
+        message: tr(approvalReason === 'high-risk' ? "local.confirmHighRiskCommand" : approvalReason === 'not-whitelisted' ? "local.confirmUnauthorizedCommand" : "local.approve", {
+          command: args.command, commands: args.commands.join(", "), shell: args.shell, endpoint: action.target.endpoint, cwd: action.cwd, reason: args.reason, dirty: dirtyHint }),
+        confirmLabel: tr("local.run"), cancelLabel: tr("dialog.cancel"),
+      }),
+    }, session, signal);
+    throwIfAiAborted(signal);
+  } catch (error) {
+    if (signal?.aborted) return { ...interruptedAiToolResult(false), endpoint: action.target.endpoint, command: args.command };
+    throw error;
+  }
   if (version !== localExecutor.generation) throw new Error(tr("local.connectionChanged"));
   return { ...await localExecutor.execute(args, { sessionId: session.id }, signal), command: args.command, commands: args.commands, high_risk: args.high_risk, reason: args.reason, approval };
 }
@@ -8697,18 +8779,34 @@ async function aiToolExecuteSshCommand({ connection, command, commands, high_ris
   if (!mainCommands.length) throw new Error(tr("ssh.error.commandListRequired"));
   if (typeof highRisk !== "boolean") throw new Error("high_risk is required");
   if (!normalizedReason) throw new Error(tr("ssh.error.commandReasonRequired"));
-  const approval = await authorizeAiSshCommand(config, sshSession, normalizedCommand, mainCommands, highRisk, normalizedReason, session, signal);
-  throwIfAiAborted(signal);
+  let approval;
+  try {
+    approval = await authorizeAiSshCommand(config, sshSession, normalizedCommand, mainCommands, highRisk, normalizedReason, session, signal);
+    throwIfAiAborted(signal);
+  } catch (error) {
+    if (signal?.aborted) return { ...interruptedAiToolResult(false), connection: formatAiSshConnection(config, sshSession), command: normalizedCommand };
+    throw error;
+  }
   if (getActiveSshSessionForConfig(config) !== sshSession || sshSession.ws !== socket) throw new Error(tr('commandApproval.connectionChanged'));
-  // 执行结果绑定发送时的主机，之后断线或编辑配置不能改写证据归属。
   const executedConnection = formatAiSshConnection(config, sshSession);
   const capture = { output: "" };
   sshSession.aiCommandCaptures.add(capture);
   try {
     sendSshCommand(sshSession, normalizedCommand);
-    await delay(normalizedWaitSeconds * 1000, signal);
+    let interrupted = false;
+    try {
+      await delay(normalizedWaitSeconds * 1000, signal);
+    } catch (error) {
+      if (!signal?.aborted) throw error;
+      interrupted = true;
+    }
+    // SSH 只有交互终端输入，没有本命令的终止确认；保留原主机和已捕获输出。
     const clipped = clipAiToolTailText(sanitizeAiTerminalOutput(capture.output));
-    return { summary: tr("ssh.toolExecutedCommand", { command: normalizedCommand, reason: normalizedReason }), connection: executedConnection, command: normalizedCommand, commands: mainCommands, high_risk: highRisk, reason: normalizedReason, wait_seconds: normalizedWaitSeconds, output_chars: clipped.text_chars, returned_chars: clipped.returned_chars, truncated: clipped.truncated, output: clipped.text, approval };
+    return { ok: !interrupted, interrupted, execution_state: "unknown", remote_may_be_running: true,
+      summary: interrupted ? tr("ssh.toolInterruptedCommand", { command: normalizedCommand, host: executedConnection.host })
+        : tr("ssh.toolExecutedCommand", { command: normalizedCommand, reason: normalizedReason }),
+      connection: executedConnection, command: normalizedCommand, commands: mainCommands, high_risk: highRisk, reason: normalizedReason,
+      wait_seconds: normalizedWaitSeconds, output_chars: clipped.text_chars, returned_chars: clipped.returned_chars, truncated: clipped.truncated, output: clipped.text, approval };
   } finally {
     sshSession.aiCommandCaptures.delete(capture);
   }
@@ -9440,7 +9538,8 @@ function getTreeIconClass(node, collapsed = false) {
 .code-editor-view .editor-dialog-option-copy { display: grid; min-width: 0; gap: 3px; }
 .code-editor-view .editor-dialog-option-copy strong { color: var(--text); font-size: 13px; font-weight: 600; }
 .code-editor-view .editor-dialog-option-copy small { color: var(--muted); font-size: 11px; line-height: 1.45; }
-.code-editor-view .ai-interaction-dialog-backdrop { position: absolute; z-index: 12; inset: 0; display: grid; place-items: center; min-height: 0; padding: 12px; background: rgb(0 0 0 / 42%); backdrop-filter: blur(2px); }
+.code-editor-view .ai-interaction-dialog-container { min-width: 0; padding: 8px 0; }
+.code-editor-view .ai-interrupt-hint { color: var(--muted); }
 .code-editor-view .ai-interaction-dialog { display: grid; gap: 14px; width: min(520px, 100%); max-height: 100%; overflow: auto; padding: 18px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); color: var(--text); box-shadow: 0 16px 44px var(--shadow); }
 .code-editor-view .ai-interaction-dialog h2 { min-width: 0; margin: 0; font-size: 15px; font-weight: 700; }
 .code-editor-view .editor-dialog-question-options { display: grid; gap: 7px; }

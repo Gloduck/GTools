@@ -17,6 +17,7 @@ async function installSshMock(page, connections = [defaultConnection], aiOverrid
             }));
         }
         window.sshInputs = [];
+        window.__sshSockets = [];
 
         class MockWebSocket extends EventTarget {
             static CONNECTING = 0;
@@ -26,6 +27,7 @@ async function installSshMock(page, connections = [defaultConnection], aiOverrid
 
             constructor() {
                 super();
+                window.__sshSockets.push(this);
                 this.readyState = MockWebSocket.CONNECTING;
                 setTimeout(() => {
                     this.readyState = MockWebSocket.OPEN;
@@ -350,3 +352,33 @@ function parseReviewInput(input) {
     expect(Object.keys(context).sort()).toEqual(['action', 'authorizations', 'locale']);
     return context;
 }
+
+
+test('SSH 命令已发送后打断只停止等待，保留真实主机和输出且不重新发送', async ({page}) => {
+    await installSshMock(page);
+    const requests = [];
+    await page.route('https://api.openai.com/v1/responses', async (route) => {
+        requests.push(route.request().postDataJSON());
+        await respondToAi(route, requests.length === 1
+            ? {output: commandCalls('ssh-test', '-interrupted', {command: 'pwd', commands: ['pwd'], high_risk: false, wait_seconds: 30})}
+            : {output_text: '已根据远程命令真实状态继续。'});
+    });
+    await page.goto('/codeEditor');
+    await sendAiPrompt(page);
+    await expect.poll(() => page.evaluate(() => window.sshInputs.length)).toBe(1);
+    await page.evaluate(() => window.__sshSockets.find((socket) => socket.host === 'example.com').dispatchEvent(new MessageEvent('message', {
+        data: JSON.stringify({type: 'output', data: '/remote/actual/path\n'}),
+    })));
+    await page.locator('.ai-chat-form textarea').fill('停止等待，说明远程命令状态');
+    await page.locator('.ai-chat-form button[type="submit"]').click();
+    await expect(page.locator('.ai-message-assistant').filter({hasText: '已根据远程命令真实状态继续。'})).toHaveCount(1);
+    expect(await page.evaluate(() => window.sshInputs)).toEqual([{host: 'example.com', data: 'pwd\n'}]);
+    expect(requests).toHaveLength(2);
+    const outputs = requests[1].input.filter((item) => item.type === 'function_call_output' && item.call_id === 'execute-interrupted');
+    expect(outputs).toHaveLength(1);
+    const result = JSON.parse(outputs[0].output);
+    expect(result.connection.host).toBe('example.com');
+    expect(result.output).toContain('/remote/actual/path');
+    expect(result).toMatchObject({execution_state: 'unknown', interrupted: true, remote_may_be_running: true});
+    expect(result.status).not.toBe('cancelled');
+});

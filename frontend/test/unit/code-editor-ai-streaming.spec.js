@@ -193,8 +193,195 @@ test('兼容以 application/json 返回的非流式回答', async ({page}) => {
     await expectRequestCount(page, 1);
 });
 
-async function openAi(page, contentType = 'text/event-stream', autoSaveSessions = false) {
-    await page.addInitScript(({contentType, autoSaveSessions}) => {
+test('流式中打断发送保留部分回答，重复点击只启动一次新请求', async ({page}) => {
+    await openAi(page);
+    await sendPrompt(page, '原始任务');
+    await expectRequestCount(page, 1);
+    await emit(page, 0, textDelta('已确认的部分结论。'));
+    await expect(page.locator('.ai-chat-messages')).toContainText('已确认的部分结论。');
+    await page.locator('.ai-chat-form textarea').fill('按新要求继续');
+    await page.locator('.ai-chat-form button[type="submit"]').evaluate((button) => { button.click(); button.click(); });
+    await expectRequestCount(page, 2);
+    const recorded = await requests(page);
+    expect(recorded[0].aborted).toBe(true);
+    const input = JSON.stringify(recorded[1].body.input);
+    for (const text of ['原始任务', '已确认的部分结论。', '按新要求继续']) expect(input).toContain(text);
+    await emit(page, 1, textDelta('新任务正在处理。'));
+    expect(await page.evaluate(() => window.__aiStream.emit(0, {type: 'response.output_text.delta', output_index: 0, content_index: 0, delta: '旧任务迟到内容'}))).toBe(false);
+    await complete(page, 1, {output: [assistantMessage('新任务完成。')]});
+    await expectIdle(page);
+    await expect(page.locator('.ai-message-user .ai-message-content')).toHaveText(['原始任务', '按新要求继续']);
+    await expect(page.locator('.ai-chat-messages')).not.toContainText('旧任务迟到内容');
+    await expect(page.locator('.ai-message-assistant').filter({hasText: '已确认的部分结论。'})).toHaveCount(1);
+    await expectRequestCount(page, 2);
+});
+
+for (const stopPending of [false, true, 'stop_then_send']) {
+    test(`旧请求真实收尾前合并连续新消息，停止待续轮：${stopPending}`, async ({page}) => {
+        await openAi(page, 'text/event-stream', false, true);
+        await sendPrompt(page, '第一项任务');
+        await expectRequestCount(page, 1);
+        await submitDuringRun(page, '新消息甲');
+        await submitDuringRun(page, '新消息乙');
+        await expectRequestCount(page, 1);
+        expect((await requests(page))[0].aborted).toBe(true);
+        // 模拟传输层直到稍后才结束，续轮不得越过真实收尾。
+        if (stopPending) await page.getByRole('button', {name: '停止 AI 任务', exact: true}).click();
+        if (stopPending === 'stop_then_send') await submitDuringRun(page, '停止后重新发起的新请求');
+        await page.evaluate(() => window.__aiStream.releaseAbort(0));
+        if (stopPending === true) {
+            await expectIdle(page);
+            await expectRequestCount(page, 1);
+        } else {
+            await expectRequestCount(page, 2);
+            const input = JSON.stringify((await requests(page))[1].body.input);
+            if (stopPending === 'stop_then_send') expect(input).toContain('停止后重新发起的新请求');
+            else for (const text of ['第一项任务', '新消息甲', '新消息乙']) expect(input).toContain(text);
+            await complete(page, 1, {output: [assistantMessage('合并处理完成。')]});
+            await expectIdle(page);
+            await expectRequestCount(page, 2);
+        }
+    });
+}
+
+test('打断等待提问的工具批次时保留成功结果，并为未执行调用给出唯一结果', async ({page}) => {
+    await openAi(page);
+    await sendPrompt(page, '检查工具，提问后再检查其他工具');
+    await expectRequestCount(page, 1);
+    const calls = [
+        toolCall('completed', 'get_tool_availability', {names: ['run_javascript']}),
+        toolCall('waiting', 'ask_user', {question: '选择方案', options: [{label: '方案 A'}]}),
+        toolCall('queued', 'get_tool_availability', {names: ['ask_user']}),
+    ];
+    const search = {type: 'web_search_call', id: 'native-search', status: 'completed', action: {type: 'search', sources: [{url: 'https://example.com/source', title: '已完成搜索来源'}]}};
+    const image = {type: 'image_generation_call', id: 'native-image', status: 'completed', output_format: 'png', result: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4AWJiYGD4DwAAAP//cGajQwAAAAZJREFUAwABDgEC81VxbAAAAABJRU5ErkJggg=='};
+    await complete(page, 0, {output: [calls[0], calls[1], search, image, calls[2]]});
+    await expect(page.getByRole('dialog', {name: 'AI 需要你的回答'})).toBeVisible();
+    await expect(page.locator('.ai-message-tool').first().locator('.ai-tool-toggle')).toContainText('成功');
+    await submitDuringRun(page, '不必提问，直接总结已知结果');
+    await expectRequestCount(page, 2);
+    await expect(page.getByRole('dialog', {name: 'AI 需要你的回答'})).toBeHidden();
+    const input = (await requests(page))[1].body.input;
+    const outputs = input.filter((item) => item.type === 'function_call_output');
+    expect(outputs).toHaveLength(3);
+    expect(input.filter((item) => item.type === 'web_search_call')).toHaveLength(1);
+    expect(input.filter((item) => item.type === 'image_generation_call')).toHaveLength(1);
+    const searchCard = page.locator('.ai-message-tool').filter({has: page.locator('.ai-tool-toggle', {hasText: 'web_search'})});
+    await expect(searchCard.locator('.ai-tool-toggle')).toContainText('成功');
+    await expect(searchCard.getByRole('link', {name: /已完成搜索来源/})).toHaveAttribute('href', 'https://example.com/source');
+    const imageCard = page.locator('.ai-message-tool').filter({has: page.locator('.ai-tool-toggle', {hasText: 'image'})});
+    const imageToggle = imageCard.locator('.ai-tool-toggle');
+    if (await imageCard.locator('.ai-tool-details').count() === 0) await imageToggle.click();
+    const imageResult = JSON.parse(await imageCard.locator('.ai-tool-details pre').last().textContent());
+    expect(imageResult).toMatchObject({status: 'completed', local_save_state: 'not_started'});
+    await expect(page.locator('.ai-image-result')).toHaveCount(0);
+    for (const call of calls) {
+        expect(input.filter((item) => item.type === 'function_call' && item.call_id === call.call_id)).toHaveLength(1);
+        expect(outputs.filter((item) => item.call_id === call.call_id)).toHaveLength(1);
+    }
+    const result = (id) => JSON.parse(outputs.find((item) => item.call_id === id).output);
+    expect(result('completed').ok).toBe(true);
+    expect(result('completed').tools).toEqual(expect.arrayContaining([expect.objectContaining({name: 'run_javascript', available: true})]));
+    expect(result('waiting').ok).toBe(false);
+    expect(result('waiting').interrupted).toBe(true);
+    expect(result('waiting').cancelled).toBeUndefined();
+    expect(result('waiting').answer).toBeUndefined();
+    expect(result('waiting').selected_option).toBeUndefined();
+    expect(result('waiting').summary).not.toMatch(/用户.*取消|user.*cancel/i);
+    expect(result('queued').ok).toBe(false);
+    expect(JSON.stringify(result('queued'))).toMatch(/未执行|未开始|not.?executed|not.?started/i);
+    await emit(page, 1, textDelta('基于已完成工具的部分总结。'));
+    await expect(page.locator('.ai-chat-messages')).toContainText('基于已完成工具的部分总结。');
+    await submitDuringRun(page, '把总结写得更短');
+    await expectRequestCount(page, 3);
+    const resumed = (await requests(page))[2].body.input;
+    for (const call of calls) {
+        expect(resumed.filter((item) => item.type === 'function_call' && item.call_id === call.call_id)).toHaveLength(1);
+        expect(resumed.filter((item) => item.type === 'function_call_output' && item.call_id === call.call_id)).toHaveLength(1);
+    }
+    expect(JSON.stringify(resumed).split('基于已完成工具的部分总结。')).toHaveLength(2);
+    await complete(page, 2, {output: [assistantMessage('已按已知结果总结。')]});
+    await expectIdle(page);
+    await expectRequestCount(page, 3);
+});
+
+test('打断会话 A 的新消息不影响会话 B 的流和上下文', async ({page}) => {
+    await openAi(page);
+    await sendPrompt(page, '任务 A');
+    await expectRequestCount(page, 1);
+    await emit(page, 0, textDelta('A 的已有结论。'));
+    await page.getByRole('button', {name: '新建会话', exact: true}).click();
+    await sendPrompt(page, '任务 B');
+    await expectRequestCount(page, 2);
+    await emit(page, 1, textDelta('B 的已有结论。'));
+    await switchSession(page, '会话 1');
+    await submitDuringRun(page, '只调整 A');
+    await expectRequestCount(page, 3);
+    const recorded = await requests(page);
+    expect(recorded[0].aborted).toBe(true);
+    expect(recorded[1].aborted).toBe(false);
+    expect(JSON.stringify(recorded[2].body.input)).not.toContain('任务 B');
+    await emit(page, 1, textDelta('B 后台进度。'));
+    await expect(page.locator('.ai-chat-messages')).not.toContainText('B 后台进度。');
+    await complete(page, 2, {output: [assistantMessage('A 调整完成。')]});
+    await expectIdle(page);
+    await switchSession(page, '会话 2');
+    await expect(page.locator('.ai-message-assistant .ai-message-content')).toHaveText('B 的已有结论。B 后台进度。');
+    await complete(page, 1, {output: [assistantMessage('B 的已有结论。B 后台进度。')]});
+    await expectIdle(page);
+    await expectRequestCount(page, 3);
+});
+
+for (const readFails of [false, true]) {
+test(`附件准备期间修改草稿并停止，迟到读取不能清除新草稿或在其他会话复活（读取失败：${readFails}）`, async ({page}) => {
+    await openAi(page);
+    await sendPrompt(page, '建立会话 A');
+    await expectRequestCount(page, 1);
+    await complete(page, 0, {output: [assistantMessage('会话 A 已建立。')]});
+    await expectIdle(page);
+    await page.evaluate(() => {
+        const original = File.prototype.text;
+        File.prototype.text = async function () {
+            if (this.name === 'delayed.txt') {
+                window.__attachmentReadStarted = true;
+                await new Promise((resolve, reject) => { window.__releaseAttachmentRead = resolve; window.__rejectAttachmentRead = reject; });
+            }
+            return original.call(this);
+        };
+    });
+    await page.locator('.ai-attachment-input').setInputFiles({name: 'delayed.txt', mimeType: 'text/plain', buffer: Buffer.from('附件正文')});
+    await page.locator('.ai-chat-form textarea').fill('读取此附件');
+    await page.locator('.ai-chat-form button[type="submit"]').click();
+    await expect.poll(() => page.evaluate(() => window.__attachmentReadStarted)).toBe(true);
+    await page.locator('.ai-chat-form textarea').fill('A 的新草稿不得丢失');
+    await page.getByRole('button', {name: '停止 AI 任务', exact: true}).click();
+    await page.getByRole('button', {name: '新建会话', exact: true}).click();
+    await page.locator('.ai-chat-form textarea').fill('B 的独立草稿');
+    await page.evaluate((readFails) => readFails ? window.__rejectAttachmentRead(new Error('迟到附件失败')) : window.__releaseAttachmentRead(), readFails);
+    await expect(page.locator('.editor-dialog-backdrop')).toHaveCount(0);
+    await expect(page.locator('.ai-chat-form textarea')).toHaveValue('B 的独立草稿');
+    await expectRequestCount(page, 1);
+    await switchSession(page, '会话 1');
+    await expectIdle(page);
+    await expect(page.locator('.ai-chat-form textarea')).toHaveValue('A 的新草稿不得丢失');
+    await expect(page.locator('.ai-chat-messages')).not.toContainText('读取附件失败');
+    await expect(page.locator('.editor-dialog-backdrop')).toHaveCount(0);
+    await expectRequestCount(page, 1);
+});
+
+}
+
+async function submitDuringRun(page, text) {
+    await page.locator('.ai-chat-form textarea').fill(text);
+    await page.locator('.ai-chat-form button[type="submit"]').click();
+}
+
+function toolCall(id, name, args) {
+    return {type: 'function_call', call_id: id, name, arguments: JSON.stringify(args)};
+}
+
+async function openAi(page, contentType = 'text/event-stream', autoSaveSessions = false, holdAbort = false) {
+    await page.addInitScript(({contentType, autoSaveSessions, holdAbort}) => {
         localStorage.setItem('ui-locale', 'zh-CN');
         localStorage.setItem('browser-code-editor-settings', JSON.stringify({
             ai: {apiKey: 'test-key', agentModels: 'test-model', baseUrl: 'https://api.openai.com/v1', autoSaveSessions},
@@ -222,6 +409,13 @@ async function openAi(page, contentType = 'text/event-stream', autoSaveSessions 
                 stream.record.closed = true;
                 stream.controller.close();
                 return true;
+            },
+            releaseAbort(index) {
+                const stream = streams[index];
+                if (!stream || stream.record.closed) return;
+                stream.record.closed = true;
+                stream.controller.error(new DOMException('测试请求已中止', 'AbortError'));
+                stream.releaseResponse?.();
             },
             fail(index, message = '测试流连接断开') {
                 const stream = streams[index];
@@ -251,16 +445,17 @@ async function openAi(page, contentType = 'text/event-stream', autoSaveSessions 
             const abort = () => {
                 record.aborted = true;
                 events.push({type: 'abort', index});
-                if (!record.closed) {
+                if (!record.closed && !holdAbort) {
                     record.closed = true;
                     streams[index].controller.error(new DOMException('测试请求已中止', 'AbortError'));
                 }
             };
             if (signal?.aborted) abort();
             else signal?.addEventListener('abort', abort, {once: true});
+            if (holdAbort && index === 0) await new Promise((resolve) => { streams[index].releaseResponse = resolve; });
             return new Response(stream, {status: 200, headers: {'content-type': contentType}});
         };
-    }, {contentType, autoSaveSessions});
+    }, {contentType, autoSaveSessions, holdAbort});
     await page.goto('/codeEditor');
     await page.getByRole('button', {name: 'AI 助手', exact: true}).click();
 }

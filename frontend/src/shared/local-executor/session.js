@@ -113,6 +113,38 @@ export function createLocalExecutorSession({heartbeatMs = 5000} = {}) {
         // 清理当前连接的授权状态；重新配对时由页面应用用户保存的配置。
         Object.assign(state, {connected: false, connecting: false, reachable: false, shell: '', info: null, url: '', error: '', whitelistText: '', autoApprove: false, autoReview: false, tasks: []});
     }
+    async function finishInterruptedTask(current, task, version, maxChars) {
+        let cancelRequested = false;
+        let cancellationError = '';
+        if (!isLocalTaskFinished(task)) {
+            cancelRequested = true;
+            try {
+                const result = await current.cancel(task.id);
+                if (version === generation) task.status = result.status;
+            } catch (error) {
+                cancellationError = error.message;
+            }
+        }
+        const facts = {task_id: task.id, endpoint: current.url, cancel_requested: cancelRequested,
+            ...(cancellationError ? {cancellation_error: cancellationError} : {})};
+        try {
+            // 使用独立读取游标取得真实输出；页面尾缓存不能代表本次工具结果。
+            const result = await current.read(task.id, 0, undefined, maxChars);
+            if (version === generation) {
+                task.status = result.status;
+                task.exit_code = result.exit_code;
+                task.error = result.error || '';
+                task.has_more = result.cursor > task.cursor || result.has_more;
+            }
+            return {...result, ...facts, ok: result.status === 'completed', interrupted: result.status !== 'completed',
+                execution_state: isLocalTaskFinished(result) ? 'finished' : 'unknown',
+                summary: `Task ${task.id} at ${current.url}: ${result.status}. ${isLocalTaskFinished(result) ? 'Execution finished.' : 'Execution may still be running; read this task id before taking further action. Do not repeat the command automatically.'}`};
+        } catch (error) {
+            return {...facts, ok: false, interrupted: true, execution_state: 'unknown', status: 'unknown',
+                shell: task.shell, cwd: task.cwd, cursor: 0, output: '', output_unavailable: true, has_more: true, error: error.message,
+                summary: `Task ${task.id} at ${current.url}: execution state and output are unconfirmed. Read this task id; do not repeat the command automatically.`};
+        }
+    }
     return {
         state,
         get generation() { return generation; },
@@ -163,6 +195,7 @@ export function createLocalExecutorSession({heartbeatMs = 5000} = {}) {
                 task.error = error.message;
                 if (rejected) throw error;
                 if (signal?.aborted || version !== generation) {
+                    if (signal?.aborted) return finishInterruptedTask(current, task, version, maxChars);
                     current.cancel(id).catch(() => {});
                     throw error;
                 }
@@ -175,9 +208,9 @@ export function createLocalExecutorSession({heartbeatMs = 5000} = {}) {
                 if (version !== generation) throw new Error('Connection changed during execution');
                 return {...result, task_id: id, summary: `Executor command ${result.status}`};
             } catch (error) {
-                // 用户停止等待中的 AI 调用时请求取消任务；等待窗口到期不会进入这里。
-                if (signal?.aborted && version === generation && !isLocalTaskFinished(task)) current.cancel(id).catch(() => {});
-                if (signal?.aborted || version !== generation) throw error;
+                // 结束等待不等于命令已停止，取消后读取一次真实状态再交回 Agent。
+                if (signal?.aborted) return finishInterruptedTask(current, task, version, maxChars);
+                if (version !== generation) throw error;
                 // 读取失败不表示命令未执行，也不能把页面尾缓存当作完整结果。
                 return {task_id: id, status: 'unknown', shell, cwd: task.cwd, cursor: 0, output: '', error: error.message,
                     has_more: true, summary: 'Executor output is unavailable. Read this task id; do not repeat the command automatically.'};

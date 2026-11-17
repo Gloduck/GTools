@@ -210,7 +210,7 @@ for (const scenario of ['needs_confirmation', 'invalid_response', 'api_error']) 
     });
 }
 
-for (const interruption of ['停止会话', '关闭审查', '断开连接']) {
+for (const interruption of ['停止会话', '关闭审查', '断开连接', '打断发送']) {
     test(`场景：自动审查等待期间${interruption}，迟到的通过不能执行命令`, async ({page}) => {
         await setup(page, 'pwd', {}, reviewSettings);
         await page.unroute('https://api.openai.com/v1/responses');
@@ -239,6 +239,9 @@ for (const interruption of ['停止会话', '关闭审查', '断开连接']) {
         await expect.poll(() => reviewing).toBe(true);
         if (interruption === '停止会话') {
             await page.getByRole('button', {name: '停止 AI 任务', exact: true}).click();
+        } else if (interruption === '打断发送') {
+            await page.locator('.ai-chat-form textarea').fill('取消旧命令，只说明当前状态');
+            await page.locator('.ai-chat-form button[type="submit"]').click();
         } else {
             await page.getByRole('button', {name: '执行器连接', exact: true}).click();
             const panel = page.locator('.local-executor-dialog');
@@ -248,7 +251,7 @@ for (const interruption of ['停止会话', '关闭审查', '断开连接']) {
         }
         releaseReview();
         if (interruption !== '停止会话') {
-            await expect(page.locator('.ai-message-assistant')).toContainText('变更后的请求已处理');
+            await expect(page.locator('.ai-message-assistant').filter({hasText: '变更后的请求已处理'})).toHaveCount(1);
             const result = JSON.parse(mainRequests[1].input.find((item) => item.type === 'function_call_output').output);
             expect(result.ok).toBe(false);
         }
@@ -867,3 +870,37 @@ function parseReviewInput(input) {
     expect(Object.keys(context).sort()).toEqual(['action', 'authorizations', 'locale']);
     return context;
 }
+
+
+test('本地命令在途时打断保留任务标识与取消快照，续轮不重复提交', async ({page}) => {
+    await setup(page, 'printf "started-before-interrupt"; sleep 30');
+    const submitted = [];
+    page.on('request', (request) => {
+        if (request.method() === 'POST' && request.url() === `${connection.url}/v1/tasks`) submitted.push(request.postDataJSON());
+    });
+    await connect(page);
+    await ask(page);
+    const submission = page.waitForResponse((response) => response.url() === `${connection.url}/v1/tasks` && response.request().method() === 'POST');
+    await page.getByRole('dialog', {name: '执行命令'}).getByRole('button', {name: '执行命令'}).click();
+    const {id} = await (await submission).json();
+    // 确认进程已产出，再打断；不把调度竞态误判为输出丢失。
+    await expect.poll(() => page.evaluate(async ({url, token, id}) => {
+        const response = await fetch(`${url}/v1/tasks/${id}?cursor=0&max_chars=4096`, {headers: {Authorization: `Bearer ${token}`}});
+        return (await response.json()).output;
+    }, {...connection, id})).toContain('started-before-interrupt');
+    const cancellation = page.waitForResponse((response) => response.url() === `${connection.url}/v1/tasks/${id}/cancel`);
+    await page.locator('.ai-chat-form textarea').fill('停止长任务，说明已获得的结果');
+    await page.locator('.ai-chat-form button[type="submit"]').click();
+    expect((await cancellation).ok()).toBe(true);
+    await expect(page.locator('.ai-message-assistant').filter({hasText: '本机命令请求已处理。'})).toHaveCount(1);
+    await expect.poll(() => terminalOutput).toContain(`[${id}] 执行结束 | 状态: cancelled`);
+    expect(submitted).toHaveLength(1);
+    expect(requests).toHaveLength(2);
+    const results = requests[1].input.filter((item) => item.type === 'function_call_output' && item.call_id === 'local-command');
+    expect(results).toHaveLength(1);
+    const result = JSON.parse(results[0].output);
+    expect(result.task_id).toBe(id);
+    expect(result.output).toContain('started-before-interrupt');
+    expect(result.cancel_requested).toBe(true);
+    expect(['running', 'cancelled', 'failed', 'completed']).toContain(result.status);
+});

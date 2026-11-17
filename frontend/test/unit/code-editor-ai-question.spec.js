@@ -28,6 +28,18 @@ test('AI ask_user 工具支持用户输入自定义答案', async ({page}) => {
     expect(result.custom).toBe(true);
 });
 
+test('AI ask_user 主动取消保留取消事实且不伪造答案', async ({page}) => {
+    const {dialog, requests} = await openQuestion(page);
+    await dialog.getByRole('button', {name: '取消', exact: true}).click();
+    await expect(dialog).toBeHidden();
+    await expect(page.locator('.ai-message-assistant')).toContainText('已记录你的选择。');
+    const result = getToolResult(requests);
+    expect(result.cancelled).toBe(true);
+    expect(result.interrupted).toBeUndefined();
+    expect(result.answer).toBeUndefined();
+    expect(result.selected_option).toBeUndefined();
+});
+
 test('AI ask_user 弹框按会话隔离', async ({page}) => {
     const requests = [];
     await page.addInitScript(() => {

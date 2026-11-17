@@ -238,7 +238,7 @@
             </div>
           </div>
           <form class="ai-chat-form" @submit.prevent="sendAiPrompt">
-            <textarea v-model="aiPrompt" :placeholder="tr(aiCanInterrupt ? 'ai.interruptPlaceholder' : 'ai.placeholder')" rows="4" @keydown="handleAiPromptKeydown"></textarea>
+            <textarea v-model="aiPrompt" :placeholder="tr('ai.placeholder')" rows="4" @keydown="handleAiPromptKeydown"></textarea>
             <input ref="aiAttachmentInput" class="ai-attachment-input" type="file" multiple accept="text/*,image/png,image/jpeg,image/webp,.json,.js,.jsx,.ts,.tsx,.vue,.css,.scss,.html,.md,.xml,.yaml,.yml,.java,.py,.go,.rs,.c,.h,.cpp,.hpp,.cs,.php,.rb,.sh,.sql" @change="handleAiAttachmentSelection" />
             <div v-if="aiAttachments.length" class="ai-attachment-list">
               <span v-for="attachment in aiAttachments" :key="attachment.id" class="ai-attachment-chip" :title="attachment.name">
@@ -252,7 +252,7 @@
               <button type="button" class="ai-attach-button" :title="tr('ai.attachFiles')" :aria-label="tr('ai.attachFiles')" :disabled="aiAttachments.length >= AI_ATTACHMENT_MAX_COUNT" @click="aiAttachmentInput?.click()">
                 <span class="codicon codicon-attach" aria-hidden="true"></span>
               </button>
-              <button type="submit" :disabled="!aiCanSend || (!aiPrompt.trim() && aiAttachments.length === 0)">{{ aiSubmitting ? tr('ai.sending') : aiCanInterrupt ? tr('ai.interruptAndSend') : aiBusy ? tr('ai.running') : tr('ai.send') }}</button>
+              <button type="submit" :disabled="!aiCanSend || (!aiPrompt.trim() && aiAttachments.length === 0)">{{ aiBusy && !aiPrompt.trim() && aiAttachments.length === 0 ? tr('ai.running') : tr('ai.send') }}</button>
             </div>
             <small v-if="activeAiSession?.agent.run?.stopKind" class="ai-interrupt-hint" role="status">{{ tr('ai.waitingForHandoff') }}</small>
             <div class="ai-chat-options">

@@ -83,14 +83,19 @@ export function normalizeLocalWaitSeconds(value = 10) {
     return value;
 }
 
-export function normalizeLocalCommand({command, cwd = '', reason, shell = '', wait_seconds, max_chars, commands, high_risk} = {}) {
+export function normalizeLocalLifecycle(value = 'task') {
+    if (!['task', 'session'].includes(value)) throw new Error('lifecycle must be task or session');
+    return value;
+}
+
+export function normalizeLocalCommand({command, cwd = '', reason, shell = '', lifecycle, wait_seconds, max_chars, commands, high_risk} = {}) {
     if (typeof command !== 'string' || !command.trim() || command.includes('\0') || new TextEncoder().encode(command).length > 65536) throw new Error('Invalid command');
     if (typeof cwd !== 'string' || cwd.includes('\0') || cwd.length > 4096) throw new Error('Invalid working directory');
     if (typeof reason !== 'string' || !reason.trim() || reason.length > 4096) throw new Error('A concise execution reason is required');
     if (!['', 'sh', 'powershell', 'cmd'].includes(shell)) throw new Error('Unsupported shell');
     if (!Array.isArray(commands) || !commands.length || commands.some((name) => typeof name !== 'string' || !name.trim() || /\s/.test(name.trim()))) throw new Error('commands must list the main commands');
     if (typeof high_risk !== 'boolean') throw new Error('high_risk must be a boolean');
-    return Object.freeze({command, cwd, reason: reason.trim(), shell, commands: Object.freeze(normalizeMainCommands(commands)), high_risk, wait_seconds: normalizeLocalWaitSeconds(wait_seconds), max_chars: normalizeLocalMaxChars(max_chars)});
+    return Object.freeze({command, cwd, reason: reason.trim(), shell, lifecycle: normalizeLocalLifecycle(lifecycle), commands: Object.freeze(normalizeMainCommands(commands)), high_risk, wait_seconds: normalizeLocalWaitSeconds(wait_seconds), max_chars: normalizeLocalMaxChars(max_chars)});
 }
 
 export function buildLocalStartupCommand({platform, assetBase, origin, terminal = 'powershell', token = '', listenAddress = '127.0.0.1', port = 0, publicUrl = ''}) {
@@ -163,7 +168,7 @@ export class LocalExecutorClient {
     }
     async info(signal) {
         const info = await this.request('/v1/info', {signal});
-        if (info.protocol_version !== 1 || typeof info.default_cwd !== 'string' || !['python', 'powershell', 'android'].includes(info.runtime)) throw new Error('Unsupported executor protocol');
+        if (info.protocol_version !== 2 || typeof info.default_cwd !== 'string' || !['python', 'powershell', 'android'].includes(info.runtime)) throw Object.assign(new Error('Unsupported executor protocol. Stop the old executor and start the current version.'), {code: 'EXECUTOR_PROTOCOL_UNSUPPORTED'});
         return info;
     }
     submit(task, signal) { return this.request('/v1/tasks', {method: 'POST', body: task, signal}); }

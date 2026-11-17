@@ -93,7 +93,7 @@ class PowerShellApiTest(unittest.TestCase):
         status, _, info = self.request('GET', '/v1/info')
         self.assertEqual(status, 200)
         self.assertEqual(info['runtime'], 'powershell')
-        self.assertEqual(info['protocol_version'], 1)
+        self.assertEqual(info['protocol_version'], 2)
         self.assertEqual(info['shells'], ['powershell', 'cmd'])
         self.assertNotIn('permissions', info)
         self.assertNotIn(self.connection['token'], json.dumps(info))

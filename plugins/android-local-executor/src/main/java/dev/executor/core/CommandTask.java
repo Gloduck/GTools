@@ -18,6 +18,7 @@ public final class CommandTask implements Runnable {
     public static final int MAX_READ_CHARS = 20000;
     private final String id;
     private final String command;
+    private final String lifecycle;
     private final File directory;
     private final ShellRuntime shell;
     private final TerminalLog log;
@@ -26,6 +27,7 @@ public final class CommandTask implements Runnable {
     private long outputStart;
     private boolean truncated;
     private boolean decodingLoss;
+    private boolean outputIncomplete;
     private int outputChars;
     private String status = "queued";
     private String error = "";
@@ -33,12 +35,15 @@ public final class CommandTask implements Runnable {
     private boolean cancelled;
     private Process process;
     private int group;
+    private boolean scopeEmpty;
+    private boolean settled;
+    private volatile boolean scopeStopping;
 
-    public CommandTask(String id, String command, File directory, ShellRuntime shell, TerminalLog log) {
-        this.id = id; this.command = command; this.directory = directory; this.shell = shell; this.log = log;
+    public CommandTask(String id, String command, File directory, String lifecycle, ShellRuntime shell, TerminalLog log) {
+        this.id = id; this.command = command; this.directory = directory; this.lifecycle = lifecycle; this.shell = shell; this.log = log;
     }
 
-    public boolean matches(String value, File cwd) { return command.equals(value) && directory.equals(cwd); }
+    public boolean matches(String value, File cwd, String mode) { return command.equals(value) && directory.equals(cwd) && lifecycle.equals(mode); }
     private boolean finished() { return status.equals("completed") || status.equals("failed") || status.equals("cancelled"); }
 
     public JSONObject snapshot(long cursor) { return snapshot(cursor, DEFAULT_READ_CHARS); }
@@ -57,10 +62,10 @@ public final class CommandTask implements Runnable {
             index += Character.charCount(Character.codePointAt(output, index));
         }
         long end = outputStart + index;
-        return ExecutorServer.json("id", id, "status", status, "cwd", directory.getPath(), "shell", "sh",
+        return ExecutorServer.json("id", id, "status", status, "cwd", directory.getPath(), "shell", "sh", "lifecycle", lifecycle,
                 "output", output.substring((int) (start - outputStart), (int) (end - outputStart)),
                 "cursor", end, "has_more", end < total, "exit_code", exitCode,
-                "truncated", truncated, "output_lost", cursor < outputStart, "decoding_loss", decodingLoss, "error", error, "created_at", createdAt);
+                "truncated", truncated, "output_lost", cursor < outputStart, "decoding_loss", decodingLoss, "output_incomplete", outputIncomplete, "error", error, "created_at", createdAt);
     }
 
     private synchronized void append(char[] chars, int length) {
@@ -77,14 +82,15 @@ public final class CommandTask implements Runnable {
 
     public synchronized void cancel() {
         if (finished()) return;
-        cancelled = true; status = "cancelling";
+        cancelled = true;
+        if (!settled) status = "cancelling";
         cleanupProcess();
     }
 
     public void awaitFinished() {
         boolean interrupted = false;
         synchronized (this) {
-            while (!finished()) {
+            while (!settled) {
                 try { wait(); }
                 catch (InterruptedException ignored) { interrupted = true; }
             }
@@ -93,15 +99,55 @@ public final class CommandTask implements Runnable {
     }
 
     private synchronized void cleanupProcess() {
-        if (group > 0) {
-            try { shell.killGroup(group); }
-            catch (IOException | RuntimeException failure) { recordError("Cannot clean process group: " + failure.getMessage()); }
+        if (process != null && process.isAlive()) {
+            try { sendControl("STOP"); scopeStopping = true; }
+            catch (IOException failure) {
+                // 关闭控制输入同样要求监管者清理自身组，不能对过期 PGID 补发信号。
+                try { process.getOutputStream().close(); }
+                catch (IOException ignored) { recordError("Cannot stop task supervisor: " + failure.getMessage()); }
+            }
         }
-        try { if (process != null && process.isAlive()) process.destroyForcibly(); }
-        catch (RuntimeException failure) { recordError("Cannot terminate shell: " + failure.getMessage()); }
+    }
+
+    private void sendControl(String action) throws IOException {
+        process.getOutputStream().write((action + "\n").getBytes(StandardCharsets.US_ASCII));
+        process.getOutputStream().flush();
     }
 
     private synchronized void recordError(String message) { if (error.isEmpty()) error = message; }
+
+    private void awaitEmptyGroup() throws IOException, InterruptedException {
+        long stoppedAt = 0;
+        while (shell.hasBusinessProcesses(group)) {
+            if (!process.isAlive()) {
+                if (stoppedAt == 0) stoppedAt = System.nanoTime();
+                if (!scopeStopping || System.nanoTime() - stoppedAt >= 1000000000L) {
+                    synchronized (this) { outputIncomplete = true; }
+                    throw new IOException("Task supervisor is gone while owned processes remain; cleanup cannot be confirmed");
+                }
+            }
+            Thread.sleep(100);
+        }
+        scopeEmpty = true;
+    }
+
+    private String readControlLine() throws IOException, InterruptedException {
+        // 报告器可能比监管者存活更久；只读取已就绪字节，半帧也不能阻塞身份检查。
+        InputStream stream = process.getErrorStream();
+        ByteArrayOutputStream line = new ByteArrayOutputStream();
+        while (line.size() < 128) {
+            if (stream.available() > 0) {
+                int value = stream.read();
+                if (value == '\n') return new String(line.toByteArray(), StandardCharsets.US_ASCII);
+                if (value == -1) break;
+                line.write(value);
+            } else {
+                if (!process.isAlive()) throw new IOException("Task supervisor exited before reporting the root command result");
+                Thread.sleep(20);
+            }
+        }
+        throw new IOException("Invalid task supervisor control frame");
+    }
 
     private void readOutput() {
         try (InputStream stream = process.getInputStream()) {
@@ -132,6 +178,7 @@ public final class CommandTask implements Runnable {
                 if (result.isUnderflow()) break;
             }
         } catch (IOException | RuntimeException failure) {
+            synchronized (this) { outputIncomplete = true; }
             recordError("Output collection failed; output may be incomplete: " + failure.getMessage());
             cleanupProcess();
         }
@@ -144,20 +191,11 @@ public final class CommandTask implements Runnable {
         chars.clear();
     }
 
-    private int readGroup() throws IOException {
-        ByteArrayOutputStream line = new ByteArrayOutputStream();
-        for (int i = 0; i < 64; i++) {
-            int value = process.getInputStream().read();
-            if (value == -1) break;
-            if (value == '\n') {
-                String text = new String(line.toByteArray(), StandardCharsets.US_ASCII);
-                if (text.matches("EXECUTOR_PID=[1-9][0-9]{0,9}")) {
-                    try { return Integer.parseInt(text.substring("EXECUTOR_PID=".length())); }
-                    catch (NumberFormatException ignored) { break; }
-                }
-                break;
-            }
-            line.write(value);
+    private int readGroup() throws IOException, InterruptedException {
+        String text = readControlLine();
+        if (text.matches("READY [1-9][0-9]{0,9}")) {
+            try { return Integer.parseInt(text.substring("READY ".length())); }
+            catch (NumberFormatException ignored) { /* 使用统一的初始化错误。 */ }
         }
         throw new IOException("Cannot initialize an independent shell process group; check system setsid support and terminal permissions");
     }
@@ -177,12 +215,24 @@ public final class CommandTask implements Runnable {
             synchronized (this) {
                 group = pid;
                 if (cancelled) return;
-                // 放行前已经登记进程组；stdin 放行后关闭，用户命令不能等待交互输入。
-                process.getOutputStream().write('\n');
-                process.getOutputStream().close();
+                // 控制 stdin 留给监管者，业务命令的 stdin 由监管脚本接到 /dev/null。
+                sendControl("START");
             }
             reader = new Thread(this::readOutput, "executor-output-" + id);
             reader.setDaemon(true); reader.start(); readerStarted = true;
+            while (true) {
+                String line = readControlLine();
+                if (line.matches("EXIT [0-9]+")) {
+                    synchronized (this) { exitCode = Integer.parseInt(line.substring(5)); }
+                    break;
+                }
+            }
+            synchronized (this) {
+                if (exitCode == null && !cancelled) throw new IOException("Task supervisor exited before reporting the root command result");
+                if (lifecycle.equals("task") || cancelled) cleanupProcess();
+            }
+            awaitEmptyGroup();
+            synchronized (this) { if (process.isAlive()) sendControl("FINISH"); }
             process.waitFor();
         } catch (Exception failure) {
             synchronized (this) { if (!cancelled) recordError(failure.toString()); }
@@ -192,20 +242,37 @@ public final class CommandTask implements Runnable {
             if (process != null) {
                 // 中断不能跳过进程回收和输出收尾，所有结束路径遵循同一顺序。
                 while (true) {
-                    try { exitCode = process.waitFor(); break; }
+                    try { process.waitFor(); break; }
                     catch (InterruptedException ignored) { interrupted = true; }
+                }
+                if (group > 0 && !scopeEmpty) {
+                    while (true) {
+                        try { awaitEmptyGroup(); break; }
+                        catch (InterruptedException ignored) { interrupted = true; }
+                        catch (IOException | RuntimeException failure) { recordError("Cannot inspect task process group: " + failure.getMessage()); break; }
+                    }
                 }
                 if (readerStarted) {
                     while (reader.isAlive()) {
-                        try { reader.join(); }
-                        catch (InterruptedException failure) { interrupted = true; }
+                        try { reader.join(scopeEmpty ? 0 : 1000); if (!scopeEmpty) break; }
+                        catch (InterruptedException failure) { interrupted = true; if (!scopeEmpty) break; }
+                    }
+                    if (reader.isAlive()) synchronized (this) {
+                        outputIncomplete = true;
+                        recordError("Output collection is incomplete after losing task supervision");
                     }
                 }
-                try { process.getInputStream().close(); process.getOutputStream().close(); process.getErrorStream().close(); }
+                try {
+                    if (!readerStarted || !reader.isAlive()) process.getInputStream().close();
+                    process.getOutputStream().close();
+                    process.getErrorStream().close();
+                }
                 catch (IOException failure) { recordError("Cannot close process streams: " + failure.getMessage()); }
             }
             synchronized (this) {
-                status = cancelled ? "cancelled" : (Integer.valueOf(0).equals(exitCode) && error.isEmpty() ? "completed" : "failed");
+                // 无法确认组已清空时保留未知状态，不能把查询失败当成执行结束。
+                status = group > 0 && !scopeEmpty ? "unknown" : cancelled ? "cancelled" : (Integer.valueOf(0).equals(exitCode) && error.isEmpty() ? "completed" : "failed");
+                settled = true;
                 log.append(id, "执行结束 | 状态: " + status + " | 退出码: " + exitCode + (error.isEmpty() ? "" : " | " + error));
                 notifyAll();
             }

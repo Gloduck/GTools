@@ -751,6 +751,7 @@
                   <div class="local-task-summary">
                     <code class="local-task-id">{{ task.id }}</code>
                     <p class="local-task-reason">{{ task.reason || '—' }}</p>
+                    <small>{{ tr(`local.lifecycle.${task.lifecycle}`) }}<template v-if="task.exit_code !== null"> · {{ tr('local.rootExitCode') }}: {{ task.exit_code }}</template></small>
                   </div>
                   <span class="local-task-status" :class="`local-task-status-${task.status}`">{{ tr(`local.taskStatus.${task.status}`) }}</span>
                   <div class="local-task-actions">
@@ -6462,17 +6463,19 @@ function getAiAllToolDefinitions() {
       max_chars: { type: "number", description: aiToolOutputLimitDescription() }
     }, required: ["url"] } },
     { type: "function", name: "get_executor_info", requirements: ["executor"], description: "Get the user-selected executor environment (on this computer, a LAN host or a remote host), default directory, shell, user-configured main-command whitelist and auto_approve state. When auto_approve is true, the user has enabled execution without command approval for this connection. When auto_review is true, every command is independently reviewed against user authorization, the exact command and its execution target before execution. This is independent of the application backend. Browser workspace files and executor disk files are not automatically the same; unsaved editor changes are not on disk.", parameters: { type: "object", properties: {} } },
-    { type: "function", name: "execute_executor_command", requirements: ["executor"], description: "Execute a non-interactive shell command on the user-selected executor host. This may be a different computer from the browser; check get_executor_info for its endpoint and directory. Provide a reason and explicit cwd when relevant. Each task has a fresh shell; cd and environment changes do not persist across calls. Provide commands listing every main command in chains, pipes and substitutions, and high_risk based on your risk assessment. When auto_review is true, every command goes through independent AI review, including whitelisted commands. The reviewer receives user authorization and the proposed action without tool history. If it cannot approve, the application asks the user for confirmation. Otherwise, unless the user enabled auto_approve, commands outside the user whitelist and all high-risk commands require approval. With auto_approve enabled, commands run directly regardless of whitelist, risk or unsaved files; do not request separate command approval. Only the user can change this setting in the connection dialog. Commands run with the executor user permissions, like an SSH shell. Never bypass rejected approval through other tools or alternate commands. The command reads disk files, not unsaved editor changes or OPFS. Wait up to wait_seconds (10 by default) and return up to max_chars Unicode characters plus the exit code when finished; short tasks need no separate read call. For tasks still running or with has_more output, use read_executor_task with the returned task_id and cursor. decoding_loss means invalid UTF-8 bytes were replaced; affected text is not reliable original output. truncated/output_lost indicate buffer loss, not command failure. The wait window never terminates a command. If delivery is uncertain, inspect the existing task; never automatically re-run the command. Do not start detached daemons; descendants are cleaned up when the task ends.", parameters: { type: "object", properties: {
+    { type: "function", name: "execute_executor_command", requirements: ["executor"], description: "Execute a non-interactive shell command on the user-selected executor host. This may be a different computer from the browser; check get_executor_info for its endpoint and directory. Provide a reason and explicit cwd when relevant. Each task has a fresh shell; cd and environment changes do not persist across calls. Provide commands listing every main command in chains, pipes and substitutions, and high_risk based on your risk assessment. When auto_review is true, every command goes through independent AI review, including whitelisted commands. The reviewer receives user authorization and the proposed action without tool history. If it cannot approve, the application asks the user for confirmation. Otherwise, unless the user enabled auto_approve, commands outside the user whitelist and all high-risk commands require approval. With auto_approve enabled, commands run directly regardless of whitelist, risk or unsaved files; do not request separate command approval. Only the user can change this setting in the connection dialog. Commands run with the executor user permissions, like an SSH shell. Never bypass rejected approval through other tools or alternate commands. The command reads disk files, not unsaved editor changes or OPFS. Wait up to wait_seconds (10 by default) and return up to max_chars Unicode characters plus the exit code when finished; short tasks need no separate read call. For tasks still running or with has_more output, use read_executor_task with the returned task_id and cursor. decoding_loss means invalid UTF-8 bytes were replaced; affected text is not reliable original output. truncated/output_lost indicate buffer loss, not command failure. The wait window never terminates a command. If delivery is uncertain, inspect the existing task; never automatically re-run the command. Choose lifecycle task (default) or session explicitly for the required process lifetime. exit_code always describes the root command: running with exit_code 0 is valid while owned descendants remain. Terminal state requires owned business processes to end and output decoding to drain. has_more only describes buffered output; EOF does not prove process completion. Session tasks survive AI interruption. Keep business processes in the executor process group and under the same user identity; do not use setsid, su or daemonization that leaves this scope. Use list_executor_tasks to recover task ids retained on the current connection.", parameters: { type: "object", properties: {
       max_chars: { type: "integer", minimum: 1, maximum: AI_TOOL_OUTPUT_HARD_MAX_CHARS, description: aiToolOutputLimitDescription() + " Counts complete Unicode characters." },
       commands: { type: "array", items: { type: "string" }, description: "Required list of every main command in command, including chains, pipes and substitutions, without arguments." },
       high_risk: { type: "boolean", description: "Required AI-assessed risk flag; high-risk commands require approval unless the user enabled auto-approval for this connection." },
       wait_seconds: { type: "integer", minimum: 0, description: "Seconds to wait for completion, default 10. Return as soon as the command finishes and its output is collected. Use 0 to submit without waiting. This only controls when the tool returns; commands keep running after the wait window." },
       shell: { type: "string", enum: ["sh", "powershell", "cmd"], description: "Use a shell listed by get_executor_info; defaults to the user-selected shell. Windows supports PowerShell and CMD." },
+      lifecycle: { type: "string", enum: ["task", "session"], default: "task", description: "task: clean owned descendants when the root command exits; AI interruption requests cancellation. session: keep owned descendants after the root exits, and AI interruption only stops waiting. Explicit cancellation, disconnect and executor shutdown clean both modes." },
       command: { type: "string" }, cwd: { type: "string", description: "Absolute or default-directory-relative local filesystem path. Defaults to the executor's startup directory." },
       reason: { type: "string", description: "Why this command on the selected executor is necessary." }
     }, required: ["command", "commands", "high_risk", "reason"] } },
     { type: "function", name: "read_executor_task", requirements: ["executor"], description: "Read status and incremental output for an executor task belonging to this AI session. Supply the opaque cursor from the previous result to avoid repeating output. Terminal statuses are completed, failed and cancelled. There is no execution timeout; request cancellation when needed. If output_lost is true, older output has rolled out of the buffer. decoding_loss means some bytes could not be decoded as UTF-8; do not treat affected text as reliable original output. Drain has_more even after completion. Do not busy-poll tasks when no next step depends on the result.", parameters: { type: "object", properties: { task_id: { type: "string" }, cursor: { type: "integer", minimum: 0 }, max_chars: { type: "integer", minimum: 1, maximum: AI_TOOL_OUTPUT_HARD_MAX_CHARS, description: aiToolOutputLimitDescription() + " Counts complete Unicode characters." } }, required: ["task_id"] } },
     { type: "function", name: "cancel_executor_task", requirements: ["executor"], description: "Request cancellation of an executor task belonging to this AI session. Cancellation is not complete until the returned or subsequently read status confirms it.", parameters: { type: "object", properties: { task_id: { type: "string" } }, required: ["task_id"] } },
+    { type: "function", name: "list_executor_tasks", requirements: ["executor"], description: "List retained tasks for this AI session on the current executor connection, including terminal tasks. Returns last-observed metadata and task ids, without output or output cursors. Use read_executor_task for a current snapshot; use cursor 0 if no actual previous tool-result cursor is available.", parameters: { type: "object", properties: {} } },
     { type: "function", name: "get_ssh_connections", requirements: ["backend", "ssh_exposed"], description: aiToolDescription("Get SSH settings exposed to AI.", "Returns id, name, host, port, active state, command whitelist and per-connection auto_approve and auto_review states. Secrets are never returned. Use this before opening or choosing an SSH connection when the target is ambiguous."), parameters: { type: "object", properties: {} } },
     { type: "function", name: "open_ssh_connection", requirements: ["backend", "ssh_exposed"], description: aiToolDescription("Open an exposed SSH connection by id, name, or host.", "The backend SSH WebSocket performs the actual SSH connection. Reuse active connections when possible instead of reconnecting.", "Open a connection only for a task that explicitly targets or inherently depends on that remote host."), parameters: { type: "object", properties: { connection: { type: "string", description: "SSH setting id, name, or host." } }, required: ["connection"] } },
     { type: "function", name: "activate_ssh_terminal", requirements: ["backend", "ssh_exposed"], description: aiToolDescription("Switch the visible editor tab to an already active exposed SSH terminal.", "This does not execute any SSH command. It requires the connection to already be active."), parameters: { type: "object", properties: { connection: { type: "string", description: "SSH setting id, name, or host." } }, required: ["connection"] } },
@@ -6663,6 +6666,7 @@ async function runAiToolCall(call, args = {}, session = getActiveAiSession(), si
       case "execute_executor_command": return okTool(await aiToolExecuteLocalCommand(args, signal, session));
       case "read_executor_task": return okTool(await localExecutor.read(args.task_id, args.cursor ?? 0, {sessionId: session.id}, signal, args.max_chars));
       case "cancel_executor_task": return okTool(await localExecutor.cancel(args.task_id, {sessionId: session.id}));
+      case "list_executor_tasks": return okTool(localExecutor.list({sessionId: session.id}));
       case "execute_ssh_command": return okTool(await aiToolExecuteSshCommand(args, signal, session));
       case "ask_user": return okTool(await aiToolAskUser(args, signal, session));
       case "get_current_file": return okTool(aiToolGetCurrentFile());
@@ -8642,7 +8646,10 @@ async function stopLocalTask(task) {
   if (ui.stopping || !localExecutor.state.reachable || isLocalTaskFinished(task) || ['submitting', 'cancelling'].includes(task.status)) return;
   ui.stopping = true;
   ui.error = '';
-  try { await localExecutor.cancel(task.id); }
+  try {
+    const result = await localExecutor.cancel(task.id);
+    if (!result.ok) ui.error = result.error || result.summary;
+  }
   catch (error) { ui.error = error.message; }
   finally { ui.stopping = false; }
 }
@@ -8683,7 +8690,10 @@ async function connectLocalExecutor() {
     // 连接后表单被替换，恢复弹窗焦点以继续使用 Esc 和 Tab。
     if (localDialog.visible && localExecutor.state.connected) { await nextTick(); localDialogElement.value?.focus(); }
   }
-  catch { /* 连接错误由会话展示，不回显凭据。 */ }
+  catch (error) {
+    if (error.code === 'EXECUTOR_PROTOCOL_UNSUPPORTED') localExecutor.state.error = tr('local.protocolUnsupported');
+    // 其他连接错误由会话展示，不回显凭据。
+  }
 }
 
 function applyLocalExecutorSettings() {
@@ -8744,7 +8754,9 @@ async function aiToolExecuteLocalCommand(input, signal, session) {
   if (!info || !localExecutor.state.reachable) throw new Error(tr("local.notConnected"));
   const dirtyHint = dirtyFiles.value.length ? tr("local.dirtyHint", { count: dirtyFiles.value.length }) : "";
   const action = {type: 'executor', target: {endpoint: localExecutor.state.url, platform: info.platform}, command: args.command,
-    shell: args.shell, cwd: args.cwd || info.default_cwd, claimed_purpose: args.reason, unsaved_files: dirtyFiles.value.map((file) => file.path)};
+    shell: args.shell, cwd: args.cwd || info.default_cwd, lifecycle: args.lifecycle,
+    lifecycle_effect: args.lifecycle === 'session' ? 'Owned descendants may continue after root exit and AI interruption, until explicit cancellation, disconnect or executor shutdown.' : 'Root exit and AI interruption clean owned descendants.',
+    claimed_purpose: args.reason, unsaved_files: dirtyFiles.value.map((file) => file.path)};
   let approval;
   try {
     approval = await authorizeAiCommand({
@@ -8754,7 +8766,8 @@ async function aiToolExecuteLocalCommand(input, signal, session) {
       confirmation: (approvalReason) => ({
         mode: "confirm", title: tr("local.run"), tone: "danger",
         message: tr(approvalReason === 'high-risk' ? "local.confirmHighRiskCommand" : approvalReason === 'not-whitelisted' ? "local.confirmUnauthorizedCommand" : "local.approve", {
-          command: args.command, commands: args.commands.join(", "), shell: args.shell, endpoint: action.target.endpoint, cwd: action.cwd, reason: args.reason, dirty: dirtyHint }),
+          command: args.command, commands: args.commands.join(", "), shell: args.shell, endpoint: action.target.endpoint, cwd: action.cwd, reason: args.reason, dirty: dirtyHint })
+          + `\n\n${tr(`local.lifecycle.${args.lifecycle}`)}: ${tr(`local.lifecycleHint.${args.lifecycle}`)}`,
         confirmLabel: tr("local.run"), cancelLabel: tr("dialog.cancel"),
       }),
     }, session, signal);

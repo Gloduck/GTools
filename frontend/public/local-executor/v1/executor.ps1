@@ -32,9 +32,8 @@ if ($wildcard -and -not $PublicUrl) { throw 'PublicUrl is required when listenin
 
 # 使用系统作业对象管理任务进程树。先创建挂起进程并加入作业，
 # 再执行用户命令，避免后台子进程抢先脱离任务管理。
-# 辅助类型带版本，重新启动时不会复用当前 PowerShell 会话中旧版的已编译类型。
-if (-not ('ExecutorTaskV4' -as [type])) {
-Add-Type -TypeDefinition @'
+# 启动入口使用独立进程，辅助类型无需保留旧版本或重复加载。# 启动入口使用独立进程，辅助类型无需保留旧版本或重复加载。
+Add-Type -TypeDefinition Add-Type -TypeDefinition @'
 using System;
 using System.IO;
 using System.Text;
@@ -43,14 +42,14 @@ using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
 // 终端日志只是结果副本，独立线程和有界队列避免慢终端阻塞请求及输出采集。
-public static class ExecutorTerminalLogV4 {
+public static class ExecutorTerminalLog {
     static readonly object gate=new object();
     static readonly Queue<string> pending=new Queue<string>();
     const int Limit=262144;
     static int pendingChars;
     static long droppedChars;
     static bool writing;
-    static ExecutorTerminalLogV4() {
+    static ExecutorTerminalLog() {
         var worker=new Thread(WriteLoop); worker.IsBackground=true; worker.Start();
     }
     public static void Append(string text) {
@@ -89,7 +88,7 @@ public static class ExecutorTerminalLogV4 {
         }
     }
 }
-public sealed class ExecutorTaskV4 : IDisposable {
+public sealed class ExecutorTask : IDisposable {
     [StructLayout(LayoutKind.Sequential)] struct Security { public int size; public IntPtr descriptor; public int inherit; }
     [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)] struct Startup {
         public int cb; public string reserved, desktop, title;
@@ -105,6 +104,10 @@ public sealed class ExecutorTaskV4 : IDisposable {
     [StructLayout(LayoutKind.Sequential)] struct ExtendedLimit {
         public BasicLimit basic; public IoCounters io; public UIntPtr processMemory,jobMemory,peakProcess,peakJob;
     }
+    [StructLayout(LayoutKind.Sequential)] struct Accounting {
+        public long userTime,kernelTime,periodUserTime,periodKernelTime;
+        public uint pageFaults,totalProcesses,activeProcesses,terminatedProcesses;
+    }
     [DllImport("kernel32.dll", SetLastError=true)] static extern bool CreatePipe(out IntPtr read,out IntPtr write,ref Security attr,int size);
     [DllImport("kernel32.dll", SetLastError=true)] static extern bool SetHandleInformation(IntPtr h,uint mask,uint flags);
     [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern IntPtr CreateFile(string name,uint access,uint share,ref Security attr,uint disposition,uint flags,IntPtr template);
@@ -112,6 +115,8 @@ public sealed class ExecutorTaskV4 : IDisposable {
     [DllImport("kernel32.dll", CharSet=CharSet.Unicode)] static extern IntPtr CreateJobObject(IntPtr attr,string name);
     [DllImport("kernel32.dll")] static extern bool SetInformationJobObject(IntPtr job,int kind,ref ExtendedLimit info,uint size);
     [DllImport("kernel32.dll")] static extern bool AssignProcessToJobObject(IntPtr job,IntPtr process);
+    [DllImport("kernel32.dll")] static extern bool TerminateJobObject(IntPtr job,uint code);
+    [DllImport("kernel32.dll")] static extern bool QueryInformationJobObject(IntPtr job,int kind,out Accounting info,uint size,IntPtr returnedLength);
     [DllImport("kernel32.dll")] static extern uint ResumeThread(IntPtr thread);
     [DllImport("kernel32.dll")] static extern bool TerminateProcess(IntPtr process,uint code);
     [DllImport("kernel32.dll")] static extern uint WaitForSingleObject(IntPtr handle,uint ms);
@@ -120,14 +125,15 @@ public sealed class ExecutorTaskV4 : IDisposable {
     readonly object gate = new object(); readonly StringBuilder output = new StringBuilder();
     IntPtr job, process; Thread reader; long outputStart; string stopReason;
     public string Id, Command, Cwd, Fingerprint, Shell, ScriptPath;
+    public string Lifecycle = "task";
     public string Status = "queued", Error = "";
     public int? ExitCode; public bool Truncated, DecodingLoss; public double CreatedAt;
     int outputChars;
     const int Limit = 262144;
-    bool completionLogged, processExited, outputFinished, readerStarted;
+    bool completionLogged, processExited, outputFinished, readerStarted, scopeUnconfirmed;
     void Log(string text) {
         if(String.IsNullOrEmpty(text)) return;
-        ExecutorTerminalLogV4.Append("["+Id+"] "+text+(text.EndsWith("\n") ? "" : "\n"));
+        ExecutorTerminalLog.Append("["+Id+"] "+text+(text.EndsWith("\n") ? "" : "\n"));
     }
     void LogCompletion() {
         if(completionLogged) return;
@@ -160,6 +166,8 @@ public sealed class ExecutorTaskV4 : IDisposable {
             Error=e.Message; Status="failed";
             if(process!=IntPtr.Zero) { TerminateProcess(process,1); CloseHandle(process); process=IntPtr.Zero; }
             Kill();
+            while(ActiveProcesses()>0) Thread.Sleep(20);
+            CloseJob();
             if(!readerStarted && outputStream!=null) outputStream.Dispose();
             CleanupScript(); LogCompletion();
         }
@@ -228,7 +236,21 @@ public sealed class ExecutorTaskV4 : IDisposable {
         return index;
     }
     void CleanupScript() { if(!String.IsNullOrEmpty(ScriptPath)) { try { File.Delete(ScriptPath); ScriptPath=null; } catch(IOException) {} catch(UnauthorizedAccessException) {} } }
-    void Kill() { if(job!=IntPtr.Zero) { CloseHandle(job); job=IntPtr.Zero; } }
+    // 终止后保留 Job 句柄，确认组内业务进程全部结束再释放控制身份。
+    void Kill() { if(job!=IntPtr.Zero && !TerminateJobObject(job,1)) FailJob("Cannot terminate process job"); }
+    void CloseJob() { if(job!=IntPtr.Zero) { CloseHandle(job); job=IntPtr.Zero; } }
+    void FailJob(string message) {
+        Error=message; scopeUnconfirmed=true; Status="unknown";
+        if(job!=IntPtr.Zero) { TerminateJobObject(job,1); CloseJob(); }
+    }
+    int ActiveProcesses() {
+        if(job==IntPtr.Zero) return scopeUnconfirmed ? -1 : 0;
+        Accounting info;
+        if(!QueryInformationJobObject(job,1,out info,(uint)Marshal.SizeOf(typeof(Accounting)),IntPtr.Zero)) {
+            FailJob("Cannot query process job; cleanup is unconfirmed"); return -1;
+        }
+        return (int)info.activeProcesses;
+    }
     public void Stop(string reason) {
         lock(gate) {
             if(Status=="running" || Status=="queued" || Status=="cancelling") {
@@ -238,15 +260,17 @@ public sealed class ExecutorTaskV4 : IDisposable {
     }
     public void Tick() {
         lock(gate) {
-            if(Status!="running" && Status!="cancelling") return;
+            if(Status!="running" && Status!="cancelling" && Status!="unknown") return;
             if(process!=IntPtr.Zero && WaitForSingleObject(process,0)==0) {
                 uint code;
                 if(GetExitCodeProcess(process,out code)) ExitCode=unchecked((int)code);
                 else Error="Cannot read process exit code";
-                Kill(); CloseHandle(process); process=IntPtr.Zero; processExited=true;
+                if(Lifecycle=="task") Kill();
+                CloseHandle(process); process=IntPtr.Zero; processExited=true;
             }
             // HTTP 主循环不等待读线程；EOF 和解码收尾完成后才发布稳定终态。
-            if(processExited && outputFinished) {
+            if(!scopeUnconfirmed && processExited && ActiveProcesses()==0 && outputFinished) {
+                CloseJob();
                 CleanupScript();
                 Status=stopReason ?? (ExitCode==0 && String.IsNullOrEmpty(Error) ? "completed" : "failed");
                 LogCompletion();
@@ -265,19 +289,24 @@ public sealed class ExecutorTaskV4 : IDisposable {
             if(start<total && Char.IsLowSurrogate(output[(int)(start-outputStart)])) throw new ArgumentException("Cursor splits a character");
             long end=outputStart+AdvanceCharacters((int)(start-outputStart),maxChars,visible);
             // 游标仍是不透明的 UTF-16 位置；返回数量按完整字符计算。
-            return new { id=Id,status=Status,cwd=Cwd,shell=Shell,output=output.ToString((int)(start-outputStart),(int)(end-start)),cursor=end,has_more=end<total,output_lost=cursor<outputStart,
+            return new { id=Id,status=Status,cwd=Cwd,shell=Shell,lifecycle=Lifecycle,output=output.ToString((int)(start-outputStart),(int)(end-start)),cursor=end,has_more=end<total,output_lost=cursor<outputStart,
                          exit_code=ExitCode,truncated=Truncated,decoding_loss=DecodingLoss,error=Error,created_at=CreatedAt };
         }
     }
     public void Dispose() {
         Stop("cancelled");
         if(process!=IntPtr.Zero) WaitForSingleObject(process,5000);
-        if(readerStarted) reader.Join();
-        Tick(); CleanupScript(); LogCompletion();
+        Tick();
+        // 错误收尾可以结束等待，但不能用超时冒充真实 EOF 或已清空的 Job。
+        if(readerStarted && !reader.Join(5000)) FailJob("Output cleanup could not be confirmed");
+        do { Tick(); if(Status=="running" || Status=="cancelling") Thread.Sleep(20); }
+        while(Status=="running" || Status=="cancelling");
+        CloseJob();
+        if(process!=IntPtr.Zero) { CloseHandle(process); process=IntPtr.Zero; }
+        CleanupScript(); LogCompletion();
     }
 }
 '@
-}
 
 if ($Port -eq 0) {
     $probe = New-Object Net.Sockets.TcpListener($listenIp, 0)
@@ -409,7 +438,7 @@ try {
                 if ($null -eq $body -or $body -isnot [pscustomobject]) { Fail-Request 400 'Expected an object' }
             }
             if ($request.HttpMethod -eq 'GET' -and $path -eq '/v1/info') {
-                $result = @{ protocol_version=1; runtime='powershell'; platform='win32'; shell='powershell'; shells=@('powershell','cmd'); default_cwd=$Cwd;
+                $result = @{ protocol_version=2; runtime='powershell'; platform='win32'; shell='powershell'; shells=@('powershell','cmd'); default_cwd=$Cwd;
                     output_buffer_chars=262144 }
             } elseif ($request.HttpMethod -eq 'POST' -and $path -eq '/v1/tasks') {
                 if ($body.id -isnot [string] -or $body.id -cnotmatch '^[a-zA-Z0-9_-]{8,80}$') { Fail-Request 400 'Invalid task id' }
@@ -420,6 +449,11 @@ try {
                     $shellName = $body.shell
                 }
                 $directory = $Cwd
+                $lifecycle = 'task'
+                if ($body.PSObject.Properties.Name -contains 'lifecycle') {
+                    if ($body.lifecycle -isnot [string] -or $body.lifecycle -cnotin @('task','session')) { Fail-Request 400 'lifecycle must be task or session' }
+                    $lifecycle = $body.lifecycle
+                }
                 if ($null -ne $body.cwd -and $body.cwd -isnot [string]) { Fail-Request 400 'Invalid working directory' }
                 if ($body.cwd -is [string] -and $body.cwd.Length -gt 0) {
                     try {
@@ -429,13 +463,13 @@ try {
                     } catch { Fail-Request 400 'Working directory does not exist' }
                     if (-not [IO.Directory]::Exists($directory)) { Fail-Request 400 'Working directory is not a directory' }
                 }
-                $fingerprint = ConvertTo-Json -Compress @($body.command,$directory,$shellName)
+                $fingerprint = ConvertTo-Json -Compress @($body.command,$directory,$shellName,$lifecycle)
                 if ($tasks.ContainsKey($body.id)) {
                     if ($tasks[$body.id].Fingerprint -cne $fingerprint) { Fail-Request 409 'Task id already belongs to different execution content' }
                     $result = $tasks[$body.id].Snapshot(0)
                 } else {
-                    $task = New-Object ExecutorTaskV4
-                    $task.Shell=$shellName; $task.Id=$body.id; $task.Command=$body.command; $task.Cwd=$directory; $task.Fingerprint=$fingerprint
+                    $task = New-Object ExecutorTask
+                    $task.Shell=$shellName; $task.Id=$body.id; $task.Command=$body.command; $task.Cwd=$directory; $task.Fingerprint=$fingerprint; $task.Lifecycle=$lifecycle
                     $task.CreatedAt=([DateTime]::UtcNow-[DateTime]'1970-01-01').TotalSeconds
                     if ($shellName -eq 'cmd') {
                         # CMD 使用原始批处理文件，保留引号、管道、百分号和多行语义。
@@ -476,6 +510,6 @@ try {
 } finally {
     $listener.Close()
     foreach ($task in $tasks.Values) { $task.Dispose() }
-    [void][ExecutorTerminalLogV4]::Flush(1000)
+    [void][ExecutorTerminalLog]::Flush(1000)
     [Console]::Error.WriteLine('Local executor stopped.')
 }

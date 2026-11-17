@@ -26,7 +26,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
-VERSION = 1
+VERSION = 2
 MAX_BODY = 128 * 1024
 MAX_OUTPUT_CHARS = 256 * 1024
 DEFAULT_READ_CHARS = 5000
@@ -34,6 +34,67 @@ MAX_READ_CHARS = 20000
 MAX_LOG_CHARS = 256 * 1024
 TASK_ID = re.compile(r"^[a-zA-Z0-9_-]{8,80}$")
 FINAL = {"completed", "failed", "cancelled"}
+
+# 监管进程持有组身份；控制管道独立于业务输出，停止信号由组内监管者发出。
+POSIX_SUPERVISOR = r'''
+import os, signal, subprocess, sys, threading
+print("READY %d" % os.getpid(), file=sys.stderr, flush=True)
+if sys.stdin.readline().strip() != "START":
+    sys.exit(1)
+root = subprocess.Popen(["/bin/sh", "-c", sys.argv[1]], stdin=subprocess.DEVNULL, stderr=subprocess.STDOUT)
+os.close(1)
+report_lock = threading.Lock()
+reported = False
+def report(code):
+    global reported
+    with report_lock:
+        if not reported:
+            try:
+                print("EXIT %d" % code, file=sys.stderr, flush=True)
+            except OSError:
+                pass  # 控制接收端已离开时，不能阻断监管者的组清理。
+            reported = True
+def control():
+    for line in sys.stdin:
+        if line.strip() == "FINISH":
+            os._exit(0)
+        if line.strip() == "STOP":
+            break
+    try:
+        root.kill()
+        report(root.wait())
+    finally:
+        os.killpg(os.getpgrp(), signal.SIGKILL)
+threading.Thread(target=control, daemon=True).start()
+report(root.wait())
+threading.Event().wait()
+'''
+
+
+def group_has_business(group):
+    # 僵尸已不能执行或产生输出；监管者自身不代表业务仍在运行。
+    if sys.platform.startswith("linux"):
+        with os.scandir("/proc") as entries:
+            for entry in entries:
+                if not entry.name.isdigit() or int(entry.name) == group:
+                    continue
+                try:
+                    if os.getpgid(int(entry.name)) != group:
+                        continue
+                    with open(entry.path + "/stat") as source:
+                        stat = source.read()
+                    fields = stat[stat.rfind(")") + 1:].split()
+                    if int(fields[2]) == group and fields[0] not in ("Z", "X"):
+                        return True
+                except (FileNotFoundError, ProcessLookupError):
+                    continue
+                except PermissionError:
+                    raise OSError("Cannot inspect task process group")
+        return False
+    # macOS 沿用系统 ps；不要求 /proc 或额外依赖。
+    output = subprocess.check_output(["ps", "-axo", "pid=,pgid=,stat="], text=True)
+    return any(int(pid) != group and int(pgid) == group and not state.startswith(("Z", "X"))
+               for pid, pgid, state in (line.split() for line in output.splitlines()))
 
 
 def powershell_arguments(command):
@@ -159,6 +220,8 @@ class WindowsJob:
         k.CreateJobObjectW.restype = w.HANDLE
         k.SetInformationJobObject.argtypes = [w.HANDLE, ctypes.c_int, ctypes.c_void_p, w.DWORD]
         k.AssignProcessToJobObject.argtypes = [w.HANDLE, w.HANDLE]
+        k.TerminateJobObject.argtypes = [w.HANDLE, w.UINT]
+        k.QueryInformationJobObject.argtypes = [w.HANDLE, ctypes.c_int, ctypes.c_void_p, w.DWORD, ctypes.c_void_p]
         k.CloseHandle.argtypes = [w.HANDLE]
         self.k, self.handle = k, k.CreateJobObjectW(None, None)
         limits = Extended()
@@ -171,6 +234,27 @@ class WindowsJob:
         if nt.NtResumeProcess(w.HANDLE(int(process._handle))) != 0:
             self.close()
             raise OSError("Unable to resume task process")
+
+    def terminate(self):
+        if self.handle and not self.k.TerminateJobObject(self.handle, 1):
+            failure = ctypes.WinError(ctypes.get_last_error())
+            self.close()  # 终止调用失败时仍利用 KILL_ON_JOB_CLOSE 尽力清理。
+            raise failure
+
+    def active(self):
+        from ctypes import wintypes as w
+        if not self.handle:
+            raise OSError("Process job cleanup could not be confirmed")
+        class Accounting(ctypes.Structure):
+            _fields_ = [(name, ctypes.c_int64) for name in ("TotalUserTime", "TotalKernelTime", "ThisPeriodTotalUserTime", "ThisPeriodTotalKernelTime")] + [
+                (name, w.DWORD) for name in ("TotalPageFaultCount", "TotalProcesses", "ActiveProcesses", "TotalTerminatedProcesses")]
+        result = Accounting()
+        if not self.k.QueryInformationJobObject(self.handle, 1, ctypes.byref(result), ctypes.sizeof(result), None):
+            failure = ctypes.WinError(ctypes.get_last_error())
+            self.k.TerminateJobObject(self.handle, 1)
+            self.close()
+            raise failure
+        return result.ActiveProcesses
 
     def close(self):
         if self.handle:
@@ -216,6 +300,9 @@ class Executor:
         task_id = body.get("id")
         command = body.get("command")
         shell = body.get("shell", self.shells[0])
+        lifecycle = body.get("lifecycle", "task")
+        if lifecycle not in ("task", "session"):
+            raise ApiError(400, "lifecycle must be task or session")
         if not isinstance(shell, str) or shell not in self.shells:
             raise ApiError(400, "Unsupported shell on this computer")
         cwd = body.get("cwd", self.cwd)
@@ -233,7 +320,7 @@ class Executor:
             raise ApiError(400, "Working directory does not exist")
         if not Path(cwd).is_dir():
             raise ApiError(400, "Working directory is not a directory")
-        fingerprint = hashlib.sha256(json.dumps([command, cwd, shell], ensure_ascii=False).encode()).hexdigest()
+        fingerprint = hashlib.sha256(json.dumps([command, cwd, shell, lifecycle], ensure_ascii=False).encode()).hexdigest()
         with self.lock:
             if self.closed:
                 raise ApiError(410, "Executor is closed")
@@ -241,7 +328,7 @@ class Executor:
                 if self.tasks[task_id].fingerprint != fingerprint:
                     raise ApiError(409, "Task id already belongs to different execution content")
                 return self.tasks[task_id].snapshot(0)
-            task = Task(self, task_id, command, cwd, fingerprint, shell)
+            task = Task(self, task_id, command, cwd, fingerprint, shell, lifecycle)
             self.tasks[task_id] = task
             threading.Thread(target=task.run, daemon=True).start()
             return task.snapshot(0)
@@ -264,18 +351,22 @@ class Executor:
 
 
 class Task:
-    def __init__(self, executor, task_id, command, cwd, fingerprint, shell):
+    def __init__(self, executor, task_id, command, cwd, fingerprint, shell, lifecycle="task"):
         self.executor, self.id, self.command, self.cwd = executor, task_id, command, cwd
         self.fingerprint = fingerprint
         self.shell, self.script_path = shell, None
+        self.lifecycle = lifecycle
         self.lock = threading.RLock()
         self.status, self.exit_code, self.error = "queued", None, ""
         self.output, self.output_start = "", 0
         self.truncated = False
         self.decoding_loss = False
+        self.output_incomplete = False
         self.process, self.job, self.stop_reason = None, None, None
         self.done = threading.Event()
         self.created_at = time.time()
+        self.scope_empty = False
+        self.scope_stopping = False
 
     def snapshot(self, cursor, max_chars=DEFAULT_READ_CHARS):
         with self.lock:
@@ -286,11 +377,11 @@ class Task:
                 raise ApiError(400, "Invalid output cursor")
             start = max(cursor, self.output_start)
             end = min(total, start + max_chars)
-            return {"id": self.id, "status": self.status, "cwd": self.cwd, "shell": self.shell,
+            return {"id": self.id, "status": self.status, "cwd": self.cwd, "shell": self.shell, "lifecycle": self.lifecycle,
                     "output": self.output[start - self.output_start:end - self.output_start],
                     "cursor": end, "has_more": end < total, "exit_code": self.exit_code,
                     "truncated": self.truncated, "output_lost": cursor < self.output_start,
-                    "decoding_loss": self.decoding_loss, "error": self.error, "created_at": self.created_at}
+                    "decoding_loss": self.decoding_loss, "output_incomplete": self.output_incomplete, "error": self.error, "created_at": self.created_at}
 
     def append_output(self, text):
         # 仅保留最近的输出；缓存滚动不会停止命令或阻塞输出管道。
@@ -303,24 +394,45 @@ class Task:
 
     def stop(self, reason):
         with self.lock:
-            if self.status in FINAL:
+            if self.status in FINAL or self.done.is_set():
                 return
             if self.stop_reason is None:
                 self.stop_reason = reason
             self.status = "cancelling"
-            self.kill_tree()
+            try:
+                self.kill_tree()
+            except OSError as exc:
+                self.error = 'Task cleanup could not be confirmed: ' + str(exc)
+                self.status = "unknown"
 
     def kill_tree(self):
         if self.job:
-            self.job.close()
+            self.job.terminate()
         elif self.process:
             try:
                 if os.name == "nt":
                     self.process.kill()
                 else:
-                    os.killpg(self.process.pid, signal.SIGKILL)
+                    self.process.stdin.write(b"STOP\n")
+                    self.process.stdin.flush()
+                    self.scope_stopping = True
             except (ProcessLookupError, OSError):
                 pass
+
+    def wait_job_empty(self):
+        while self.job.active():
+            time.sleep(0.1)
+        self.scope_empty = True
+
+    def wait_group_empty(self):
+        stopped_at = None
+        while group_has_business(self.process.pid):
+            if self.process.poll() is not None:
+                stopped_at = stopped_at or time.monotonic()
+                if not self.scope_stopping or time.monotonic() - stopped_at >= 1:
+                    raise OSError("Task supervisor is gone while owned processes remain; cleanup cannot be confirmed")
+            time.sleep(0.1)
+        self.scope_empty = True
 
     def read_output(self):
         decoder = OutputDecoder()
@@ -337,6 +449,7 @@ class Task:
         except Exception as exc:
             with self.lock:
                 self.error = 'Output collection failed; output may be incomplete: ' + str(exc)
+                self.output_incomplete = True
                 self.kill_tree()  # 读取已失效时不能让写满管道的子进程一直阻塞。
         finally:
             with self.lock:
@@ -344,6 +457,7 @@ class Task:
                 self.decoding_loss = decoder.loss
                 self.append_output(text)
             self.executor.log(self.id, text)
+            self.process.stdout.close()
 
     def run(self):
         reader = None
@@ -373,13 +487,44 @@ class Task:
                     self.process = subprocess.Popen(argv, executable=executable, cwd=self.cwd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, creationflags=0x4 | 0x08000000, bufsize=0)
                     self.job = WindowsJob(self.process)
                 else:
-                    argv = ["/bin/sh", "-c", self.command]
-                    self.process = subprocess.Popen(argv, cwd=self.cwd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True, bufsize=0)
+                    argv = [sys.executable, "-u", "-c", POSIX_SUPERVISOR, self.command]
+                    self.process = subprocess.Popen(argv, cwd=self.cwd, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True, bufsize=0)
                 self.status = "running"
+            if os.name != "nt":
+                if self.process.stderr.readline(128) != ("READY %d\n" % self.process.pid).encode():
+                    raise OSError("Cannot initialize task supervisor")
+                with self.lock:
+                    if self.stop_reason:
+                        return
+                    self.process.stdin.write(b"START\n")
+                    self.process.stdin.flush()
             reader = threading.Thread(target=self.read_output, daemon=True)
             reader.start()
             reader_started = True
-            self.process.wait()
+            if os.name == "nt":
+                code = self.process.wait()
+            else:
+                line = self.process.stderr.readline(128)
+                if not re.fullmatch(rb"EXIT -?\d+\n", line):
+                    if not self.stop_reason:
+                        raise OSError("Task supervisor exited before reporting the root command result")
+                    code = None
+                else:
+                    code = int(line[5:])
+            with self.lock:
+                self.exit_code = code
+                if self.lifecycle == "task" or self.stop_reason:
+                    self.kill_tree()
+            if self.job:
+                self.wait_job_empty()
+            elif self.process:
+                self.wait_group_empty()
+                if self.process.poll() is None:
+                    try:
+                        self.process.stdin.write(b"FINISH\n")
+                        self.process.stdin.flush()
+                    except BrokenPipeError:
+                        pass
         except Exception as exc:
             with self.lock:
                 self.error = self.error or str(exc)
@@ -393,20 +538,36 @@ class Task:
                         self.error = self.error or 'Task cleanup failed: ' + str(exc)
 
             with self.lock:
-                cleanup(self.kill_tree)  # 前台结束或启动失败时都清理同组后台进程。
+                cleanup(self.kill_tree)
             if self.process:
                 cleanup(lambda: self.process.wait(timeout=5))
+                if self.job:
+                    cleanup(self.wait_job_empty)
+                elif os.name != "nt" and not self.scope_empty:
+                    cleanup(self.wait_group_empty)
                 # 终态意味着不会再新增输出，不能用超时等待冒充已经读到 EOF。
                 if reader_started:
-                    cleanup(reader.join)
-                cleanup(self.process.stdout.close)
+                    cleanup(lambda: reader.join(None if self.scope_empty else 1))
+                    if reader.is_alive():
+                        with self.lock:
+                            self.output_incomplete = True
+                            self.error = self.error or 'Output collection is incomplete after losing task supervision'
+                if not reader_started or not reader.is_alive():
+                    cleanup(self.process.stdout.close)
+                if os.name != "nt":
+                    cleanup(self.process.stdin.close)
+                    cleanup(self.process.stderr.close)
                 if os.name == "nt" and self.process.returncode is not None:
+                    with self.lock:
+                        self.exit_code = self.process.returncode
                     cleanup(self.process._handle.Close)
+            if self.job:
+                cleanup(self.job.close)
             if self.script_path:
                 cleanup(lambda: os.unlink(self.script_path))
             with self.lock:
-                self.exit_code = self.process.returncode if self.process else None
-                self.status = self.stop_reason or ("completed" if self.exit_code == 0 and not self.error else "failed")
+                confirmed = self.process is None or self.scope_empty or (os.name == "nt" and self.job is None)
+                self.status = (self.stop_reason or ("completed" if self.exit_code == 0 and not self.error else "failed")) if confirmed else "unknown"
             try:
                 self.executor.log(self.id, "执行结束 | 状态: %s | 退出码: %s%s" % (self.status, self.exit_code, " | " + self.error if self.error else ""))
             finally:

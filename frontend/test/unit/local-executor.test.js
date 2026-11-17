@@ -98,8 +98,10 @@ test('场景：凭据仅放请求头，禁止重定向并原样传递输出游�
 });
 
 test('场景：连接握手拒绝不兼容的协议', async () => {
-    const client = new LocalExecutorClient(connection, {fetchImpl: async () => ({ok: true, json: async () => ({protocol_version: 5})})});
-    await assert.rejects(client.info(), /Unsupported/);
+    for (const protocol_version of [1, 5]) {
+        const client = new LocalExecutorClient(connection, {fetchImpl: async () => ({ok: true, json: async () => ({protocol_version})})});
+        await assert.rejects(client.info(), /Unsupported/);
+    }
 });
 
 test('场景：Android 使用独立 DEX 启动入口并兼容现有协议', async () => {
@@ -109,7 +111,7 @@ test('场景：Android 使用独立 DEX 启动入口并兼容现有协议', asyn
     assert.doesNotMatch(command, /command -v|then|else/);
     assert.match(command, /'192\.168\.1\.25' 8321/);
     assert.doesNotMatch(command, /\bsu\b|python|powershell/);
-    const info = {protocol_version: 1, runtime: 'android', platform: 'android', shell: 'sh', shells: ['sh'], default_cwd: '/data/local/tmp'};
+    const info = {protocol_version: 2, runtime: 'android', platform: 'android', shell: 'sh', shells: ['sh'], default_cwd: '/data/local/tmp'};
     const client = new LocalExecutorClient(connection, {fetchImpl: async () => ({ok: true, json: async () => info})});
     assert.deepEqual(await client.info(), info);
 });
@@ -183,4 +185,13 @@ test('场景：启动命令传递监听 IP、端口和 HTTPS 访问入口，不�
     }
     assert.throws(() => buildLocalStartupCommand({...common, listenAddress: '0.0.0.0', publicUrl: ''}));
     assert.match(buildLocalStartupCommand({...common, platform: 'unix', listenAddress: '::1'}), /'::1'/);
+});
+
+test('场景：任务生命周期默认 task，显式 session 原样保留且拒绝未知模式', () => {
+    const args = {command: 'start-service', reason: '启动本轮托管服务', commands: ['start-service'], high_risk: false};
+    assert.equal(normalizeLocalCommand(args).lifecycle, 'task');
+    assert.equal(normalizeLocalCommand({...args, lifecycle: 'session'}).lifecycle, 'session');
+    for (const lifecycle of ['', 'background', null, 1]) {
+        assert.throws(() => normalizeLocalCommand({...args, lifecycle}), /lifecycle/i);
+    }
 });

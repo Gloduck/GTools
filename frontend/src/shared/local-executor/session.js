@@ -1,5 +1,23 @@
 import {reactive, watch} from 'vue';
-import {isLocalTaskFinished, LocalExecutorClient, normalizeLocalWaitSeconds, normalizeLocalMaxChars, LOCAL_OUTPUT_MAX_CHARS} from './client.js';
+import {isLocalTaskFinished, LocalExecutorClient, normalizeLocalWaitSeconds, normalizeLocalMaxChars, normalizeLocalLifecycle, LOCAL_OUTPUT_MAX_CHARS} from './client.js';
+
+// 摘要会进入后续对话；仅从本次真实响应摘取游标，不能复用页面轮询位置。
+function formatTaskResult(endpoint, task, snapshot = {}, extra = {}) {
+    const result = {ok: !extra.output_unavailable && extra.execution_state !== 'not_started', task_id: task.id, endpoint, lifecycle: task.lifecycle, shell: task.shell, cwd: task.cwd,
+        ...snapshot, ...extra};
+    result.status ||= 'unknown';
+    if (result.status === 'unknown' && result.error) result.ok = false;
+    const details = [`${result.status}`, `lifecycle=${result.lifecycle}`];
+    if (result.exit_code !== undefined && result.exit_code !== null) details.push(`root exit_code=${result.exit_code}`);
+    if (Number.isSafeInteger(snapshot.cursor)) details.push(`cursor=${snapshot.cursor}`, `has_more=${!!snapshot.has_more}`);
+    if (extra.cancel_requested) details.push('cancellation requested');
+    if (result.error) details.push(`error=${String(result.error).slice(0, 500)}`);
+    result.summary = `Task ${task.id} at ${endpoint}: ${details.join('; ')}.`;
+    if (result.execution_state === 'not_started') result.summary += ' Submission was rejected; the command was not started.';
+    else if (result.output_unavailable || result.status === 'unknown') result.summary += ' State or output is unconfirmed. Read this task id; do not repeat the command automatically.';
+    else if (!isLocalTaskFinished(result)) result.summary += ' Execution may still be running; read this task id for its state and output.';
+    return result;
+}
 
 // 仅将非敏感展示状态放入响应式对象；凭据不进入设置、
 // 会话序列化、模型上下文、URL 或组件属性。
@@ -14,6 +32,8 @@ export function createLocalExecutorSession({heartbeatMs = 5000} = {}) {
     function apply(task, snapshot) {
         if (snapshot.id !== task.id || !Number.isSafeInteger(snapshot.cursor) || snapshot.cursor < task.cursor) throw new Error('Invalid task response');
         task.status = snapshot.status;
+        task.lifecycle = snapshot.lifecycle;
+        task.created_at = snapshot.created_at;
         task.exit_code = snapshot.exit_code;
         task.error = snapshot.error || '';
         task.truncated ||= !!snapshot.truncated;
@@ -47,7 +67,7 @@ export function createLocalExecutorSession({heartbeatMs = 5000} = {}) {
                         if (version !== generation) return;
                         task.error = error.message;
                         if (error.status === 404) {
-                            task.status = 'failed';
+                            task.status = 'unknown';
                             task.error = '任务记录不存在，执行结果无法确认。请检查终端，不要自动重跑命令。';
                             task.has_more = false;
                         }
@@ -116,7 +136,7 @@ export function createLocalExecutorSession({heartbeatMs = 5000} = {}) {
     async function finishInterruptedTask(current, task, version, maxChars) {
         let cancelRequested = false;
         let cancellationError = '';
-        if (!isLocalTaskFinished(task)) {
+        if (task.lifecycle === 'task' && !isLocalTaskFinished(task)) {
             cancelRequested = true;
             try {
                 const result = await current.cancel(task.id);
@@ -125,7 +145,7 @@ export function createLocalExecutorSession({heartbeatMs = 5000} = {}) {
                 cancellationError = error.message;
             }
         }
-        const facts = {task_id: task.id, endpoint: current.url, cancel_requested: cancelRequested,
+        const facts = {cancel_requested: cancelRequested,
             ...(cancellationError ? {cancellation_error: cancellationError} : {})};
         try {
             // 使用独立读取游标取得真实输出；页面尾缓存不能代表本次工具结果。
@@ -136,13 +156,11 @@ export function createLocalExecutorSession({heartbeatMs = 5000} = {}) {
                 task.error = result.error || '';
                 task.has_more = result.cursor > task.cursor || result.has_more;
             }
-            return {...result, ...facts, ok: result.status === 'completed', interrupted: result.status !== 'completed',
-                execution_state: isLocalTaskFinished(result) ? 'finished' : 'unknown',
-                summary: `Task ${task.id} at ${current.url}: ${result.status}. ${isLocalTaskFinished(result) ? 'Execution finished.' : 'Execution may still be running; read this task id before taking further action. Do not repeat the command automatically.'}`};
+            return formatTaskResult(current.url, task, result, {...facts, ok: result.status === 'completed', interrupted: result.status !== 'completed',
+                execution_state: isLocalTaskFinished(result) ? 'finished' : 'unknown'});
         } catch (error) {
-            return {...facts, ok: false, interrupted: true, execution_state: 'unknown', status: 'unknown',
-                shell: task.shell, cwd: task.cwd, cursor: 0, output: '', output_unavailable: true, has_more: true, error: error.message,
-                summary: `Task ${task.id} at ${current.url}: execution state and output are unconfirmed. Read this task id; do not repeat the command automatically.`};
+            return formatTaskResult(current.url, task, {}, {...facts, ok: false, interrupted: true, execution_state: 'unknown',
+                output_unavailable: true, error: error.message});
         }
     }
     return {
@@ -171,17 +189,18 @@ export function createLocalExecutorSession({heartbeatMs = 5000} = {}) {
             if (!client || !state.reachable) throw new Error('Executor is not connected');
             const waitSeconds = normalizeLocalWaitSeconds(args.wait_seconds);
             const maxChars = normalizeLocalMaxChars(args.max_chars);
+            const lifecycle = normalizeLocalLifecycle(args.lifecycle);
             if (signal?.aborted) throw signal.reason || new DOMException('Aborted', 'AbortError');
             const current = client;
             const version = generation;
             const id = crypto.randomUUID();
             const shell = args.shell || state.shell || state.info.shell;
             if (!(state.info.shells || [state.info.shell]).includes(shell)) throw new Error('Shell is unavailable on this connection');
-            const task = reactive({id, shell, command: args.command, reason: args.reason || '', cwd: args.cwd || state.info.default_cwd, status: 'submitting', output: '', cursor: 0, has_more: false, exit_code: null, error: '', truncated: false, output_lost: false, decoding_loss: false});
+            const task = reactive({id, shell, lifecycle, command: args.command, reason: args.reason || '', cwd: args.cwd || state.info.default_cwd, status: 'submitting', output: '', cursor: 0, has_more: false, exit_code: null, error: '', truncated: false, output_lost: false, decoding_loss: false, created_at: Date.now() / 1000});
             state.tasks.unshift(task);
             owners.set(id, owner);
             try {
-                const result = await current.submit({id, command: args.command, cwd: args.cwd, shell}, signal);
+                const result = await current.submit({id, command: args.command, cwd: args.cwd, shell, lifecycle}, signal);
                 if (version !== generation) {
                     current.cancel(id).catch(() => {});
                     throw new Error('Connection changed during execution');
@@ -193,42 +212,60 @@ export function createLocalExecutorSession({heartbeatMs = 5000} = {}) {
                 const rejected = [400, 401, 403, 409, 410, 413, 415, 429].includes(error.status);
                 task.status = rejected ? 'failed' : 'unknown';
                 task.error = error.message;
-                if (rejected) throw error;
+                if (rejected) return formatTaskResult(current.url, task, {}, {status: 'failed', execution_state: 'not_started', error: error.message, output_unavailable: true});
                 if (signal?.aborted || version !== generation) {
                     if (signal?.aborted) return finishInterruptedTask(current, task, version, maxChars);
                     current.cancel(id).catch(() => {});
                     throw error;
                 }
-                return {task_id: id, status: 'unknown', summary: `Executor task submission outcome unknown. Read this task id; do not repeat the command automatically. ${error.message}`};
+                return formatTaskResult(current.url, task, {}, {execution_state: 'unknown', error: error.message, output_unavailable: true});
             }
             try {
                 await waitForTask(task, waitSeconds, version, signal);
                 // AI 的读取游标与页面轮询独立。页面裁剪日志不能推进 AI 尚未收到的内容。
                 const result = await current.read(id, 0, signal, maxChars);
                 if (version !== generation) throw new Error('Connection changed during execution');
-                return {...result, task_id: id, summary: `Executor command ${result.status}`};
+                return formatTaskResult(current.url, task, result);
             } catch (error) {
-                // 结束等待不等于命令已停止，取消后读取一次真实状态再交回 Agent。
+                // 会话任务只结束等待；普通任务请求取消，再读取一次真实状态。
                 if (signal?.aborted) return finishInterruptedTask(current, task, version, maxChars);
                 if (version !== generation) throw error;
                 // 读取失败不表示命令未执行，也不能把页面尾缓存当作完整结果。
-                return {task_id: id, status: 'unknown', shell, cwd: task.cwd, cursor: 0, output: '', error: error.message,
-                    has_more: true, summary: 'Executor output is unavailable. Read this task id; do not repeat the command automatically.'};
+                return formatTaskResult(current.url, task, {}, {execution_state: 'unknown', output_unavailable: true, error: error.message});
             }
         },
         async read(id, cursor, owner, signal, maxChars) {
             if (!client) throw new Error('No executor connection');
             if (owners.get(id)?.sessionId !== owner.sessionId) throw new Error('Task does not belong to this AI session');
-            const result = await client.read(id, cursor, signal, maxChars);
-            return {...result, task_id: id, summary: `Executor task ${result.status}`};
+            const current = client;
+            const task = state.tasks.find((item) => item.id === id);
+            try {
+                const result = await current.read(id, cursor, signal, maxChars);
+                return formatTaskResult(current.url, task, result);
+            } catch (error) {
+                return formatTaskResult(current.url, task, {}, {execution_state: 'unknown', output_unavailable: true, error: error.message});
+            }
         },
         async cancel(id, owner) {
             if (!client) throw new Error('No executor connection');
             if (owner && owners.get(id)?.sessionId !== owner.sessionId) throw new Error('Task does not belong to this AI session');
-            const result = await client.cancel(id);
+            const current = client;
             const task = state.tasks.find((item) => item.id === id);
-            if (task) { task.status = result.status; task.has_more = true; }
-            return {...result, task_id: id, summary: `Cancellation requested; task is ${result.status}`};
+            try {
+                const result = await current.cancel(id);
+                if (task) { task.status = result.status; task.exit_code = result.exit_code; task.has_more = true; }
+                return formatTaskResult(current.url, task || {id}, result, {cancel_requested: true});
+            } catch (error) {
+                return formatTaskResult(current.url, task || {id}, {}, {execution_state: 'unknown', output_unavailable: true, error: error.message, cancel_requested: true});
+            }
+        },
+        list(owner) {
+            if (!client) throw new Error('No executor connection');
+            const endpoint = client.url;
+            const tasks = state.tasks.filter((task) => owner?.sessionId && owners.get(task.id)?.sessionId === owner.sessionId)
+                .map((task) => ({task_id: task.id, endpoint, lifecycle: task.lifecycle, status: task.status, command: task.command,
+                    reason: task.reason, shell: task.shell, cwd: task.cwd, exit_code: task.exit_code, created_at: task.created_at}));
+            return {tasks, endpoint, reachable: state.reachable, summary: `Last observed executor tasks at ${endpoint} (reachable=${state.reachable}): ${tasks.map((task) => `${task.task_id} (${task.lifecycle}, ${task.status})`).join(', ') || 'none'}. Read a task id for a current snapshot.`};
         },
         dispose() { disconnect(); },
     };

@@ -904,3 +904,60 @@ test('本地命令在途时打断保留任务标识与取消快照，续轮不�
     expect(result.cancel_requested).toBe(true);
     expect(['running', 'cancelled', 'failed', 'completed']).toContain(result.status);
 });
+
+test('session 任务摘要跨新一轮保留真实游标，列表仅返回元数据并可续读和取消', async ({page}) => {
+    await setup(page, 'printf ABCDEFGHIJK; sleep 30');
+    await page.unroute('https://api.openai.com/v1/responses');
+    const turns = [];
+    let first;
+    await page.route('https://api.openai.com/v1/responses', async (route) => {
+        const body = route.request().postDataJSON();
+        turns.push(body);
+        const toolResult = (id) => JSON.parse(body.input.find((item) => item.type === 'function_call_output' && item.call_id === id).output);
+        let result;
+        if (turns.length === 1) {
+            result = {output: [{type: 'function_call', call_id: 'start-session', name: 'execute_executor_command', arguments: JSON.stringify({
+                command: 'printf ABCDEFGHIJK; sleep 30', commands: ['printf', 'sleep'], high_risk: false,
+                reason: '验证后台任务摘要', lifecycle: 'session', wait_seconds: 1, max_chars: 3,
+            })}]};
+        } else if (turns.length === 2) {
+            first = toolResult('start-session');
+            result = {output_text: '后台任务已登记。'};
+        } else if (turns.length === 3) {
+            const history = JSON.stringify(body.input);
+            expect(history).toContain(first.task_id);
+            expect(history).toContain(`cursor=${first.cursor}`);
+            expect(history).toContain(connection.url);
+            result = {output: [{type: 'function_call', call_id: 'list-session', name: 'list_executor_tasks', arguments: '{}'}]};
+        } else if (turns.length === 4) {
+            const listed = toolResult('list-session');
+            expect(listed.tasks).toHaveLength(1);
+            expect(listed.tasks[0]).toMatchObject({task_id: first.task_id, lifecycle: 'session', status: 'running'});
+            expect(listed.tasks[0].output).toBeUndefined();
+            expect(listed.tasks[0].cursor).toBeUndefined();
+            result = {output: [{type: 'function_call', call_id: 'read-session', name: 'read_executor_task', arguments: JSON.stringify({task_id: first.task_id, cursor: first.cursor, max_chars: 100})}]};
+        } else if (turns.length === 5) {
+            const tail = toolResult('read-session');
+            expect(first.output + tail.output).toBe('ABCDEFGHIJK');
+            expect(tail.summary).toContain(`cursor=${tail.cursor}`);
+            result = {output: [{type: 'function_call', call_id: 'cancel-session', name: 'cancel_executor_task', arguments: JSON.stringify({task_id: first.task_id})}]};
+        } else {
+            const stopped = toolResult('cancel-session');
+            expect(stopped.task_id).toBe(first.task_id);
+            expect(stopped.summary).toContain(first.task_id);
+            result = {output_text: '后台任务续读并取消完成。'};
+        }
+        await respondToReviewTest(route, result);
+    });
+    await connect(page);
+    await ask(page);
+    await page.getByRole('dialog', {name: '执行命令'}).getByRole('button', {name: '执行命令'}).click();
+    await expect(page.locator('.ai-message-assistant').last()).toContainText('后台任务已登记。');
+    expect(first.output).toBe('ABC');
+    expect(first.cursor).toBe(3);
+    expect(first.lifecycle).toBe('session');
+    await page.locator('.ai-chat-form textarea').fill('列出当前任务，续读未返回的内容，然后取消');
+    await page.locator('.ai-chat-form button[type="submit"]').click();
+    await expect(page.locator('.ai-message-assistant').last()).toContainText('后台任务续读并取消完成。');
+    expect(turns).toHaveLength(6);
+});

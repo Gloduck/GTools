@@ -79,6 +79,10 @@ public final class ExecutorTests {
             tests.run("输出缓存滚动明确提示丢失", tests::testOutputRollover);
             tests.run("运行期间实时输出且终态稳定", tests::testStreamingOutput);
             tests.run("取消任务清理子进程", tests::testCancellation);
+            tests.run("默认任务根退出清理后代", tests::testTaskRootExitCleanup);
+            tests.run("会话根退出后继续采集后代输出", tests::testSessionOutput);
+            tests.run("无输出会话后代保持运行并可取消", tests::testSessionSilentCancellation);
+            tests.run("监管身份丢失明确未知且不补杀历史进程组", tests::testSupervisorLoss);
             tests.run("关闭服务清理运行任务", tests::testShutdown);
             check(!new String(tests.terminal.toByteArray(), StandardCharsets.UTF_8).contains(tests.token), "终端日志泄露连接凭据");
             System.out.println("全部场景通过：" + tests.passed + "；失败：0；跳过：0。");
@@ -100,7 +104,7 @@ public final class ExecutorTests {
 
     private void testInfo() throws Exception {
         JSONObject info = request("GET", "/v1/info", null).expect(200);
-        check(info.getInt("protocol_version") == 1, "协议版本错误");
+        check(info.getInt("protocol_version") == 2, "协议版本错误");
         check(info.getString("runtime").equals(shell.runtime()), "运行时信息错误");
         check(info.getString("platform").equals(shell.platform()), "平台信息错误");
         check(info.getString("shell").equals("sh"), "默认 Shell 错误");
@@ -292,8 +296,89 @@ public final class ExecutorTests {
         check(output(checkTask, waitTask(checkTask)).equals("仍可执行"), "取消后无法继续接受任务");
     }
 
+    private void testTaskRootExitCleanup() throws Exception {
+        String task = submit("sleep 30 & printf 'CHILD=%s\\n' \"$!\"; exit 0");
+        JSONObject done = waitTask(task);
+        check(done.getString("lifecycle").equals("task"), "缺省生命周期不是 task");
+        check(done.getString("status").equals("completed"), "普通任务根退出未结束");
+        waitDead(childPid(done));
+    }
+
+    private void testSessionOutput() throws Exception {
+        String task = submit("(while [ ! -f release-session ]; do sleep .03; done; printf 'TAIL中文😀\\n') & printf 'ROOT\\n'; exit 7", "session");
+        JSONObject first = waitRootExit(task, 7, "ROOT\n");
+        check(first.getString("status").equals("running"), "会话根退出后错误发布终态");
+        check(first.getString("lifecycle").equals("session"), "会话生命周期丢失");
+        long cursor = first.getLong("cursor");
+        Files.write(new File(directory, "release-session").toPath(), new byte[0]);
+        JSONObject done = waitTask(task);
+        check(done.getString("status").equals("failed") && done.getInt("exit_code") == 7, "会话未保留根命令真实退出码");
+        JSONObject tail = request("GET", "/v1/tasks/" + task + "?cursor=" + cursor, null).expect(200);
+        check(tail.getString("output").equals("TAIL中文😀\n"), "根退出后的后代输出遗漏或重复");
+        Thread.sleep(80);
+        JSONObject stable = request("GET", "/v1/tasks/" + task, null).expect(200);
+        check(stable.getLong("cursor") == done.getLong("cursor"), "会话终态后仍追加输出");
+    }
+
+    private void testSessionSilentCancellation() throws Exception {
+        String task = submit("sleep 30 >/dev/null 2>&1 & printf 'CHILD=%s\\n' \"$!\"; exit 0", "session");
+        JSONObject running = waitRootExit(task, 0, "CHILD=");
+        int child = childPid(running);
+        check(running.getString("status").equals("running") && processAlive(child), "静默会话后代被提前结束");
+        request("POST", "/v1/tasks/" + task + "/cancel", "{}").expect(200);
+        JSONObject done = waitTask(task);
+        check(done.getString("status").equals("cancelled"), "会话取消状态错误");
+        check(done.getInt("exit_code") == 0, "取消覆盖了已知根命令退出码");
+        waitDead(child);
+    }
+
+    private JSONObject waitRootExit(String id, int code, String marker) throws Exception {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+        do {
+            JSONObject task = request("GET", "/v1/tasks/" + id, null).expect(200);
+            if (!task.isNull("exit_code") && task.getInt("exit_code") == code && task.getString("output").contains(marker)) return task;
+            Thread.sleep(20);
+        } while (System.nanoTime() < deadline);
+        throw new AssertionError("未观察到根退出码与预期输出");
+    }
+
+    private void testSupervisorLoss() throws Exception {
+        String task = submit("sleep 30 & printf 'CHILD=%s\\n' \"$!\"; wait", "session");
+        JSONObject running = waitOutput(task, "CHILD=");
+        check(running.isNull("exit_code"), "故障注入前根命令应仍在运行");
+        int child = childPid(running);
+        try {
+            Process supervisor = shell.processes.get(shell.processes.size() - 1);
+            supervisor.destroyForcibly();
+            check(supervisor.waitFor(3, TimeUnit.SECONDS), "测试监管进程未退出");
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+            JSONObject result;
+            do {
+                result = request("GET", "/v1/tasks/" + task, null).expect(200);
+                if (result.getString("status").equals("unknown")) break;
+                Thread.sleep(20);
+            } while (System.nanoTime() < deadline);
+            check(result.getString("status").equals("unknown"), "监管丢失后仍无界等待业务后代");
+            check(result.isNull("exit_code"), "监管丢失后伪造了未观察到的根退出码");
+            check(!result.getString("error").isEmpty(), "监管丢失缺少不确定性说明");
+            check(!result.getString("output").contains("READY ") && !result.getString("output").contains("EXIT "), "控制协议泄漏到业务输出");
+            check(processAlive(child), "失去监管身份后补杀了历史进程组");
+        } finally {
+            // 只清理本用例亲自记录的业务子进程，生产端不能用失去身份的 PGID 补杀。
+            if (processAlive(child)) {
+                boolean android = shell.platform().equals("android");
+                Process cleanup = android
+                        ? new ProcessBuilder("/system/bin/toybox", "kill", "-KILL", Integer.toString(child)).start()
+                        : new ProcessBuilder("/bin/kill", "-KILL", Integer.toString(child)).start();
+                cleanup.waitFor(3, TimeUnit.SECONDS);
+                cleanup.getInputStream().close(); cleanup.getOutputStream().close(); cleanup.getErrorStream().close();
+                waitDead(child);
+            }
+        }
+    }
+
     private void testShutdown() throws Exception {
-        String task = submit("sleep 30 & printf 'CHILD=%s\\n' \"$!\"; wait");
+        String task = submit("sleep 30 & printf 'CHILD=%s\\n' \"$!\"; exit 0", "session");
         int child = childPid(waitOutput(task, "CHILD="));
         server.close();
         waitDead(child);
@@ -307,6 +392,12 @@ public final class ExecutorTests {
     private String submit(String command) throws Exception {
         String task = id();
         request("POST", "/v1/tasks", json("id", task, "command", command, "shell", "sh").toString()).expect(200);
+        return task;
+    }
+
+    private String submit(String command, String lifecycle) throws Exception {
+        String task = id();
+        request("POST", "/v1/tasks", json("id", task, "command", command, "shell", "sh", "lifecycle", lifecycle).toString()).expect(200);
         return task;
     }
 
@@ -420,20 +511,23 @@ public final class ExecutorTests {
         @Override public Process start(String command, File cwd) throws IOException {
             String setsid = new File("/usr/bin/setsid").isFile() ? "/usr/bin/setsid" : "/bin/setsid";
             return new ProcessBuilder(setsid, "/bin/sh", "-c", START_SCRIPT, "executor-task", "/bin/sh", command)
-                    .directory(cwd).redirectErrorStream(true).start();
+                    .directory(cwd).redirectErrorStream(false).start();
         }
         @Override public void verifyGroup(int pid) throws IOException {
             String[] state = processState(pid);
             if (pid <= 1 || state == null || Integer.parseInt(state[2]) != pid) throw new IOException("未建立独立进程组");
         }
-        @Override public void killGroup(int pid) throws IOException {
-            if (pid <= 1) throw new IOException("非法进程组");
-            Process kill = new ProcessBuilder("/bin/kill", "-KILL", "--", "-" + pid).redirectErrorStream(true).start();
-            try {
-                readBytes(kill.getInputStream());
-                if (kill.waitFor() != 0 && processAlive(pid)) throw new IOException("无法终止测试进程组");
-            } catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); throw new IOException(interrupted); }
-            finally { kill.getInputStream().close(); kill.getOutputStream().close(); kill.getErrorStream().close(); }
+        @Override public boolean hasBusinessProcesses(int group) throws IOException {
+            File[] entries = new File("/proc").listFiles();
+            if (entries == null) throw new IOException("无法读取测试进程组");
+            for (File entry : entries) {
+                if (!entry.getName().matches("[0-9]+") || entry.getName().equals(Integer.toString(group))) continue;
+                String[] state;
+                try { state = processState(Integer.parseInt(entry.getName())); }
+                catch (IOException vanished) { continue; }
+                if (state != null && Integer.parseInt(state[2]) == group && !state[0].equals("Z") && !state[0].equals("X")) return true;
+            }
+            return false;
         }
     }
 
@@ -441,36 +535,32 @@ public final class ExecutorTests {
     private static final class TrackingShell implements ShellRuntime {
         final ShellRuntime delegate;
         final List<Process> processes = Collections.synchronizedList(new ArrayList<>());
-        final Set<Integer> groups = Collections.synchronizedSet(new HashSet<>());
         TrackingShell(ShellRuntime delegate) { this.delegate = delegate; }
         @Override public String runtime() { return delegate.runtime(); }
         @Override public String platform() { return delegate.platform(); }
         @Override public Process start(String command, File directory) throws IOException {
             Process process = delegate.start(command, directory); processes.add(process); return process;
         }
-        @Override public void verifyGroup(int pid) throws IOException { delegate.verifyGroup(pid); groups.add(pid); }
-        @Override public void killGroup(int pid) throws IOException { delegate.killGroup(pid); groups.remove(pid); }
+        @Override public void verifyGroup(int pid) throws IOException { delegate.verifyGroup(pid); }
+        @Override public boolean hasBusinessProcesses(int group) throws IOException { return delegate.hasBusinessProcesses(group); }
         void waitStopped() throws Exception {
             List<Process> copy;
             synchronized (processes) { copy = new ArrayList<>(processes); }
             for (Process process : copy) check(process.waitFor(5, TimeUnit.SECONDS), "关闭服务后测试进程仍在运行");
         }
         void cleanup() throws Exception {
-            List<Integer> remaining;
-            synchronized (groups) { remaining = new ArrayList<>(groups); }
-            IOException first = null;
-            for (int group : remaining) {
-                try { killGroup(group); }
-                catch (IOException failure) { if (first == null) first = failure; }
-            }
             synchronized (processes) {
                 for (Process process : processes) {
-                    if (process.isAlive()) process.destroyForcibly();
+                    if (process.isAlive()) {
+                        // 只向仍持有的监管进程发送停止，避免测试清理误用历史 PGID。
+                        try { process.getOutputStream().write("STOP\n".getBytes(StandardCharsets.UTF_8)); process.getOutputStream().flush(); }
+                        catch (IOException alreadyClosed) { /* 服务关闭可能已结束控制管道。 */ }
+                    }
+                    if (!process.waitFor(5, TimeUnit.SECONDS)) process.destroyForcibly();
                     process.waitFor(5, TimeUnit.SECONDS);
                     process.getInputStream().close(); process.getOutputStream().close(); process.getErrorStream().close();
                 }
             }
-            if (first != null) throw first;
         }
     }
 

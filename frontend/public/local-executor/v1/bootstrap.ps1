@@ -44,7 +44,24 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "Python executor exited with code $LASTEXITCODE." }
     } else {
         Write-Host 'Python 3 unavailable; using system Windows PowerShell.'
-        & ([scriptblock]::Create([IO.File]::ReadAllText($path))) -Origin $Origin -ListenAddress $ListenAddress -Port $Port -PublicUrl $PublicUrl -Token $Token
+        # 每次使用独立进程，停止后直接释放 Add-Type 类型，不在当前会话复用旧实现。
+        $powershell = Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/powershell.exe'
+        $parameters = @{Origin=$Origin; Cwd=(Get-Location).Path; ListenAddress=$ListenAddress; Port=$Port; PublicUrl=$PublicUrl; Token=$Token}
+        $launch = "`$ProgressPreference='SilentlyContinue'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new(`$false); & ([scriptblock]::Create([IO.File]::ReadAllText('"+$path.Replace("'","''")+"')))"
+        # 按 PowerShell 字符串字面量传参，保留空值及以连字符开头的凭据。
+        foreach ($entry in $parameters.GetEnumerator()) {
+            $launch += " -"+$entry.Key+" '"+([string]$entry.Value).Replace("'","''")+"'"
+        }
+        # 不让 PowerShell 的错误上下文回显含凭据的启动表达式。
+        $launch = "try { $launch } catch { [Console]::Error.WriteLine(`$_.Exception.Message); exit 1 }"
+        $previousEncoding = [Console]::OutputEncoding
+        try {
+            [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+            & $powershell -NoLogo -NoProfile -NonInteractive -OutputFormat Text -Command $launch
+            if ($LASTEXITCODE -ne 0) { throw "PowerShell executor exited with code $LASTEXITCODE." }
+        } finally {
+            [Console]::OutputEncoding = $previousEncoding
+        }
     }
 } finally {
     Remove-Item -LiteralPath $directory -Recurse -Force -ErrorAction SilentlyContinue

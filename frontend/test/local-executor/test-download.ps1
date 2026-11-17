@@ -2,14 +2,19 @@
 param([string]$ExecutorRoot = (Join-Path $PSScriptRoot '../../public/local-executor/v1'))
 $ErrorActionPreference = 'Stop'
 $bootstrap = [scriptblock]::Create([IO.File]::ReadAllText((Join-Path $ExecutorRoot 'bootstrap.ps1')))
-foreach ($runtime in @('powershell', 'python')) {
+$runtimes = @('python')
+if ($env:OS -eq 'Windows_NT') { $runtimes = @('powershell', 'python') }
+else { Write-Output '跳过：独立 Windows PowerShell 进程需要在 Windows 验证。' }
+foreach ($runtime in $runtimes) {
     foreach ($responseVersion in @(5, 7)) {
         foreach ($tokenCase in @('', 'x', 'short', '-short', ('A'*129), ('B'*1024))) {
         & {
             $script:downloaded = $false
             $script:executed = $false
             $script:downloadPath = $null
-            $script:payload = "param([string]`$Origin,[string]`$ListenAddress,[int]`$Port,[string]`$PublicUrl,[string]`$Token='')`nif (`$ListenAddress -ne '192.168.1.25' -or `$Port -ne 8321 -or `$PublicUrl -ne 'https://executor.example') { throw '监听参数传递错误' }; if (`$Origin -ne 'https://example.test') { throw '参数传递错误' }; if (`$Token -cne '$tokenCase') { throw '自定义凭据传递错误' }; '中文下载成功'"
+            $expectedCwd = (Get-Location).Path.Replace("'", "''")
+            # 多次启动加载同名类型，必须使用独立进程，不能复用当前测试会话。
+            $script:payload = "param([string]`$Origin,[string]`$Cwd,[string]`$ListenAddress,[int]`$Port,[string]`$PublicUrl,[string]`$Token='')`nif (`$ListenAddress -ne '192.168.1.25' -or `$Port -ne 8321 -or `$PublicUrl -ne 'https://executor.example') { throw '监听参数传递错误' }; if (`$Origin -ne 'https://example.test' -or `$Cwd -cne '$expectedCwd') { throw '来源或工作目录传递错误' }; if (`$Token -cne '$tokenCase') { throw '自定义凭据传递错误' }; if (`$PID -eq $PID) { throw '未使用独立进程' }; Add-Type 'public class ExecutorBootstrapTest {}'; '中文下载成功'"
             function Get-Command {
                 param($Name, $CommandType, $ErrorAction)
                 if ($runtime -eq 'python') { [pscustomobject]@{Source='Test-Python'} }
@@ -50,6 +55,27 @@ foreach ($runtime in @('powershell', 'python')) {
         Write-Output "场景通过：$runtime 下载保留 UTF-8 字节，兼容 PowerShell $responseVersion 响应，$tokenMode 参数传递"
         }
     }
+}
+
+if ($env:OS -eq 'Windows_NT') {
+    & {
+        function Get-Command { }
+        function Invoke-WebRequest {
+            param([switch]$UseBasicParsing, $Uri, $TimeoutSec)
+            [pscustomobject]@{
+                RawContentStream = [IO.MemoryStream]::new([Text.Encoding]::UTF8.GetBytes('exit 7'))
+                BaseResponse = [pscustomobject]@{ResponseUri=[Uri]$Uri}
+            }
+        }
+        $rejected = $false
+        try { & $bootstrap -BaseUrl 'https://example.test/local-executor/v1' -Origin 'https://example.test' }
+        catch {
+            if ($_.Exception.Message -ne 'PowerShell executor exited with code 7.') { throw }
+            $rejected = $true
+        }
+        if (-not $rejected) { throw '未报告独立 PowerShell 进程的失败退出码' }
+    }
+    Write-Output '场景通过：独立 PowerShell 进程失败时报告真实退出码'
 }
 
 # 非法凭据应在下载、路径解析或监听之前拒绝，不让回归测试意外启动服务。

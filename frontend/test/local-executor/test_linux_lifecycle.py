@@ -7,6 +7,7 @@ import io
 import os
 from pathlib import Path
 import signal
+import subprocess
 import sys
 import threading
 import time
@@ -39,6 +40,138 @@ class LinuxLifecycleTest(unittest.TestCase):
             return Path('/proc', str(pid), 'stat').read_text().split()[2] != 'Z'
         except FileNotFoundError:
             return False
+
+    def wait_root_exit(self, task_id, exit_code, output_marker=None):
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            status, _, task = self.request('GET', '/v1/tasks/' + task_id)
+            self.assertEqual(status, 200)
+            if task['exit_code'] == exit_code and (output_marker is None or output_marker in task['output']):
+                return task
+            time.sleep(.02)
+        self.fail('根命令未返回预期退出码')
+
+    def test_session根退出后后代继续输出且终态等待收尾(self):
+        command = "(while [ ! -f release-session ]; do sleep .03; done; printf 'TAIL中文😀\\n') & echo $! > session-child.pid; printf 'ROOT\\n'; exit 7"
+        task_id, _ = self.submit(command, lifecycle='session')
+        child = int(self.wait_file('session-child.pid'))
+        try:
+            first = self.wait_root_exit(task_id, 7, 'ROOT\n')
+            self.assertEqual(first['lifecycle'], 'session')
+            self.assertEqual(first['status'], 'running')
+            self.assertTrue(self.process_running(child))
+            self.assertEqual(first['output'], 'ROOT\n')
+            Path(self.directory.name, 'release-session').touch()
+            final = self.wait_task(task_id)
+            self.assertEqual(final['status'], 'failed')
+            self.assertEqual(final['exit_code'], 7)
+            self.assertEqual(final['output'], 'ROOT\nTAIL中文😀\n')
+            _, _, tail = self.request('GET', '/v1/tasks/' + task_id + '?cursor=' + str(first['cursor']))
+            self.assertEqual(tail['output'], 'TAIL中文😀\n')
+            time.sleep(.08)
+            _, _, stable = self.request('GET', '/v1/tasks/' + task_id)
+            self.assertEqual((stable['cursor'], stable['output']), (final['cursor'], final['output']))
+        finally:
+            if self.process_running(child):
+                os.kill(child, signal.SIGKILL)
+
+    def test_session无输出后代仍存活且取消保留根退出码(self):
+        task_id, _ = self.submit('sleep 30 >/dev/null 2>&1 & echo $! > silent-child.pid; exit 0', lifecycle='session')
+        child = int(self.wait_file('silent-child.pid'))
+        try:
+            running = self.wait_root_exit(task_id, 0)
+            self.assertEqual(running['status'], 'running')
+            self.assertEqual(running['output'], '')
+            self.assertTrue(self.process_running(child))
+            self.request('POST', '/v1/tasks/' + task_id + '/cancel', {})
+            final = self.wait_task(task_id)
+            self.assertEqual(final['status'], 'cancelled')
+            self.assertEqual(final['exit_code'], 0)
+            self.assertFalse(self.process_running(child))
+        finally:
+            if self.process_running(child):
+                os.kill(child, signal.SIGKILL)
+
+    def test_session后台进程在执行端关闭时清理(self):
+        task_id, _ = self.submit('sleep 30 >/dev/null 2>&1 & echo $! > shutdown-child.pid; exit 0', lifecycle='session')
+        child = int(self.wait_file('shutdown-child.pid'))
+        try:
+            self.assertEqual(self.wait_root_exit(task_id, 0)['status'], 'running')
+            self.executor.close()
+            final = self.wait_task(task_id)
+            self.assertEqual(final['status'], 'cancelled')
+            self.assertEqual(final['exit_code'], 0)
+            self.assertFalse(self.process_running(child))
+        finally:
+            if self.process_running(child):
+                os.kill(child, signal.SIGKILL)
+
+    def test_lifecycle非法值拒绝且同编号不能改生命周期(self):
+        for value in ('background', '', None, 1):
+            self.assertEqual(self.request('POST', '/v1/tasks', {'id': 'invalid-lifecycle', 'command': 'true', 'lifecycle': value})[0], 400)
+        task_id, body = self.submit('true')
+        self.assertEqual(self.wait_task(task_id)['lifecycle'], 'task')
+        self.assertEqual(self.request('POST', '/v1/tasks', {**body, 'lifecycle': 'session'})[0], 409)
+
+    def test_监管控制EOF且stderr关闭仍清理自身组(self):
+        command = 'sleep 30 & echo $! > eof-child.pid; echo $$ > eof-root.pid; printf BUSINESS; wait'
+        process = subprocess.Popen([sys.executable, '-u', '-c', fixture.module.POSIX_SUPERVISOR, command],
+                                   cwd=self.directory.name, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE, start_new_session=True, bufsize=0)
+        child = root = None
+        try:
+            self.assertEqual(process.stderr.readline(), ('READY %d\n' % process.pid).encode())
+            process.stdin.write(b'START\n')
+            process.stdin.flush()
+            child = int(self.wait_file('eof-child.pid'))
+            root = int(self.wait_file('eof-root.pid'))
+            self.assertEqual(process.stdout.read(8), b'BUSINESS')
+            process.stderr.close()
+            process.stdin.close()
+            process.wait(timeout=5)
+            deadline = time.monotonic() + 3
+            while self.process_running(child) and time.monotonic() < deadline:
+                time.sleep(.02)
+            self.assertFalse(self.process_running(child))
+            self.assertFalse(self.process_running(root))
+            self.assertEqual(process.stdout.read(), b'')
+        finally:
+            for pid in (child, root):
+                if pid and self.process_running(pid):
+                    os.kill(pid, signal.SIGKILL)
+            if process.poll() is None:
+                process.kill()
+            process.wait(timeout=5)
+            for stream in (process.stdin, process.stdout, process.stderr):
+                stream.close()
+
+    def test_监管进程丢失明确未知且关闭有界不补杀历史进程组(self):
+        task_id, _ = self.submit('sleep 30 & echo $! > orphan-child.pid; printf ROOT; wait', lifecycle='session')
+        child = int(self.wait_file('orphan-child.pid'))
+        task = self.executor.get_task(task_id)
+        try:
+            deadline = time.monotonic() + 3
+            while 'ROOT' not in task.snapshot(0)['output'] and time.monotonic() < deadline:
+                time.sleep(.02)
+            self.assertIn('ROOT', task.snapshot(0)['output'])
+            self.assertIsNone(task.snapshot(0)['exit_code'])
+            task.process.kill()
+            task.process.wait(timeout=3)
+            self.assertTrue(task.done.wait(4), '监管丢失后工作线程不能无界等待后代或输出EOF')
+            result = task.snapshot(0)
+            self.assertEqual(result['status'], 'unknown')
+            self.assertIsNone(result['exit_code'])
+            self.assertTrue(result['error'])
+            self.assertNotIn('READY ', result['output'])
+            self.assertNotIn('EXIT ', result['output'])
+            self.assertTrue(self.process_running(child), '失去监管身份后不应向历史进程组补杀')
+            started = time.monotonic()
+            self.executor.close()
+            self.assertLess(time.monotonic() - started, 3)
+        finally:
+            if self.process_running(child):
+                os.kill(child, signal.SIGKILL)
+            task.done.wait(5)
 
     def test_UTF8跨读取边界及不完整尾字节按约定替换(self):
         source = "import os,time; data='中文😀'.encode(); [(os.write(1,bytes([b])),time.sleep(.02)) for b in data]; os.write(1,b'\\xff\\xe4')"

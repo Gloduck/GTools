@@ -86,7 +86,7 @@ public final class ExecutorServer extends NanoHTTPD implements AutoCloseable {
     public synchronized JSONObject connection() { return json("url", endpoint, "token", token); }
 
     private JSONObject info() {
-        return json("protocol_version", 1, "runtime", shell.runtime(), "platform", shell.platform(), "shell", "sh",
+        return json("protocol_version", 2, "runtime", shell.runtime(), "platform", shell.platform(), "shell", "sh",
                 "shells", new JSONArray(Arrays.asList("sh")), "default_cwd", config.directory.getPath(), "output_buffer_chars", CommandTask.OUTPUT_LIMIT);
     }
 
@@ -132,10 +132,12 @@ public final class ExecutorServer extends NanoHTTPD implements AutoCloseable {
         String id = string(body, "id", "");
         String command = string(body, "command", "");
         String selectedShell = string(body, "shell", "sh");
+        String lifecycle = string(body, "lifecycle", "task");
         String cwd = string(body, "cwd", config.directory.getPath());
         if (!id.matches("[a-zA-Z0-9_-]{8,80}")) throw new ApiException(400, "Invalid task id");
         if (command.trim().isEmpty() || command.indexOf('\0') >= 0 || command.getBytes(StandardCharsets.UTF_8).length > 65536) throw new ApiException(400, "Invalid command");
         if (!selectedShell.equals("sh")) throw new ApiException(400, "Unsupported shell");
+        if (!lifecycle.equals("task") && !lifecycle.equals("session")) throw new ApiException(400, "lifecycle must be task or session");
         if (cwd.indexOf('\0') >= 0) throw new ApiException(400, "Invalid working directory");
         File directory = cwd.isEmpty() ? config.directory : new File(cwd);
         if (!directory.isAbsolute()) directory = new File(config.directory, cwd);
@@ -143,10 +145,10 @@ public final class ExecutorServer extends NanoHTTPD implements AutoCloseable {
         if (!directory.isDirectory()) throw new ApiException(400, "Working directory does not exist");
         CommandTask existing = tasks.get(id);
         if (existing != null) {
-            if (!existing.matches(command, directory)) throw new ApiException(409, "Task id already belongs to different execution content");
+            if (!existing.matches(command, directory, lifecycle)) throw new ApiException(409, "Task id already belongs to different execution content");
             return existing.snapshot(0);
         }
-        CommandTask task = new CommandTask(id, command, directory, shell, log);
+        CommandTask task = new CommandTask(id, command, directory, lifecycle, shell, log);
         Thread worker = new Thread(task, "executor-task-" + id);
         worker.setDaemon(true);
         tasks.put(id, task);

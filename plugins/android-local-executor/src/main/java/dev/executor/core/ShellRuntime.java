@@ -9,9 +9,13 @@ public interface ShellRuntime {
     String platform();
     Process start(String command, File directory) throws IOException;
     void verifyGroup(int pid) throws IOException;
-    void killGroup(int pid) throws IOException;
+    boolean hasBusinessProcesses(int group) throws IOException;
 
-    // 先报告独立进程组编号并等待放行，避免取消发生在 setsid 与执行用户命令之间。
-    String START_SCRIPT = "printf 'EXECUTOR_PID=%s\\n' \"$$\"; "
-            + "IFS= read -r executor_ready || exit 1; exec \"$1\" -c \"$2\"";
+    // 监管者常驻占有组身份；控制走 stderr，业务 stderr 合并到业务 stdout。
+    String START_SCRIPT = "printf 'READY %s\\n' \"$$\" >&2; "
+            + "IFS= read -r executor_ready || exit 1; [ \"$executor_ready\" = START ] || exit 1; "
+            + "( \"$1\" -c \"$2\" </dev/null 2>&1; executor_code=$?; printf 'EXIT %s\\n' \"$executor_code\" >&2 ) & "
+            + "exec 1>&-; while IFS= read -r executor_action; do "
+            + "case \"$executor_action\" in STOP) break;; FINISH) wait; exit 0;; esac; done; "
+            + "kill -KILL -\"$$\"";
 }

@@ -61,7 +61,7 @@ test('网页搜索与本地函数混合返回时仅回传函数结果并保留�
     expect(results).toHaveLength(1);
     expect(results[0].call_id).toBe('call-1');
     expect(JSON.parse(results[0].output).ok).toBe(true);
-    await expect(page.locator('.ai-tool-toggle').nth(0)).toContainText('web_search_call');
+    await expect(page.locator('.ai-tool-toggle').nth(0)).toContainText('web_search');
     await expect(page.locator('.ai-tool-toggle').nth(1)).toContainText('get_tool_availability');
     await expect(page.locator('.ai-message-assistant')).toContainText('已结合搜索结果检查工具。');
 });

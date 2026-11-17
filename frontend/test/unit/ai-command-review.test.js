@@ -4,7 +4,7 @@ import {buildCommandReviewInput, parseCommandReviewResponse, reviewAiCommand} fr
 
 const action = {type: 'executor', target: {endpoint: 'http://127.0.0.1:8321'}, shell: 'sh', cwd: '/tmp', command: 'pwd', claimed_purpose: '核实部署目录'};
 const response = (decision = 'approve', reason = '读取已授权目标的目录，不修改文件。') => ({status: 'completed', output: [
-    {type: 'message', content: [{type: 'output_text', text: JSON.stringify({decision, reason})}]},
+    {type: 'message', content: [{type: 'text', text: JSON.stringify({decision, reason})}]},
 ]});
 
 test('场景：只传原始用户授权和待审动作，不附带工具正文、摘要或主 AI 分析', () => {
@@ -25,12 +25,13 @@ test('场景：审查使用独立模型请求和结构化结论，不继承主 A
     const review = await reviewAiCommand({model: ' reviewer ', action, authorizations: [{type: 'user_message', content: '核实部署目录'}],
         request: async (value) => { payload = value; return response(); }});
     assert.equal(payload.model, 'reviewer');
-    assert.equal(payload.store, false);
+    assert.equal(payload.options.store, false);
     assert.equal(payload.tools, undefined);
-    assert.equal(payload.previous_response_id, undefined);
-    assert.equal(payload.text.format.type, 'json_schema');
-    assert.equal(payload.text.format.strict, true);
-    assert.deepEqual(payload.text.format.schema.properties.decision.enum, ['approve', 'needs_confirmation']);
+    assert.equal(payload.onEvent, undefined);
+    assert.equal(payload.continuation, undefined);
+    assert.equal(payload.options.responseFormat.type, 'json_schema');
+    assert.equal(payload.options.responseFormat.strict, true);
+    assert.deepEqual(payload.options.responseFormat.schema.properties.decision.enum, ['approve', 'needs_confirmation']);
     assert.equal(JSON.parse(payload.input).authorizations[0].content, '核实部署目录');
     assert.deepEqual(review, {model: 'reviewer', decision: 'approve', reason: '读取已授权目标的目录，不修改文件。'});
 });
@@ -41,8 +42,8 @@ test('场景：只接受通过或人工确认，不从自由文本、拒绝或�
     }
     for (const invalid of [undefined, response('needs_evidence'), {...response(), status: 'incomplete'}, {...response(), error: {message: 'failed'}},
         {output_text: '可以执行'}, {output_text: '{"approved":true}'}, {output_text: '{"decision":"approve","reason":""}'},
-        {output: [{type: 'message', content: [{type: 'refusal', refusal: '拒绝'}]}]},
-        {output_text: JSON.stringify({decision: 'approve', reason: '执行'}), output: [{type: 'function_call', name: 'execute_executor_command'}]},
+        {output: [{type: 'message', content: [{type: 'refusal', text: '拒绝'}]}]},
+        {output_text: JSON.stringify({decision: 'approve', reason: '执行'}), output: [{type: 'tool_call', name: 'execute_executor_command'}]},
     ]) assert.throws(() => parseCommandReviewResponse(invalid), {code: 'COMMAND_REVIEW_INVALID'});
 });
 
@@ -50,7 +51,7 @@ test('场景：未配置审查模型时不调用 API', async () => {
     await assert.rejects(reviewAiCommand({model: '', action, request: () => assert.fail('不应调用模型')}), {code: 'COMMAND_REVIEW_MODEL_REQUIRED'});
 });
 
-function waitForAbort(_payload, signal) {
+function waitForAbort({signal}) {
     return new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason), {once: true}));
 }
 

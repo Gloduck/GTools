@@ -171,8 +171,8 @@ test('三种调用混合返回时分别处理，只有本地函数触发工具�
     expect(requests[1].input.filter((item) => item.type === 'web_search_call')).toHaveLength(1);
     const cards = page.locator('.ai-message-tool');
     await expect(cards).toHaveCount(3);
-    await expect(cards.nth(0).locator('.ai-tool-toggle')).toContainText('image_generation_call');
-    await expect(cards.nth(1).locator('.ai-tool-toggle')).toContainText('web_search_call');
+    await expect(cards.nth(0).locator('.ai-tool-toggle')).toContainText('image');
+    await expect(cards.nth(1).locator('.ai-tool-toggle')).toContainText('web_search');
     await expect(cards.nth(2).locator('.ai-tool-toggle')).toContainText('get_tool_availability');
     await expect(page.locator('.ai-image-result')).toHaveCount(1);
     const path = await page.locator('.ai-image-result').getAttribute('title');

@@ -884,6 +884,7 @@ import { createLocalExecutorSession } from "@/shared/local-executor/session.js";
 import { COMMAND_WHITELIST_TEMPLATES } from "@/shared/command-presets.js";
 import { normalizeCommandWhitelist, normalizeMainCommands, normalizeCommandApprovalSettings, getCommandApprovalReason } from "@/shared/command-whitelist.js";
 import { reviewAiCommand } from "@/shared/ai-command-review.js";
+import { createAiClient, getResponseText } from "@/shared/ai/client.js";
 import { normalizeLocalCommand, isLocalTaskFinished, buildLocalStartupCommand, normalizeExecutorListenAddress, normalizeLocalExecutorSettings, normalizeExecutorToken, buildLocalConnectionDraft } from "@/shared/local-executor/client.js";
 import { runAiNodeWorker } from "@/shared/ai-node-worker.js";
 import { runFilterScript } from "@/shared/filter-script-worker.js";
@@ -1010,7 +1011,6 @@ function waitForAiSessionTransaction(transaction) {
 const AI_COMPLETION_MANUAL_PREFIX_CHARS = 500;
 const AI_COMPLETION_MANUAL_SUFFIX_CHARS = 500;
 const AI_COMPLETION_MANUAL_MAX_OUTPUT_TOKENS = 512;
-const AI_RESPONSE_RETRY_DELAYS_MS = [1000, 2000, 4000, 8000, 16000];
 const AI_IMAGE_MAX_FILE_SIZE = 20 * 1024 * 1024;
 const AI_IMAGE_MASK_MAX_FILE_SIZE = 4 * 1024 * 1024;
 const AI_IMAGE_OUTPUT_MAX_FILE_SIZE = 25 * 1024 * 1024;
@@ -1222,6 +1222,10 @@ const dialogOptionInput = ref(null);
 const dialogPrimaryButton = ref(null);
 const dialogState = reactive({ visible: false, mode: "alert", title: "", message: "", value: "", inputLabel: "", placeholder: "", selectOptions: [], optionLabel: "", optionHint: "", optionChecked: false, optionDisabled: false, confirmLabel: "", cancelLabel: "", tone: "default", selectOnFocus: false, closeOnBackdrop: true });
 const settings = reactive(loadSettings());
+const aiClient = createAiClient({
+  protocol: "openai",
+  connection: () => ({ baseUrl: settings.ai.baseUrl.trim() || defaultAiSettings.baseUrl, apiKey: settings.ai.apiKey }),
+});
 applyLocalExecutorSettings();
 watch(() => [localDialog.listenAddress, localDialog.port, localDialog.token], ([listenAddress, port, token]) => {
   // 输入过程允许暂时为空或不完整，仅将合法值写入设置，避免覆盖上次配置。
@@ -1304,6 +1308,10 @@ const aiSessionFingerprints = new Map();
 let aiSessionsReady = false;
 let updatingAiSessionTimestamps = false;
 let aiSessionPersistTask = Promise.resolve();
+let aiSessionChangeTimer = null;
+let aiSessionPersistPending = false;
+let aiSessionPersisting = false;
+let aiSessionStorageClosed = false;
 let aiMessagesFollowOutput = true;
 const aiPrompt = computed({
   get: () => activeAiSession.value?.prompt ?? aiSessionDraft.prompt,
@@ -1439,7 +1447,7 @@ watch(activeAiSessionId, () => {
     focusActiveAiInteraction();
   });
 });
-watch(aiSessions, handleAiSessionsChanged, { deep: true, flush: "sync" });
+watch(aiSessions, scheduleAiSessionsChanged, { deep: true, flush: "post" });
 watch(searchMatchCase, () => { if (searchSearched.value && searchQuery.value.trim()) runGlobalSearch(); });
 watch(() => dirtyFiles.value.map((file) => file.path).join("\0"), pruneSelectedChangePaths);
 watch(previewPaneVisible, () => { nextTick(layoutVisibleEditors); });
@@ -1537,9 +1545,11 @@ onBeforeUnmount(() => {
   inlineCompletionDisposables.splice(0).forEach((disposable) => disposable.dispose());
   abortAiCompletionRequest();
   cancelRunningSftpTasks();
-  queuePersistSavedAiSessions();
   aiSessions.forEach((session) => session.abortController?.abort());
   aiSessions.forEach((session) => session.titleAbortController?.abort());
+  aiSessions.forEach((session) => session.messages.forEach(cancelAiToolMessage));
+  flushAiSessionChanges();
+  aiSessionStorageClosed = true;
   void aiSessionPersistTask.then(() => aiSessionStore.close()).catch((error) => console.warn("Failed to close AI session storage", error));
   aiSessions.forEach((session) => disposeAiMessageResources(session.messages));
   closeAllSshSessions({ disposeTerminal: true });
@@ -4800,181 +4810,6 @@ function validateAiApiKey() {
   if (!settings.ai.apiKey.trim()) throw new Error(tr("ai.error.missingApiKey"));
 }
 
-function getAiBaseUrl() {
-  const baseUrl = (settings.ai.baseUrl.trim() || defaultAiSettings.baseUrl).replace(/\/+$/, "");
-  return baseUrl.endsWith("/v1") ? baseUrl : `${baseUrl}/v1`;
-}
-
-async function callOpenAiResponses(payload, signal) {
-  const startedAt = performance.now();
-  for (let retry = 0; ; retry += 1) {
-    try {
-      return await requestOpenAiResponse(payload, signal, startedAt);
-    } catch (error) {
-      if (signal?.aborted || error.name === "AbortError" || retry >= AI_RESPONSE_RETRY_DELAYS_MS.length || !isRetryableAiResponseError(error)) throw error;
-      const retryDelay = error.retryAfterMs ?? AI_RESPONSE_RETRY_DELAYS_MS[retry];
-      await delayWithAbortSignal(retryDelay, signal);
-    }
-  }
-}
-
-async function requestOpenAiResponse(payload, signal, startedAt) {
-  const response = await fetch(`${getAiBaseUrl()}/responses`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${settings.ai.apiKey.trim()}` },
-    body: JSON.stringify({ ...payload, stream: true }),
-    signal,
-  });
-  if (!response.ok || !response.headers.get("content-type")?.includes("text/event-stream")) {
-    const raw = await response.text();
-    let data = {};
-    try {
-      data = raw ? JSON.parse(raw) : {};
-    } catch {
-      data = { message: raw };
-    }
-    Object.defineProperty(data, "__meta", { value: { ms: Math.round(performance.now() - startedAt), bytes: raw.length }, enumerable: false });
-    if (!response.ok) {
-      const error = new Error(data.error?.message || data.message || response.statusText);
-      error.status = response.status;
-      error.retryAfterMs = parseRetryAfterMs(response.headers.get("retry-after"));
-      throw error;
-    }
-    return data;
-  }
-
-  const reader = response.body?.getReader();
-  if (!reader) throw new Error("Streaming response body is unavailable");
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let bytes = 0;
-  let completedResponse = null;
-  const completedItems = new Map();
-  const processEvent = (block) => {
-    const eventData = block.split(/\r?\n/)
-      .filter((line) => line.startsWith("data:"))
-      .map((line) => line.slice(5).trimStart())
-      .join("\n");
-    if (!eventData || eventData === "[DONE]") return;
-    const event = JSON.parse(eventData);
-    if (event.type === "response.output_item.done") completedItems.set(event.output_index, event.item);
-    if (event.type === "response.completed" || event.type === "response.incomplete") completedResponse = event.response;
-    if (event.type === "response.failed") throw new Error(event.response?.error?.message || "AI response failed");
-    if (event.type === "error") throw new Error(event.message || event.error?.message || "AI streaming response failed");
-  };
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    bytes += value.byteLength;
-    buffer += decoder.decode(value, { stream: true });
-    const blocks = buffer.split(/\r?\n\r?\n/);
-    buffer = blocks.pop() || "";
-    blocks.forEach(processEvent);
-  }
-  buffer += decoder.decode();
-  if (buffer.trim()) processEvent(buffer);
-  if (!completedResponse) throw new Error("AI streaming response ended before completion");
-  const data = completedResponse;
-  // 部分服务商只在 output_item.done 事件中返回完整输出。
-  const output = [...(data.output || [])];
-  completedItems.forEach((item, index) => { if (!output[index]) output[index] = item; });
-  data.output = output.filter(Boolean);
-  Object.defineProperty(data, "__meta", { value: { ms: Math.round(performance.now() - startedAt), bytes }, enumerable: false });
-  return data;
-}
-
-function isRetryableAiResponseError(error) {
-  const status = Number(error?.status);
-  if ([408, 409, 425, 429].includes(status) || (status >= 500 && status < 600)) return true;
-  if (error instanceof TypeError) return true;
-  return /(?:overloaded|server busy|try again later|temporarily unavailable|temporary capacity)/i.test(error?.message || "");
-}
-
-function parseRetryAfterMs(value) {
-  if (!value) return null;
-  const seconds = Number(value);
-  if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000;
-  const timestamp = Date.parse(value);
-  return Number.isFinite(timestamp) ? Math.max(0, timestamp - Date.now()) : null;
-}
-
-function delayWithAbortSignal(ms, signal) {
-  if (signal?.aborted) return Promise.reject(createAiAbortError());
-  return new Promise((resolve, reject) => {
-    const timer = window.setTimeout(done, ms);
-    signal?.addEventListener("abort", abort, { once: true });
-
-    function done() {
-      signal?.removeEventListener("abort", abort);
-      resolve();
-    }
-
-    function abort() {
-      window.clearTimeout(timer);
-      reject(createAiAbortError());
-    }
-  });
-}
-
-async function callOpenAiImage(options, signal) {
-  const model = settings.ai.imageModel.trim();
-  validateAiConfig(model);
-  const isDallE = /^dall-e-/i.test(model);
-  if (isDallE && options.outputFormat !== "png") throw new Error(`${model} output must use a .png path`);
-  if (/^dall-e-3$/i.test(model) && options.inputBlob) throw new Error("dall-e-3 does not support image edits");
-  if (/^dall-e-2$/i.test(model) && options.inputBlob) {
-    const inputType = FileUtils.getImageMimeType(options.inputName, options.inputBlob.type);
-    if (inputType !== "image/png") throw new Error("dall-e-2 edits require a PNG input image");
-    if (options.inputBlob.size > AI_IMAGE_MASK_MAX_FILE_SIZE) throw new Error(`dall-e-2 edit input exceeds ${FileUtils.formatFileSize(AI_IMAGE_MASK_MAX_FILE_SIZE)}`);
-    const dimensions = await readImageDimensions(options.inputBlob);
-    if (dimensions.width && dimensions.width !== dimensions.height) throw new Error("dall-e-2 edits require a square input image");
-  }
-  const common = isDallE
-    ? { model, prompt: options.prompt, response_format: "b64_json" }
-    : { model, prompt: options.prompt, size: options.size || "auto", quality: options.quality || "auto", background: options.background || "auto", output_format: options.outputFormat };
-  if (!isDallE && options.outputFormat === "gif") {
-    if (options.frameCount !== undefined) common.frame_count = options.frameCount;
-    if (options.frameDurationMs !== undefined) common.frame_duration_ms = options.frameDurationMs;
-  }
-  if (isDallE && options.size && options.size !== "auto") common.size = options.size;
-  if (/^dall-e-3$/i.test(model) && options.quality && options.quality !== "auto") common.quality = normalizeDallE3Quality(options.quality);
-  let endpoint = "generations";
-  let body;
-  let headers = { Authorization: `Bearer ${settings.ai.apiKey.trim()}` };
-  if (options.inputBlob) {
-    endpoint = "edits";
-    const form = new FormData();
-    Object.entries(common).forEach(([key, value]) => { if (value) form.append(key, value); });
-    form.append("image", new File([options.inputBlob], options.inputName || "input.png", { type: options.inputBlob.type || "image/png" }));
-    if (options.maskBlob) form.append("mask", new File([options.maskBlob], options.maskName || "mask.png", { type: options.maskBlob.type || "image/png" }));
-    body = form;
-  } else {
-    headers = { ...headers, "Content-Type": "application/json" };
-    body = JSON.stringify({ ...common, n: 1 });
-  }
-  const response = await fetch(`${getAiBaseUrl()}/images/${endpoint}`, { method: "POST", headers, body, signal });
-  const data = await readBoundedJsonResponse(response, getImageJsonResponseLimit(options.outputPath));
-  if (!response.ok) throw new Error(data.error?.message || data.message || response.statusText);
-  const item = data.data?.[0] || data;
-  let blob;
-  if (item.b64_json || item.base64) {
-    const encoded = item.b64_json || item.base64;
-    assertImageOutputSize(options.outputPath, FileUtils.getBase64DecodedSize(encoded));
-    blob = FileUtils.base64ToBlob(encoded, getImageMimeTypeForFormat(options.outputFormat));
-  } else if (item.url) {
-    const imageResponse = await fetch(item.url, { signal });
-    if (!imageResponse.ok) throw new Error(`Failed to download generated image: ${imageResponse.statusText}`);
-    const contentLength = Number(imageResponse.headers.get("content-length"));
-    if (Number.isFinite(contentLength) && contentLength >= 0) assertImageOutputSize(options.outputPath, contentLength);
-    blob = await readBoundedBlobResponse(imageResponse, options.outputPath, getImageOutputLimit());
-  } else {
-    throw new Error("Image API response did not include b64_json or url");
-  }
-  if (!blob.type || blob.type === "application/octet-stream") blob = FileUtils.withBlobType(blob, getImageMimeTypeForFormat(options.outputFormat));
-  assertImageOutputSize(options.outputPath, blob.size);
-  return blob;
-}
-
 function assertImageOutputSize(path, size) {
   const maxSize = getImageOutputLimit();
   if (Number.isFinite(size) && size > maxSize) throw new FileTooLargeError(path || "generated-image", { size, maxSize, operation: "AI image output" });
@@ -4984,56 +4819,8 @@ function getImageOutputLimit() {
   return Math.min(AI_IMAGE_OUTPUT_MAX_FILE_SIZE, fileSession.value.fileSystem.policy.maxMemoryWriteBytes);
 }
 
-function getImageJsonResponseLimit(path) {
-  const outputLimit = getImageOutputLimit();
-  const encodedLimit = Math.ceil((outputLimit * 4) / 3) + MEBIBYTE;
-  return { path: path || "generated-image", maxSize: encodedLimit, operation: "AI image JSON response" };
-}
-
-async function readBoundedJsonResponse(response, limit) {
-  const blob = await readBoundedBlobResponse(response, limit.path, limit.maxSize, limit.operation);
-  try {
-    return JSON.parse(await blob.text());
-  } catch {
-    return {};
-  }
-}
-
-async function readBoundedBlobResponse(response, path, maxSize, operation = "AI image output") {
-  const declaredSize = Number(response.headers.get("content-length"));
-  if (Number.isFinite(declaredSize) && declaredSize > maxSize) {
-    throw new FileTooLargeError(path, { size: declaredSize, maxSize, operation });
-  }
-  if (!response.body) throw new Error(`Streaming response body is unavailable for ${operation}`);
-  const reader = response.body.getReader();
-  const chunks = [];
-  let size = 0;
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      size += value.byteLength;
-      if (size > maxSize) {
-        await reader.cancel().catch(() => {});
-        throw new FileTooLargeError(path, { size, maxSize, operation });
-      }
-      chunks.push(value);
-    }
-  } finally {
-    reader.releaseLock();
-  }
-  return new Blob(chunks, { type: response.headers.get("content-type") || "application/octet-stream" });
-}
-
 function getImageMimeTypeForFormat(format) {
   return { jpeg: "image/jpeg", jpg: "image/jpeg", webp: "image/webp", png: "image/png", gif: "image/gif" }[String(format || "png").toLowerCase()] || "image/png";
-}
-
-function normalizeDallE3Quality(value) {
-  const quality = String(value || "").toLowerCase();
-  if (quality === "high" || quality === "hd") return "hd";
-  if (["low", "medium", "standard"].includes(quality)) return "standard";
-  throw new Error(`Unsupported dall-e-3 quality: ${value}`);
 }
 
 async function fetchAiModels() {
@@ -5041,43 +4828,19 @@ async function fetchAiModels() {
   try {
     validateAiApiKey();
     aiModelsLoading.value = true;
-    const response = await fetch(`${getAiBaseUrl()}/models`, {
-      headers: { Authorization: `Bearer ${settings.ai.apiKey.trim()}` },
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.error?.message || data.message || response.statusText);
-    const models = uniqueStrings((data.data || []).map((model) => model.id || model.name || model.model));
+    const models = await aiClient.listModels();
     aiAvailableModels.value = models;
     if (models.length) {
       if (!settings.ai.completionModel.trim()) settings.ai.completionModel = models[0];
       if (!parseCommaList(settings.ai.agentModels).length) settings.ai.agentModels = models[0];
     }
-    setStatus(tr("status.aiModelsLoaded", { count: models.length }), getAiBaseUrl());
+    setStatus(tr("status.aiModelsLoaded", { count: models.length }), (settings.ai.baseUrl.trim() || defaultAiSettings.baseUrl));
   } catch (error) {
     setStatus(tr("status.aiModels"), error.message || String(error));
     showAlert(`${tr("settings.aiFetchModels")}: ${error.message || error}`, { tone: "danger" });
   } finally {
     aiModelsLoading.value = false;
   }
-}
-
-function extractResponseText(response) {
-  if (typeof response.output_text === "string" && response.output_text.trim()) return response.output_text.trim();
-  const parts = [];
-  for (const item of response.output || []) {
-    if (item.type === "message") {
-      for (const content of item.content || []) {
-        if (typeof content.text === "string") parts.push(content.text);
-        if (typeof content.output_text === "string") parts.push(content.output_text);
-        if (typeof content.refusal === "string") parts.push(content.refusal);
-      }
-    }
-  }
-  return parts.join("\n").trim();
-}
-
-function extractFunctionCalls(response) {
-  return (response.output || []).filter((item) => item.type === "function_call" && item.name);
 }
 
 function createAiSessionDraft(options = {}) {
@@ -5193,21 +4956,41 @@ function normalizeAiSessionTimestamp(value) {
   return Number.isFinite(timestamp) && timestamp > 0 ? timestamp : Date.now();
 }
 
+function scheduleAiSessionsChanged() {
+  if (updatingAiSessionTimestamps || aiSessionStorageClosed || aiSessionChangeTimer !== null) return;
+  // 合并流式文字和草稿变更，避免每个增量都序列化整个会话历史。
+  aiSessionChangeTimer = window.setTimeout(() => {
+    aiSessionChangeTimer = null;
+    handleAiSessionsChanged();
+  }, 200);
+}
+
+function flushAiSessionChanges() {
+  window.clearTimeout(aiSessionChangeTimer);
+  aiSessionChangeTimer = null;
+  if (!aiSessionStorageClosed) handleAiSessionsChanged();
+}
+
 function handleAiSessionsChanged() {
-  if (updatingAiSessionTimestamps) return;
+  if (updatingAiSessionTimestamps || aiSessionStorageClosed) return;
   const now = Date.now();
+  let changed = false;
   updatingAiSessionTimestamps = true;
   aiSessions.forEach((session) => {
     const fingerprint = createAiSessionFingerprint(session);
     if (aiSessionFingerprints.get(session.id) === fingerprint) return;
     session.updatedAt = now;
     aiSessionFingerprints.set(session.id, fingerprint);
+    changed = true;
   });
   Array.from(aiSessionFingerprints.keys()).forEach((id) => {
-    if (!aiSessions.some((session) => session.id === id)) aiSessionFingerprints.delete(id);
+    if (!aiSessions.some((session) => session.id === id)) {
+      aiSessionFingerprints.delete(id);
+      changed = true;
+    }
   });
   updatingAiSessionTimestamps = false;
-  queuePersistSavedAiSessions();
+  if (changed) queuePersistSavedAiSessions();
 }
 
 function refreshAiSessionFingerprints() {
@@ -5220,12 +5003,25 @@ function createAiSessionFingerprint(session) {
 }
 
 function queuePersistSavedAiSessions() {
-  if (!aiSessionsReady) return;
-  const records = aiSessions.filter((session) => session.saved).map(serializeAiSession);
-  aiSessionPersistTask = aiSessionPersistTask
-    .catch(() => {})
-    .then(() => aiSessionStore.replace(records))
-    .catch((error) => console.warn("Failed to save AI sessions", error));
+  if (!aiSessionsReady || aiSessionStorageClosed) return;
+  aiSessionPersistPending = true;
+  if (aiSessionPersisting) return;
+  aiSessionPersisting = true;
+  aiSessionPersistTask = (async () => {
+    try {
+      // 写入期间的新变化只保存最新状态，不积压逐字快照。
+      while (aiSessionPersistPending) {
+        aiSessionPersistPending = false;
+        try {
+          await aiSessionStore.replace(aiSessions.filter((session) => session.saved).map(serializeAiSession));
+        } catch (error) {
+          console.warn("Failed to save AI sessions", error);
+        }
+      }
+    } finally {
+      aiSessionPersisting = false;
+    }
+  })();
 }
 
 function serializeAiSession(session) {
@@ -5441,14 +5237,14 @@ async function generateAiSessionTitle() {
   session.titleBusy = true;
   session.titleAbortController = controller;
   try {
-    const response = await callOpenAiResponses({
+    const response = await aiClient.respond({
       model,
-      store: false,
       instructions: "Create a concise, specific title for this coding-agent conversation. Return only the title, with no quotes, label, markdown, or trailing punctuation. Use the same language as the user's request and keep it within 80 characters.",
       input: buildAiSessionTitleContext(session),
-      max_output_tokens: 64,
-    }, controller.signal);
-    const title = normalizeGeneratedAiSessionTitle(extractResponseText(response));
+      options: { store: false, maxOutputTokens: 64 },
+      signal: controller.signal,
+    });
+    const title = normalizeGeneratedAiSessionTitle(getResponseText(response));
     if (!title) throw new Error(tr("ai.error.emptySessionName"));
     session.title = title;
     setStatus(tr("ai.sessionNameGenerated"), title);
@@ -5462,6 +5258,7 @@ async function generateAiSessionTitle() {
       session.titleBusy = false;
       session.titleAbortController = null;
     }
+    flushAiSessionChanges();
   }
 }
 
@@ -5841,17 +5638,15 @@ async function requestAiCompletion(file, model, position, signal) {
   const suffixChars = AI_COMPLETION_MANUAL_SUFFIX_CHARS;
   const prefix = value.slice(Math.max(0, offset - prefixChars), offset);
   const suffix = value.slice(offset, Math.min(value.length, offset + suffixChars));
-  const response = await callOpenAiResponses({
+  const response = await aiClient.respond({
     model: settings.ai.completionModel.trim(),
-    store: false,
-    reasoning: { effort: "low" },
-    text: { verbosity: "low" },
     instructions: "You are a code completion engine. Return only the missing text to insert at <CURSOR>. Do not repeat existing code before or after the cursor. Do not output the whole function/class/block when only a part is missing. No markdown.",
     input: `File: ${file.path}\nLanguage: ${file.language}\n\n${prefix}<CURSOR>${suffix}`,
-    max_output_tokens: AI_COMPLETION_MANUAL_MAX_OUTPUT_TOKENS,
-  }, signal);
-  const text = extractResponseText(response).replace(/^```[\w-]*\n?/, "").replace(/```$/, "");
-  const meta = response.__meta;
+    options: { store: false, reasoningEffort: "low", verbosity: "low", maxOutputTokens: AI_COMPLETION_MANUAL_MAX_OUTPUT_TOKENS },
+    signal,
+  });
+  const text = getResponseText(response).replace(/^```[\w-]*\n?/, "").replace(/```$/, "");
+  const meta = response.meta;
   if (meta) setStatus(tr("status.aiCompletion"), `${meta.ms}ms · ${(meta.bytes / 1024).toFixed(1)}KB`);
   return text;
 }
@@ -5917,6 +5712,7 @@ async function sendAiPrompt() {
       session.busy = false;
       session.abortController = null;
     }
+    flushAiSessionChanges();
   }
 }
 
@@ -5925,6 +5721,7 @@ function stopAiTask() {
   session?.abortController?.abort();
   session?.titleAbortController?.abort();
   session?.messages.forEach(cancelAiToolMessage);
+  flushAiSessionChanges();
   void nextTick(scrollAiMessagesToBottom);
 }
 
@@ -5967,15 +5764,15 @@ async function compressAiContext() {
   try {
     const payload = {
       model,
-      store: false,
       instructions: "Compress the provided AI assistant conversation into a concise but complete context summary for future coding-agent turns. Preserve user goals, decisions, file paths, tool results, pending unsaved changes, AI-created files, deleted/pending-delete files, and unresolved issues. Do not add markdown fences.",
       input: `Workspace: ${rootName.value || "unknown"}\nAI-touched files: ${formatFileStateList(getAiTouchedFiles(session), { touchedPaths })}\nDirty files: ${formatFileStateList(dirtyFiles.value, { touchedPaths })}\n\nConversation to compress:\n${formatRecentAiMessages({ includePendingUserMessage: true, session })}`,
-      max_output_tokens: 4096,
+      options: { store: false, maxOutputTokens: 4096 },
+      signal: controller.signal,
     };
-    if (session.reasoningEffort && session.reasoningEffort !== "default") payload.reasoning = { effort: session.reasoningEffort };
-    const response = await callOpenAiResponses(payload, controller.signal);
+    if (session.reasoningEffort && session.reasoningEffort !== "default") payload.options.reasoningEffort = session.reasoningEffort;
+    const response = await aiClient.respond(payload);
     updateAiContextUsage(response, session);
-    const summary = extractResponseText(response);
+    const summary = getResponseText(response).trim();
     if (!summary) throw new Error("Empty compressed context");
     disposeAiMessageResources(session.messages);
     session.messages.splice(0, session.messages.length, createAiMessage("assistant", `# ${tr("ai.contextSummaryTitle")}\n\n${summary}`));
@@ -5993,63 +5790,84 @@ async function compressAiContext() {
       session.busy = false;
       session.abortController = null;
     }
+    flushAiSessionChanges();
   }
+}
+
+function getResponseSources(response) {
+  return normalizeAiWebSources((response.output || []).filter((item) => item.type === "message").flatMap((item) => item.sources || []));
+}
+
+async function requestAiAgentResponse(request, session) {
+  let message = null;
+  const display = (output) => {
+    throwIfAiAborted(request.signal);
+    const text = getResponseText({ output });
+    const sources = getResponseSources({ output });
+    if (!text && !sources.length) {
+      if (message) session.messages.splice(session.messages.indexOf(message), 1);
+      message = null;
+      return;
+    }
+    if (!message) message = addAiMessage("assistant", text, { sources }, session);
+    else Object.assign(message, { content: text, sources });
+    void nextTick(() => { if (activeAiSession.value === session) scrollAiMessagesToBottom(); });
+  };
+  // 每次模型响应占一条消息，流式快照与终态都覆盖它；异常保留已显示文字。
+  return aiClient.respond({ ...request, onEvent: (event) => {
+    if (event.type === "reset") display([]);
+    else if (event.type === "output") display(event.output);
+  } });
 }
 
 async function runAiAgent(prompt, signal, session = getActiveAiSession(), runConfig = {}) {
   const workspace = captureWorkspace();
-  const conversation = buildAgentInputMessages(prompt, session, runConfig.attachments);
-  const agentInstructions = getAgentInstructions();
+  let input = buildAgentInputMessages(prompt, session, runConfig.attachments);
+  let continuation;
+  const instructions = getAgentInstructions();
   const model = runConfig.model || session.agentModel.trim();
   const reasoningEffort = runConfig.reasoningEffort || session.reasoningEffort;
+  const options = reasoningEffort && reasoningEffort !== "default" ? { reasoningEffort } : {};
   while (true) {
     throwIfAiAborted(signal);
-    const payload = { model, instructions: agentInstructions, input: conversation, tools: getAiToolDefinitions() };
-    if (reasoningEffort && reasoningEffort !== "default") payload.reasoning = { effort: reasoningEffort };
-    const response = await callOpenAiResponses(payload, signal);
+    const response = await requestAiAgentResponse({ model, instructions, input, continuation, tools: getAiToolDefinitions(), options, signal }, session);
     throwIfAiAborted(signal);
     updateAiContextUsage(response, session);
-    const text = extractResponseText(response);
-    const sources = normalizeAiWebSources((response.output || []).filter((item) => item.type === "message")
-      .flatMap((item) => item.content || []).flatMap((part) => part.annotations || []).filter((annotation) => annotation.type === "url_citation"));
-    if (text || sources.length) addAiMessage("assistant", text, { sources }, session);
-    const toolCalls = extractFunctionCalls(response);
-    const outputCalls = (response.output || []).filter((item) => !["message", "reasoning"].includes(item.type));
-    if (!text && !sources.length && !outputCalls.length) throw new Error(response.error?.message || tr("ai.error.emptyResponse"));
-    if (toolCalls.length) conversation.push(...getContinuationOutputItems(response));
+    const text = getResponseText(response);
+    const outputCalls = response.output.filter((item) => !["message", "reasoning"].includes(item.type));
+    if (!text.trim() && !getResponseSources(response).length && !outputCalls.length) throw new Error(tr("ai.error.emptyResponse"));
+    continuation = response.continuation;
+    input = [];
     const imageInputs = [];
     const parsedToolCalls = outputCalls.map((call) => {
-      let args = {};
-      if (call.type === "function_call") args = parseAiToolArguments(call);
-      if (call.type === "image_generation_call") args = { output_format: call.output_format || "png" };
-      if (call.type === "web_search_call") args = call.action || {};
+      const args = call.type === "tool_call" ? call.arguments
+        : call.type === "image" ? { output_format: call.format }
+          : call.type === "web_search" ? call.action : {};
       return { call, args };
     });
-    const pendingToolCalls = parsedToolCalls.map(({ call, args }, index) => ({ call, args, message: addPendingAiToolMessage({ name: call.type === "function_call" ? call.name : call.type }, args, session, index + 1, parsedToolCalls.length) }));
+    const pendingToolCalls = parsedToolCalls.map(({ call, args }, index) => ({ call, args, message: addPendingAiToolMessage({ name: call.type === "tool_call" ? call.name : call.type }, args, session, index + 1, parsedToolCalls.length) }));
     await nextTick();
-    scrollAiMessagesToBottom();
+    if (activeAiSession.value === session) scrollAiMessagesToBottom();
     for (let index = 0; index < pendingToolCalls.length; index += 1) {
       if (signal.aborted) {
         cancelPendingAiToolMessages(pendingToolCalls, index);
-        await nextTick();
-        scrollAiMessagesToBottom();
         throw createAiAbortError();
       }
       const { call, args, message } = pendingToolCalls[index];
       try {
         let result;
         switch (call.type) {
-          case "function_call":
-            result = await handleAiFunctionCall(call, args, session, signal, imageInputs, conversation);
+          case "tool_call":
+            result = await handleAiFunctionCall(call, args, session, signal, imageInputs, input);
             break;
-          case "image_generation_call":
+          case "image":
             result = await handleAiImageGenerationCall(call, args, session, signal, workspace);
             break;
-          case "web_search_call":
+          case "web_search":
             result = handleAiWebSearchCall(call);
             break;
           default:
-            result = { ok: false, summary: tr("ai.error.unsupportedOutput", { type: call.type || "unknown" }) };
+            result = { ok: false, summary: tr("ai.error.unsupportedOutput", { type: call.name || call.type }) };
         }
         throwIfAiAborted(signal);
         completeAiToolMessage(message, result);
@@ -6057,30 +5875,26 @@ async function runAiAgent(prompt, signal, session = getActiveAiSession(), runCon
         if (error.name !== "AbortError" && !signal.aborted) throw error;
         cancelAiToolMessage(message);
         cancelPendingAiToolMessages(pendingToolCalls, index + 1);
-        await nextTick();
-        scrollAiMessagesToBottom();
         throw error.name === "AbortError" ? error : createAiAbortError();
       }
       await nextTick();
-      scrollAiMessagesToBottom();
+      if (activeAiSession.value === session) scrollAiMessagesToBottom();
       if (signal.aborted) {
         cancelPendingAiToolMessages(pendingToolCalls, index + 1);
-        await nextTick();
-        scrollAiMessagesToBottom();
         throw createAiAbortError();
       }
     }
-    if (!toolCalls.length) return;
-    if (imageInputs.length) conversation.push(buildImageInputMessage(imageInputs));
+    if (!outputCalls.some((call) => call.type === "tool_call")) return;
+    if (imageInputs.length) input.push(buildImageInputMessage(imageInputs));
   }
 }
 
-async function handleAiFunctionCall(call, args, session, signal, imageInputs, conversation) {
+async function handleAiFunctionCall(call, args, session, signal, imageInputs, input) {
   const result = call.name === "read_image"
     ? await runAiReadImageToolCall(args, imageInputs)
     : await runAiToolCall(call, args, session, signal, imageInputs);
   throwIfAiAborted(signal);
-  conversation.push({ type: "function_call_output", call_id: call.call_id, output: JSON.stringify(result) });
+  input.push({ type: "tool_result", callId: call.id, output: result });
   return result;
 }
 
@@ -6090,12 +5904,12 @@ async function handleAiImageGenerationCall(image, args, session, signal, workspa
     throwIfAiAborted(signal);
     if (!isWorkspaceLoaded()) throw new Error(tr("ai.error.noWorkspace"));
     if (image.status && image.status !== "completed") throw new Error(tr("ai.error.hostedToolStatus", { type: image.type, status: image.status }));
-    if (typeof image.result !== "string" || !image.result.trim()) throw new Error(tr("ai.error.emptyImageResult"));
+    if (typeof image.base64 !== "string" || !image.base64.trim()) throw new Error(tr("ai.error.emptyImageResult"));
     const format = normalizeImageOutputFormat(args.output_format, `image.${args.output_format}`);
     const path = `generated-image-${crypto.randomUUID()}.${format}`;
     args.output_path = path;
-    assertImageOutputSize(path, FileUtils.getBase64DecodedSize(image.result));
-    const blob = FileUtils.base64ToBlob(image.result, getImageMimeTypeForFormat(format));
+    assertImageOutputSize(path, FileUtils.getBase64DecodedSize(image.base64));
+    const blob = FileUtils.base64ToBlob(image.base64, getImageMimeTypeForFormat(format));
     return okTool(await stageGeneratedImage({ path, blob, session, signal, createOnly: true, workspace }));
   } catch (error) {
     if (error.name === "AbortError" || signal.aborted) throw error;
@@ -6107,7 +5921,7 @@ function handleAiWebSearchCall(call) {
   const action = call.action || {};
   const ok = call.status === "completed" && !call.error;
   const actionLabel = { search: "ai.webSearch.search", open_page: "ai.webSearch.openPage", find_in_page: "ai.webSearch.findInPage" }[action.type] || "ai.webSearch.search";
-  const sources = normalizeAiWebSources([...(Array.isArray(action.sources) ? action.sources : []), { url: action.url }]);
+  const sources = normalizeAiWebSources(call.sources);
   const summary = ok ? tr(actionLabel) : tr("ai.error.hostedToolStatus", { type: call.type, status: call.status || "unknown" });
   return { ok, summary, status: call.status, action, sources, error: call.error || null };
 }
@@ -6147,36 +5961,12 @@ async function runAiReadImageToolCall(args, imageInputs) {
 function buildImageInputMessage(images) {
   const content = [];
   images.forEach((image) => {
-    content.push({ type: "input_text", text: image.source === "preview_screenshot"
+    content.push({ type: "text", text: image.source === "preview_screenshot"
       ? `Image attached from preview_screenshot: ${image.path} (revision ${image.revision})${image.stagedPath ? `; staged at ${image.stagedPath} (unsaved)` : ""}`
       : `Image attached from read_image: ${image.path}` });
-    content.push({ type: "input_image", image_url: image.dataUrl, detail: "auto" });
+    content.push({ type: "image", url: image.dataUrl, detail: "auto" });
   });
   return { role: "user", content };
-}
-
-function getContinuationOutputItems(response) {
-  return (response.output || []).flatMap((item) => {
-    if (item.type === "web_search_call") {
-      return [compactObject({ type: item.type, id: item.id, status: item.status, action: item.action })];
-    }
-    if (item.type === "function_call" && item.name) {
-      return [compactObject({ type: "function_call", id: item.id, call_id: item.call_id, name: item.name, arguments: item.arguments || "{}", status: item.status })];
-    }
-    if (item.type === "message") {
-      const content = (item.content || []).flatMap((part) => {
-        if (part.type === "output_text") return [compactObject({ type: "output_text", text: part.text, annotations: part.annotations, logprobs: part.logprobs })];
-        if (part.type === "refusal") return [compactObject({ type: "refusal", refusal: part.refusal })];
-        return [];
-      });
-      return [compactObject({ type: "message", id: item.id, role: item.role || "assistant", content, status: item.status })];
-    }
-    return [];
-  });
-}
-
-function compactObject(value) {
-  return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined));
 }
 
 function getAgentInstructions() {
@@ -6259,14 +6049,14 @@ function buildAgentInputMessages(prompt, session = getActiveAiSession(), attachm
 function buildAgentRequestInputMessage(prompt, session, attachments) {
   const requestContext = buildAgentRequestContext(prompt, session);
   if (!attachments?.length) return { role: "user", content: requestContext };
-  const content = [{ type: "input_text", text: requestContext }];
+  const content = [{ type: "text", text: requestContext }];
   attachments.forEach((attachment) => {
     const description = `Local attachment: ${attachment.name} (${attachment.mimeType || "unknown"}, ${attachment.size} bytes)`;
     if (attachment.kind === "image") {
-      content.push({ type: "input_text", text: description });
-      content.push({ type: "input_image", image_url: attachment.dataUrl, detail: "auto" });
+      content.push({ type: "text", text: description });
+      content.push({ type: "image", url: attachment.dataUrl, detail: "auto" });
     } else {
-      content.push({ type: "input_text", text: `${description}\n\n${attachment.text}` });
+      content.push({ type: "text", text: `${description}\n\n${attachment.text}` });
     }
   });
   return { role: "user", content };
@@ -6363,10 +6153,10 @@ function updateAiContextUsage(response, session = getActiveAiSession()) {
 
 function normalizeAiUsage(usage) {
   if (!usage || typeof usage !== "object") return null;
-  const input = Number(usage.input_tokens ?? usage.prompt_tokens ?? 0);
-  const output = Number(usage.output_tokens ?? usage.completion_tokens ?? 0);
-  const total = Number(usage.total_tokens ?? input + output);
-  const rawCached = usage.input_tokens_details?.cached_tokens ?? usage.prompt_tokens_details?.cached_tokens ?? usage.cached_tokens;
+  const input = Number(usage.inputTokens ?? 0);
+  const output = Number(usage.outputTokens ?? 0);
+  const total = Number(usage.totalTokens ?? input + output);
+  const rawCached = usage.cachedInputTokens;
   const cached = Number(rawCached ?? 0);
   if (![input, output, total].some((value) => Number.isFinite(value) && value > 0)) return null;
   return {
@@ -6744,10 +6534,6 @@ function getAiRequirementStatus(requirement) {
 function stripAiToolInternalMetadata(tool) {
   const { requirements, ...definition } = tool;
   return { ...definition, description: formatAiToolDescriptionWithCondition(tool) };
-}
-
-function parseAiToolArguments(call) {
-  return call.arguments ? JSON.parse(call.arguments) : {};
 }
 
 async function runAiToolCall(call, args = {}, session = getActiveAiSession(), signal, imageInputs = []) {
@@ -7186,7 +6972,7 @@ function beforeUnload(event) {
 
 function handlePageHide() {
   localExecutor.dispose();
-  queuePersistSavedAiSessions();
+  flushAiSessionChanges();
   cancelRunningSftpTasks();
   closeAllSshSessions({ disposeTerminal: true });
 }
@@ -7657,10 +7443,15 @@ async function aiToolGenerateOrEditImage({ prompt, output_path: outputPath, inpu
   assertCurrentWorkspace(workspace);
   throwIfAiAborted(signal);
   if (input && mask && input.width && mask.width && (input.width !== mask.width || input.height !== mask.height)) throw new Error("mask_path dimensions must match input_path");
-  const blob = await callOpenAiImage({
+  validateAiConfig(settings.ai.imageModel.trim());
+  const image = await aiClient.generateImage({
+    model: settings.ai.imageModel.trim(),
+    signal,
     prompt: normalizedPrompt,
     inputBlob: input?.blob,
     inputName: input?.name,
+    inputWidth: input?.width,
+    inputHeight: input?.height,
     maskBlob: mask?.blob,
     maskName: mask?.name,
     size: String(size || "auto"),
@@ -7670,10 +7461,11 @@ async function aiToolGenerateOrEditImage({ prompt, output_path: outputPath, inpu
     frameCount,
     frameDurationMs,
     outputPath: normalizedOutputPath,
-  }, signal);
+    maxOutputBytes: getImageOutputLimit(),
+  });
   return stageGeneratedImage({
     path: normalizedOutputPath,
-    blob,
+    blob: image.blob,
     inputPath: input?.path,
     session,
     signal,
@@ -8849,7 +8641,7 @@ async function authorizeAiCommand({getPolicy, action, confirmation, rejectedMess
     const model = settings.ai.reviewModel.trim();
     try {
       review = await reviewAiCommand({model, action, authorizations: session.commandAuthorizations,
-        locale: getCurrentLocale(), request: callOpenAiResponses, signal});
+        locale: getCurrentLocale(), request: aiClient.respond, signal});
     } catch (error) {
       throwIfAiAborted(signal);
       const key = {COMMAND_REVIEW_MODEL_REQUIRED: 'commandApproval.modelRequired', COMMAND_REVIEW_INVALID: 'commandApproval.invalidResult', COMMAND_REVIEW_TIMEOUT: 'commandApproval.timeout'}[error.code];

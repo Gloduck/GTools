@@ -224,7 +224,7 @@ test('场景：SSH 自动审查按连接启用，白名单低风险命令也经�
     const dialog = page.getByRole('dialog', {name: '执行', exact: true});
     await expect(dialog).toContainText('另一个 SSH');
     expect(reviews).toHaveLength(1);
-    const input = JSON.parse(reviews[0].input);
+    const input = parseReviewInput(reviews[0].input);
     expect(Object.keys(input).sort()).toEqual(['action', 'authorizations', 'locale']);
     expect(input.action).toMatchObject({type: 'ssh', command: 'pwd', target: {host: 'example.com', username: 'tester', port: 22}});
     expect(input.authorizations).toContainEqual({type: 'user_message', content: '执行 SSH 测试命令'});
@@ -291,7 +291,7 @@ test('场景：用户原话和实际回答跨压缩与保存恢复保留，重�
     await page.route('https://api.openai.com/v1/responses', async (route) => {
         const body = route.request().postDataJSON();
         if (body.model === 'test-review') {
-            reviews.push(JSON.parse(body.input));
+            reviews.push(parseReviewInput(body.input));
             return respondToAi(route, {output_text: JSON.stringify({decision: 'approve', reason: '只读核对当前目录'})});
         }
         if (body.instructions.startsWith('Compress the provided')) {
@@ -336,3 +336,17 @@ test('场景：用户原话和实际回答跨压缩与保存恢复保留，重�
     await expect.poll(() => reviews.length).toBe(3);
     expect(reviews[2].authorizations).toEqual([{type: 'user_message', content: '新任务：查询当前目录'}]);
 });
+
+// 审查是独立请求，线上只允许一个用户文本项承载授权与动作。
+function parseReviewInput(input) {
+    expect(input).toHaveLength(1);
+    expect(input[0].role).toBe('user');
+    const content = input[0].content;
+    const text = typeof content === 'string' ? content : content.map((part) => {
+        expect(part.type).toBe('input_text');
+        return part.text;
+    }).join('');
+    const context = JSON.parse(text);
+    expect(Object.keys(context).sort()).toEqual(['action', 'authorizations', 'locale']);
+    return context;
+}

@@ -127,12 +127,12 @@ test('场景：自动审查不附带历史和本轮工具结果，主 AI 仍能�
     await expect(page.locator('.ai-message-assistant').last()).toContainText('场景审查完成');
     expect(reviews).toHaveLength(3);
     expect(reviews.every((request) => request.tools === undefined && request.text.format.type === 'json_schema')).toBe(true);
-    expect(JSON.parse(reviews[0].input).authorizations).toContainEqual({type: 'user_message', content: '执行一次本机命令'});
-    const lastContext = JSON.parse(reviews[2].input);
+    expect(parseReviewInput(reviews[0].input).authorizations).toContainEqual({type: 'user_message', content: '执行一次本机命令'});
+    const lastContext = parseReviewInput(reviews[2].input);
     expect(Object.keys(lastContext).sort()).toEqual(['action', 'authorizations', 'locale']);
     expect(lastContext.action.command).toBe('pwd');
-    expect(reviews[2].input).not.toContain('prior-tool-output-marker');
-    expect(reviews[2].input).not.toContain('current-tool-output-marker');
+    expect(JSON.stringify(reviews[2].input)).not.toContain('prior-tool-output-marker');
+    expect(JSON.stringify(reviews[2].input)).not.toContain('current-tool-output-marker');
     expect(submitted.map((task) => task.command)).toEqual([oldCommand, currentCommand, 'pwd']);
     const priorResult = JSON.parse(mainRequests[1].input.find((item) => item.type === 'function_call_output' && item.call_id === 'prior-command').output);
     const currentResult = JSON.parse(mainRequests[3].input.find((item) => item.type === 'function_call_output' && item.call_id === 'current-command').output);
@@ -853,3 +853,17 @@ test('场景：自定义 token 不限制长度，逐字输入时启动命令正�
     await expect(startup).not.toHaveValue(/-Token/);
     await expect(copy).toBeEnabled();
 });
+
+// 审查是独立请求，线上只允许一个用户文本项承载授权与动作。
+function parseReviewInput(input) {
+    expect(input).toHaveLength(1);
+    expect(input[0].role).toBe('user');
+    const content = input[0].content;
+    const text = typeof content === 'string' ? content : content.map((part) => {
+        expect(part.type).toBe('input_text');
+        return part.text;
+    }).join('');
+    const context = JSON.parse(text);
+    expect(Object.keys(context).sort()).toEqual(['action', 'authorizations', 'locale']);
+    return context;
+}

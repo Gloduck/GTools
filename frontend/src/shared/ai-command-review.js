@@ -1,3 +1,5 @@
+import {getResponseText} from './ai/client.js';
+
 // 审查只接收用户授权与待审动作，不附带工具历史，也不执行命令。
 const REVIEW_INSTRUCTIONS = `You independently review one proposed shell command before it executes.
 Assess the actual command, target, side effects and user authorization in context. Do not decide by command name alone.
@@ -40,8 +42,8 @@ export function parseCommandReviewResponse(response) {
     if (!response || response.error || (response.status && response.status !== 'completed')) throw reviewError('COMMAND_REVIEW_INVALID');
     const output = response.output || [];
     if (output.some((item) => !['message', 'reasoning'].includes(item.type))) throw reviewError('COMMAND_REVIEW_INVALID');
-    const text = response.output_text ?? output.filter((item) => item.type === 'message')
-        .flatMap((item) => item.content || []).filter((part) => part.type === 'output_text').map((part) => part.text).join('');
+    if (output.some((item) => item.type === 'message' && item.content?.some((part) => part.type !== 'text'))) throw reviewError('COMMAND_REVIEW_INVALID');
+    const text = getResponseText(response);
     let result;
     try { result = JSON.parse(text); } catch { throw reviewError('COMMAND_REVIEW_INVALID'); }
     if (!REVIEW_DECISIONS.includes(result?.decision) || typeof result.reason !== 'string' || !result.reason.trim()) throw reviewError('COMMAND_REVIEW_INVALID');
@@ -53,10 +55,9 @@ export async function reviewAiCommand({model, action, authorizations, locale, re
     if (!model?.trim()) throw reviewError('COMMAND_REVIEW_MODEL_REQUIRED');
     const payload = {
         model: model.trim(),
-        store: false,
         instructions: REVIEW_INSTRUCTIONS,
         input: buildCommandReviewInput({action, authorizations, locale}),
-        text: {format: {type: 'json_schema', name: 'command_review', strict: true, schema: {
+        options: {store: false, responseFormat: {type: 'json_schema', name: 'command_review', strict: true, schema: {
             type: 'object',
             properties: {decision: {type: 'string', enum: REVIEW_DECISIONS}, reason: {type: 'string'}},
             required: ['decision', 'reason'],
@@ -68,7 +69,7 @@ export async function reviewAiCommand({model, action, authorizations, locale, re
     signal?.addEventListener('abort', abort, {once: true});
     const timer = setTimeout(() => controller.abort(reviewError('COMMAND_REVIEW_TIMEOUT')), timeoutMs);
     try {
-        const response = await request(payload, controller.signal);
+        const response = await request({...payload, signal: controller.signal});
         controller.signal.throwIfAborted();
         return {model: payload.model, ...parseCommandReviewResponse(response)};
     } catch (error) {

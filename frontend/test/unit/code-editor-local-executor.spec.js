@@ -314,6 +314,24 @@ test('场景：任务列表不展示已完成任务，执行结果仍返回 AI �
     expect(result.output).toContain('执行器连接成功');
 });
 
+test('执行器可选默认参数接受 null，保留 high_risk false', async ({page}) => {
+    const submitted = [];
+    page.on('request', (request) => {
+        if (request.method() === 'POST' && request.url() === `${connection.url}/v1/tasks`) submitted.push(request.postDataJSON());
+    });
+    await setup(page, "printf 'null-defaults-ok'", {shell: null, lifecycle: null, cwd: null, wait_seconds: null, max_chars: null});
+    const panel = await connect(page);
+    await panel.getByLabel('AI 白名单主命令').fill('printf');
+    await ask(page);
+    await expect(page.locator('.ai-message-assistant')).toContainText('本机命令请求已处理');
+    await expect(page.getByRole('dialog', {name: '执行命令'})).toHaveCount(0);
+    const result = JSON.parse(requests[1].input.find((item) => item.type === 'function_call_output').output);
+    expect(result).toMatchObject({ok: true, status: 'completed', exit_code: 0});
+    expect(result.output).toContain('null-defaults-ok');
+    expect(submitted).toHaveLength(1);
+    expect(submitted[0].lifecycle).toBe('task');
+});
+
 test('场景：任务列表不展示失败任务，错误输出和退出码仍返回 AI', async ({page}) => {
     await setup(page, "printf '失败信息\\n' >&2; exit 7", {commands: ['printf', 'exit']}, {localExecutor: {autoApprove: true}});
     const panel = await connect(page);

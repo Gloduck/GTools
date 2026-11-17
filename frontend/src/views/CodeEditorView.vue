@@ -887,6 +887,7 @@ import { COMMAND_WHITELIST_TEMPLATES } from "@/shared/command-presets.js";
 import { normalizeCommandWhitelist, normalizeMainCommands, normalizeCommandApprovalSettings, getCommandApprovalReason } from "@/shared/command-whitelist.js";
 import { reviewAiCommand } from "@/shared/ai-command-review.js";
 import { createAiClient, getResponseText } from "@/shared/ai/client.js";
+import { makeOptionalToolParametersNullable, normalizeToolArguments } from "@/shared/ai/tool-parameters.js";
 import { normalizeLocalCommand, isLocalTaskFinished, buildLocalStartupCommand, normalizeExecutorListenAddress, normalizeLocalExecutorSettings, normalizeExecutorToken, buildLocalConnectionDraft } from "@/shared/local-executor/client.js";
 import { runAiNodeWorker } from "@/shared/ai-node-worker.js";
 import { runFilterScript } from "@/shared/filter-script-worker.js";
@@ -5925,7 +5926,8 @@ async function runAiAgent(run, session, runConfig) {
     if (!getResponseText(response).trim() && !getResponseSources(response).length && !outputCalls.length) throw new Error(tr("ai.error.emptyResponse"));
     const imageInputs = [];
     const entries = outputCalls.map((call, index) => {
-      const args = call.type === "tool_call" ? call.arguments
+      // 执行参数单独规范化；协议原始参数仍由续接令牌保留。
+      const args = call.type === "tool_call" ? normalizeToolArguments(call.arguments, getAiToolDefinitionByName(call.name)?.parameters)
         : call.type === "image" ? { output_format: call.format }
           : call.type === "web_search" ? call.action : {};
       return { call, args, started: false, result: null,
@@ -6425,8 +6427,8 @@ function getAiAllToolDefinitions() {
       quality: { type: "string", description: "Provider-supported quality. GPT Image commonly uses auto, low, medium, or high; DALL-E 3 uses standard or hd." },
       background: { type: "string", description: "Generation background, for example auto, opaque, or transparent." },
       output_format: { type: "string", description: "Optional png, jpeg, webp, or gif. Defaults from output_path." },
-      frame_count: { type: "integer", minimum: 2, maximum: 16, description: "GIF only. Number of animation frames; omitted uses the provider default (GPT Image 2.6: 9)." },
-      frame_duration_ms: { type: "integer", minimum: 20, maximum: 2000, description: "GIF only. Milliseconds per frame; GPT Image 2.6 rounds to 10 ms, default 200. Omit for provider default." },
+      frame_count: { type: "integer", minimum: 2, maximum: 16, description: "Number of animation frames. Non-null values are only valid for GIF; for PNG, JPEG, or WebP, omit or pass null. When unspecified for GIF, use the provider default (GPT Image 2.6: 9)." },
+      frame_duration_ms: { type: "integer", minimum: 20, maximum: 2000, description: "Milliseconds per frame. Non-null values are only valid for GIF; for PNG, JPEG, or WebP, omit or pass null. When unspecified for GIF, use the provider default (GPT Image 2.6: 200 ms, rounded to 10 ms)." },
       overwrite: { type: "boolean", description: "Allow targeting an existing output file other than input_path. The disk file remains unchanged until manual save." }
     }, required: ["prompt", "output_path"] } },
     { type: "function", name: "search_text", requirements: ["workspace"], description: aiToolDescription("Search exact text across workspace files.", "This is a simple substring search, not a regex search. Use path to limit the search scope and max_results to keep output concise."), parameters: { type: "object", properties: { query: { type: "string" }, path: { type: "string" }, max_results: { type: "number" } }, required: ["query"] } },
@@ -6613,7 +6615,7 @@ function getAiRequirementStatus(requirement) {
 
 function stripAiToolInternalMetadata(tool) {
   const { requirements, ...definition } = tool;
-  return { ...definition, description: formatAiToolDescriptionWithCondition(tool) };
+  return { ...definition, parameters: makeOptionalToolParametersNullable(tool.parameters), description: formatAiToolDescriptionWithCondition(tool) };
 }
 
 async function runAiToolCall(call, args = {}, session = getActiveAiSession(), signal, imageInputs = []) {

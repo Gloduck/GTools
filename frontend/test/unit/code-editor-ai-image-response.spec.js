@@ -251,26 +251,28 @@ test('GIF 编辑使用静态参考图并在 multipart 请求中传递动画参�
     expect(await readFile(page, 'edited.gif')).toEqual([...Buffer.from(gif, 'base64')]);
 });
 
-test('GIF 省略动画参数时沿用服务端默认值，PNG 请求不附带动画参数', async ({page}) => {
-    const bodies = [];
-    await page.route('https://api.openai.com/v1/images/generations', async (route) => {
-        const body = route.request().postDataJSON();
-        bodies.push(body);
-        await route.fulfill({json: {data: [{b64_json: body.output_format === 'gif' ? gif : png}]}});
+for (const animation of [{}, {frame_count: null, frame_duration_ms: null}]) {
+    test(`GIF/PNG 动画参数${Object.keys(animation).length ? '为 null' : '省略'}时沿用默认值`, async ({page}) => {
+        const bodies = [];
+        await page.route('https://api.openai.com/v1/images/generations', async (route) => {
+            const body = route.request().postDataJSON();
+            bodies.push(body);
+            await route.fulfill({json: {data: [{b64_json: body.output_format === 'gif' ? gif : png}]}});
+        });
+        const requests = await setup(page, (requests) => requests.length === 1 ? {output: [
+            imageCall({output_path: 'defaults.gif', ...animation}),
+            {...imageCall({output_path: 'still.png', ...animation}), id: 'png-call', call_id: 'png-call'},
+        ]} : {output_text: '已生成动画与静态图。'});
+        expect(bodies).toHaveLength(2);
+        expect(bodies.map((body) => body.output_format)).toEqual(['gif', 'png']);
+        for (const body of bodies) {
+            expect(body).not.toHaveProperty('frame_count');
+            expect(body).not.toHaveProperty('frame_duration_ms');
+        }
+        const results = requests[1].input.filter((item) => item.type === 'function_call_output').map((item) => JSON.parse(item.output));
+        expect(results.every((result) => result.ok)).toBe(true);
     });
-    const requests = await setup(page, (requests) => requests.length === 1 ? {output: [
-        imageCall({output_path: 'defaults.gif'}),
-        {...imageCall({output_path: 'still.png'}), id: 'png-call', call_id: 'png-call'},
-    ]} : {output_text: '已生成动画与静态图。'});
-    expect(bodies).toHaveLength(2);
-    expect(bodies.map((body) => body.output_format)).toEqual(['gif', 'png']);
-    for (const body of bodies) {
-        expect(body).not.toHaveProperty('frame_count');
-        expect(body).not.toHaveProperty('frame_duration_ms');
-    }
-    const results = requests[1].input.filter((item) => item.type === 'function_call_output').map((item) => JSON.parse(item.output));
-    expect(results.every((result) => result.ok)).toBe(true);
-});
+}
 
 test('GIF 参数错误或格式不匹配时在调用图片 API 前报错', async ({page}) => {
     let imageRequests = 0;
@@ -279,7 +281,7 @@ test('GIF 参数错误或格式不匹配时在调用图片 API 前报错', async
         await route.fulfill({status: 400, json: {error: {message: '不应发送请求'}}});
     });
     const invalid = [
-        {frame_count: 1}, {frame_count: 17}, {frame_count: '2'}, {frame_count: null},
+        {frame_count: 1}, {frame_count: 17}, {frame_count: '2'},
         {frame_duration_ms: 19}, {frame_duration_ms: 2001}, {frame_duration_ms: 20.5},
         {output_path: 'still.png', frame_count: 2}, {output_path: 'mismatch.png', output_format: 'gif'},
     ];

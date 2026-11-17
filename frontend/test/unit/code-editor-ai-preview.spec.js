@@ -9,14 +9,15 @@ test.use({
     },
 });
 
-async function setup(page) {
+async function setup(page, {backend = false} = {}) {
     const requests = [];
     let pending = [], sequence = 0;
-    await page.addInitScript(() => {
+    await page.addInitScript((backend) => {
         if (window !== window.top) return;
         localStorage.setItem('ui-locale', 'en-US');
         localStorage.setItem('browser-code-editor-settings', JSON.stringify({
             ai: {apiKey: 'test-key', agentModels: 'test-model', baseUrl: 'https://api.openai.com/v1'},
+            backend: {enabled: backend, baseUrl: location.origin},
         }));
         window.displayRequests = 0;
         const getDisplayMedia = navigator.mediaDevices.getDisplayMedia.bind(navigator.mediaDevices);
@@ -24,7 +25,7 @@ async function setup(page) {
             window.displayRequests++;
             return getDisplayMedia(...args);
         };
-    });
+    }, backend);
     await page.route('https://api.openai.com/v1/responses', async (route) => {
         requests.push(route.request().postDataJSON());
         const output = pending;
@@ -121,6 +122,47 @@ test('预览工具无需共享即可检查和执行，未授权截图明确失�
     ]);
     expect(refreshed.results.every((result) => result.ok)).toBe(true);
     expect(refreshed.results[2].value).toEqual({title: 'Original', version: 'unsaved'});
+});
+
+test('可选预览数值 null 使用默认值，自由 JSON 保留 null', async ({page}) => {
+    const ai = await setup(page);
+    const {results} = await ai.run([
+        ['preview_open', {path: 'index.html'}],
+        ['preview_inspect', {selector: 'h1', limit: null, timeout_ms: null, include_styles: false}],
+        ['preview_get_errors', {limit: null, since: null}],
+        ['preview_evaluate', {code: 'return args === null;', args: null, timeout_ms: null}],
+        ['preview_evaluate', {code: 'return args;', args: {nested: {value: null}, list: [null], empty: '', zero: 0, flag: false}}],
+    ]);
+    expect(results.every((result) => result.ok)).toBe(true);
+    expect(results[1].value.elements[0]).toMatchObject({tag: 'h1', text: 'Original'});
+    expect(results[3].value).toBe(true);
+    expect(results[4].value).toEqual({nested: {value: null}, list: [null], empty: '', zero: 0, flag: false});
+    for (const tool of ai.requests[0].tools.filter((tool) => tool.type === 'function')) expect(tool).not.toHaveProperty('strict');
+    const evaluate = ai.requests[0].tools.find((tool) => tool.name === 'preview_evaluate');
+    expect(evaluate.parameters.properties.timeout_ms.type).toContain('null');
+    expect(evaluate.parameters.required).toContain('code');
+});
+
+test('entry_file 可搭配 code null，GET 接受 body null 但拒绝空字符串', async ({page}) => {
+    let proxyRequests = 0;
+    await page.route('**/api/requestProxy/**', async (route) => {
+        proxyRequests++;
+        await route.fulfill({status: 200, contentType: 'text/plain', body: 'proxy-null-body-ok'});
+    });
+    const ai = await setup(page, {backend: true});
+    const {results} = await ai.run([
+        ['write_file', {path: 'null-entry.cjs', content: 'module.exports = input;'}],
+        ['run_javascript', {reason: '验证可选参数', entry_file: 'null-entry.cjs', code: null, format: null, timeout_ms: null, input: {value: null, list: [null], flag: false}}],
+        ['request_proxy', {url: 'https://example.test/data', method: 'GET', body: null}],
+        ['request_proxy', {url: 'https://example.test/data', method: 'GET', body: ''}],
+    ]);
+    expect(results[0].ok).toBe(true);
+    expect(results[1]).toMatchObject({ok: true, exit_code: 0});
+    expect(results[1].result).toEqual({value: null, list: [null], flag: false});
+    expect(results[2]).toMatchObject({ok: true, body: 'proxy-null-body-ok'});
+    expect(results[3].ok).toBe(false);
+    expect(results[3].summary).toContain('GET requests cannot include a body');
+    expect(proxyRequests).toBe(1);
 });
 
 const slowResourceTest = test.extend({

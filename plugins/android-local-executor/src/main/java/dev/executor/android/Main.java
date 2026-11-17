@@ -13,11 +13,15 @@ public final class Main {
         ExecutorConfig config = ExecutorConfig.parse(args);
         PrintStream terminal = new PrintStream(System.err, true, "UTF-8");
         ExecutorServer server = new ExecutorServer(config, new AndroidShell(), terminal);
-        Runtime.getRuntime().addShutdownHook(new Thread(server::close, "executor-shutdown"));
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            server.close();
+            terminal.println(config.messages.text("执行器已停止。", "Executor stopped."));
+        }, "executor-shutdown"));
         try {
             server.startExecutor();
-            terminal.println("Command executor — keep this terminal open. Ctrl+C disconnects.");
-            terminal.println("命令使用当前终端权限执行，默认目录：" + config.directory);
+            terminal.println(config.messages.text("命令执行器：请保持此终端打开，按 Ctrl+C 断开连接。", "Command executor: keep this terminal open. Ctrl+C disconnects."));
+            terminal.println(config.messages.text("命令使用当前终端权限执行，默认目录：%s", "Commands run with current terminal permissions. Default directory: %s", config.directory));
+            terminal.println(config.messages.text("请将以下连接信息粘贴到 AI Agent 的执行器连接框：", "Paste this connection into the AI Agent Executor connection dialog:"));
             new PrintStream(System.out, true, "UTF-8").println(server.connection());
             new CountDownLatch(1).await();
         } finally { server.close(); }

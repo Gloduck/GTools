@@ -14,7 +14,7 @@ foreach ($runtime in $runtimes) {
             $script:downloadPath = $null
             $expectedCwd = (Get-Location).Path.Replace("'", "''")
             # 多次启动加载同名类型，必须使用独立进程，不能复用当前测试会话。
-            $script:payload = "param([string]`$Origin,[string]`$Cwd,[string]`$ListenAddress,[int]`$Port,[string]`$PublicUrl,[string]`$Token='')`nif (`$ListenAddress -ne '192.168.1.25' -or `$Port -ne 8321 -or `$PublicUrl -ne 'https://executor.example') { throw '监听参数传递错误' }; if (`$Origin -ne 'https://example.test' -or `$Cwd -cne '$expectedCwd') { throw '来源或工作目录传递错误' }; if (`$Token -cne '$tokenCase') { throw '自定义凭据传递错误' }; if (`$PID -eq $PID) { throw '未使用独立进程' }; Add-Type 'public class ExecutorBootstrapTest {}'; '中文下载成功'"
+            $script:payload = "param([string]`$Origin,[string]`$Cwd,[string]`$ListenAddress,[int]`$Port,[string]`$PublicUrl,[string]`$Token='', [string]`$Language)`nif (`$Language -ne 'zh-CN') { throw '语言参数传递错误' }; if (`$ListenAddress -ne '192.168.1.25' -or `$Port -ne 8321 -or `$PublicUrl -ne 'https://executor.example') { throw '监听参数传递错误' }; if (`$Origin -ne 'https://example.test' -or `$Cwd -cne '$expectedCwd') { throw '来源或工作目录传递错误' }; if (`$Token -cne '$tokenCase') { throw '自定义凭据传递错误' }; if (`$PID -eq $PID) { throw '未使用独立进程' }; Add-Type 'public class ExecutorBootstrapTest {}'; '中文下载成功'"
             function Get-Command {
                 param($Name, $CommandType, $ErrorAction)
                 if ($runtime -eq 'python') { [pscustomobject]@{Source='Test-Python'} }
@@ -23,7 +23,7 @@ foreach ($runtime in $runtimes) {
                 if ($args[0] -ne '-c') {
                     $script:downloadPath = $args[0]
                     if ([IO.File]::ReadAllText($args[0]) -cne $script:payload) { throw 'Python 下载字节发生改变' }
-                    $expected = @{ '--origin'='https://example.test'; '--listen-address'='192.168.1.25'; '--port'='8321'; '--public-url'='https://executor.example' }
+                    $expected = @{ '--language'='zh-CN'; '--origin'='https://example.test'; '--listen-address'='192.168.1.25'; '--port'='8321'; '--public-url'='https://executor.example' }
                     foreach ($name in $expected.Keys) {
                         $index = [Array]::IndexOf([object[]]$args,$name)
                         if ($index -lt 0 -or $index+1 -ge $args.Count -or [string]$args[$index+1] -cne $expected[$name]) { throw 'Python 启动参数传递错误' }
@@ -46,7 +46,7 @@ foreach ($runtime in $runtimes) {
                 $response = if ($responseVersion -eq 5) { @{ResponseUri=[Uri]$Uri} } else { @{RequestMessage=@{RequestUri=[Uri]$Uri}} }
                 [pscustomobject]@{Content=$bytes; RawContentStream=[IO.MemoryStream]::new($bytes); BaseResponse=[pscustomobject]$response}
             }
-            $output = & $bootstrap -BaseUrl 'https://example.test/local-executor/v1' -Origin 'https://example.test' -ListenAddress '192.168.1.25' -Port 8321 -PublicUrl 'https://executor.example' -Token $tokenCase
+            $output = & $bootstrap -BaseUrl 'https://example.test/local-executor/v1' -Origin 'https://example.test' -ListenAddress '192.168.1.25' -Port 8321 -PublicUrl 'https://executor.example' -Token $tokenCase -Language 'zh-CN'
             if (-not $script:downloaded) { throw '未下载执行器' }
             if ($runtime -eq 'powershell' -and $output -cne '中文下载成功') { throw 'PowerShell 下载解析失败' }
             if ($runtime -eq 'python' -and (-not $script:executed -or (Test-Path -LiteralPath $script:downloadPath))) { throw 'Python 下载执行或临时目录清理失败' }

@@ -7,13 +7,18 @@ listen=${3:-127.0.0.1}
 port=${4:-0}
 public_url=${5:-}
 token=${6:-}
+language=${7:-en-US}
+case "$language" in zh-CN|en-US) ;; *) echo 'Language must be zh-CN or en-US' >&2; exit 1 ;; esac
+message() {
+  if [ "$language" = zh-CN ]; then printf '%s\n' "$1"; else printf '%s\n' "$2"; fi
+}
 base=${base%/}
-case "$base" in https://*|http://*) ;; *) echo 'Expected an HTTP(S) asset URL' >&2; exit 1 ;; esac
-[ -x /system/bin/app_process ] || { echo 'This launcher requires Android app_process' >&2; exit 1; }
+case "$base" in https://*|http://*) ;; *) message '资源地址必须使用 HTTP(S)' 'Expected an HTTP(S) asset URL' >&2; exit 1 ;; esac
+[ -x /system/bin/app_process ] || { message '此启动脚本需要 Android app_process' 'This launcher requires Android app_process' >&2; exit 1; }
 if command -v curl >/dev/null 2>&1; then downloader=curl
 elif command -v wget >/dev/null 2>&1; then downloader=wget
 else
-  echo "No curl/wget available. Download $base/executor.dex in your browser; manual startup with Android app_process is required." >&2
+  message "未找到 curl/wget，请用浏览器下载 $base/executor.dex，并通过 Android app_process 手动启动。" "No curl/wget available. Download $base/executor.dex in your browser; manual startup with Android app_process is required." >&2
   exit 1
 fi
 umask 077
@@ -35,15 +40,15 @@ download "$base/executor.dex" "$work/executor.dex"
 download "$base/executor.dex.sha256" "$work/executor.dex.sha256"
 # 校验文件只允许描述当前 DEX，不能借校验清单读取其他路径。
 expected=$(cat "$work/executor.dex.sha256")
-case "$expected" in *'  executor.dex') expected=${expected%'  executor.dex'} ;; *) echo 'Invalid checksum file' >&2; exit 1 ;; esac
-case "$expected" in *[!0-9a-fA-F]*|'') echo 'Invalid checksum' >&2; exit 1 ;; esac
-[ "${#expected}" -eq 64 ] || { echo 'Invalid checksum length' >&2; exit 1; }
+case "$expected" in *'  executor.dex') expected=${expected%'  executor.dex'} ;; *) message '无效的校验文件' 'Invalid checksum file' >&2; exit 1 ;; esac
+case "$expected" in *[!0-9a-fA-F]*|'') message '无效的校验值' 'Invalid checksum' >&2; exit 1 ;; esac
+[ "${#expected}" -eq 64 ] || { message '校验值长度不正确' 'Invalid checksum length' >&2; exit 1; }
 actual=$(/system/bin/toybox sha256sum "$work/executor.dex")
-[ "${actual%% *}" = "$expected" ] || { echo 'DEX checksum mismatch' >&2; exit 1; }
+[ "${actual%% *}" = "$expected" ] || { message 'DEX 校验失败' 'DEX checksum mismatch' >&2; exit 1; }
 # Android 新版本要求动态加载的代码为只读；下载目录仅当前用户可访问。
 chmod 400 "$work/executor.dex"
 CLASSPATH="$work/executor.dex" /system/bin/app_process / dev.executor.android.Main \
-  --origin "$origin" --listen-address "$listen" --port "$port" --public-url "$public_url" --cwd "$PWD" --token "$token" &
+  --origin "$origin" --listen-address "$listen" --port "$port" --public-url "$public_url" --cwd "$PWD" --token "$token" --language "$language" &
 child=$!
 wait "$child"
 child=

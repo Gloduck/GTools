@@ -139,7 +139,8 @@ class ApiError(Exception):
 
 class TerminalLog:
     """终端只是输出副本；有界队列避免慢终端阻塞任务或无限占用内存。"""
-    def __init__(self, get_stream):
+    def __init__(self, get_stream, language="en-US"):
+        self.language = language
         self.get_stream = get_stream
         self.condition = threading.Condition()
         self.pending = deque()
@@ -149,6 +150,12 @@ class TerminalLog:
         self.closed = False
         self.worker = threading.Thread(target=self.run, daemon=True)
         self.worker.start()
+
+    def text(self, chinese, english, *args):
+        return (chinese if self.language == "zh-CN" else english) % args
+
+    def status(self, value):
+        return {"running": "运行中", "completed": "已完成", "failed": "失败", "cancelled": "已取消", "unknown": "未知"}.get(value, value) if self.language == "zh-CN" else value
 
     def append(self, text):
         with self.condition:
@@ -179,7 +186,7 @@ class TerminalLog:
             try:
                 stream = self.get_stream()
                 if dropped:
-                    stream.write('[Executor] 终端日志积压，已省略 %d 字符；任务输出请以接口缓存为准。\n' % dropped)
+                    stream.write(self.text('[Executor] 终端日志积压，已省略 %d 字符；任务输出请以接口缓存为准。\n', '[Executor] Terminal log backlog: omitted %d characters; use the API buffer for task output.\n', dropped))
                 stream.write(text)
                 stream.flush()
             except (OSError, ValueError, UnicodeError):
@@ -270,7 +277,7 @@ def validate_origin(origin):
 
 
 class Executor:
-    def __init__(self, origin, cwd, log_stream=None, token=""):
+    def __init__(self, origin, cwd, log_stream=None, token="", language="en-US"):
         self.origin = validate_origin(origin)
         self.cwd = str(Path(cwd).resolve(strict=True))
         if not Path(self.cwd).is_dir():
@@ -283,7 +290,7 @@ class Executor:
         self.closed = False
         self.shells = ["powershell", "cmd"] if os.name == "nt" else ["sh"]
         self.log_stream = log_stream if log_stream is not None else sys.stderr
-        self.terminal_log = TerminalLog(lambda: self.log_stream)
+        self.terminal_log = TerminalLog(lambda: self.log_stream, language)
 
     def log(self, task_id, text):
         # 每条终端记录带任务编号，便于区分并发命令及对应的 AI 工具结果。
@@ -462,7 +469,7 @@ class Task:
     def run(self):
         reader = None
         reader_started = False
-        self.executor.log(self.id, "开始执行 | Shell: %s | 目录: %s\n%s" % (self.shell, self.cwd, self.command))
+        self.executor.log(self.id, self.executor.terminal_log.text("开始执行 | Shell: %s | 目录: %s\n%s", "Started | Shell: %s | Directory: %s\n%s", self.shell, self.cwd, self.command))
         try:
             with self.lock:
                 if self.stop_reason:
@@ -569,7 +576,7 @@ class Task:
                 confirmed = self.process is None or self.scope_empty or (os.name == "nt" and self.job is None)
                 self.status = (self.stop_reason or ("completed" if self.exit_code == 0 and not self.error else "failed")) if confirmed else "unknown"
             try:
-                self.executor.log(self.id, "执行结束 | 状态: %s | 退出码: %s%s" % (self.status, self.exit_code, " | " + self.error if self.error else ""))
+                self.executor.log(self.id, self.executor.terminal_log.text("执行结束 | 状态: %s | 退出码: %s%s", "Finished | Status: %s | Exit code: %s%s", self.executor.terminal_log.status(self.status), self.exit_code, " | " + self.error if self.error else ""))
             finally:
                 self.done.set()
 
@@ -749,19 +756,21 @@ def main():
     parser.add_argument("--listen-address", default="127.0.0.1")
     parser.add_argument("--public-url", default="")
     parser.add_argument("--token", default="")
+    parser.add_argument("--language", choices=["zh-CN", "en-US"], default="en-US", help="Terminal log language")
     args = parser.parse_args()
     if not 0 <= args.port <= 65535:
         parser.error("Invalid port")
     try:
-        executor = Executor(args.origin, args.cwd, token=args.token)
+        executor = Executor(args.origin, args.cwd, token=args.token, language=args.language)
         server = Server(executor, args.port, args.listen_address, args.public_url)
     except (ValueError, OSError, subprocess.SubprocessError) as exc:
         parser.exit(1, str(exc) + "\n")
     connection = {"url": server.connection_url, "token": executor.token}
-    print("Command executor — keep this terminal open. Ctrl+C disconnects.", file=sys.stderr, flush=True)
-    print("命令使用当前用户权限执行，默认目录：%s。执行日志在此终端显示。" % executor.cwd, file=sys.stderr, flush=True)
-    print("Paste this connection into the AI Agent Executor connection dialog:", file=sys.stderr, flush=True)
-    print("监听地址：%s；浏览器访问地址：%s" % (server.listen_url, server.connection_url), file=sys.stderr, flush=True)
+    text = executor.terminal_log.text
+    print(text("命令执行器：请保持此终端打开，按 Ctrl+C 断开连接。", "Command executor: keep this terminal open. Ctrl+C disconnects."), file=sys.stderr, flush=True)
+    print(text("命令使用当前用户权限执行，默认目录：%s。执行日志在此终端显示。", "Commands run with current user permissions. Default directory: %s. Logs appear in this terminal.", executor.cwd), file=sys.stderr, flush=True)
+    print(text("请将以下连接信息粘贴到 AI Agent 的执行器连接框：", "Paste this connection into the AI Agent Executor connection dialog:"), file=sys.stderr, flush=True)
+    print(text("监听地址：%s；浏览器访问地址：%s", "Listening: %s; browser access: %s", server.listen_url, server.connection_url), file=sys.stderr, flush=True)
     print(json.dumps(connection), flush=True)
     stop = threading.Event()
     def stop_signal(*_):
@@ -775,7 +784,7 @@ def main():
     finally:
         executor.close()
         server.server_close()
-        print("Executor stopped.", file=sys.stderr, flush=True)
+        print(text("执行器已停止。", "Executor stopped."), file=sys.stderr, flush=True)
 
 
 if __name__ == "__main__":

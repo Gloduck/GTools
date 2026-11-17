@@ -56,7 +56,7 @@ public final class ExecutorServer extends NanoHTTPD implements AutoCloseable {
         this.config = config; this.shell = shell;
         byte[] secret = new byte[32]; new SecureRandom().nextBytes(secret);
         token = config.token.isEmpty() ? Base64.getUrlEncoder().withoutPadding().encodeToString(secret) : config.token;
-        log = new TerminalLog(terminal);
+        log = new TerminalLog(terminal, config.messages);
         // 本协议只接受有界 JSON，不调用文件上传解析，也不创建 HTTP 临时文件。
         setTempFileManagerFactory(() -> new TempFileManager() {
             @Override public void clear() {}

@@ -367,6 +367,8 @@ class LinuxLifecycleTest(unittest.TestCase):
                 task_id, _ = self.submit(self.python("import os; os.write(1,b'Q'*6000)"))
                 result = self.wait_task(task_id, seconds=2)
                 self.assertEqual(result['status'], 'completed')
+                # 本场景核对完整输出，显式读取 6000 字符，避免默认分页只返回 5000。
+                _, _, result = self.request('GET', '/v1/tasks/' + task_id + '?max_chars=6000')
                 self.assertEqual(result['output'], 'Q' * 6000)
                 self.assertFalse(result['truncated'])
                 self.assertFalse(result['output_lost'])
@@ -377,8 +379,8 @@ class LinuxLifecycleTest(unittest.TestCase):
                 release.set()
                 flushed = self.executor.terminal_log.flush(timeout=3)
         self.assertTrue(flushed, '释放慢终端后队列应排空')
-        self.assertRegex(console.getvalue(), r'终端日志积压，已省略 [1-9][0-9]* 字符')
-        self.assertIn('任务输出请以接口缓存为准', console.getvalue())
+        self.assertRegex(console.getvalue(), r'Terminal log backlog: omitted [1-9][0-9]* characters')
+        self.assertIn('use the API buffer for task output', console.getvalue())
 
     def test_终态必须等待EOF解码收尾且之后不再追加(self):
         eof_seen, release = threading.Event(), threading.Event()

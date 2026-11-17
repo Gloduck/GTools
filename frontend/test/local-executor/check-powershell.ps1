@@ -28,27 +28,31 @@ foreach ($name in @('test-download.ps1', 'test-windows.ps1')) {
 }
 
 # 只验证输出缓存与终端日志，不调用 Windows 原生进程 API。
-$task = New-Object ExecutorTask
-$task.Id = 'console-test'
-$capture = New-Object IO.StringWriter
-$previousError = [Console]::Error
-try {
-    [Console]::SetError($capture)
-    $characters = '中文日志'.ToCharArray()
-    $arguments = New-Object object[] 2
-    $arguments[0] = $characters
-    $arguments[1] = $characters.Length
-    $append = [ExecutorTask].GetMethod('AppendOutput', [Reflection.BindingFlags]'Instance,NonPublic')
-    [void]$append.Invoke($task,$arguments)
-    $task.Status = 'completed'
-    $task.ExitCode = 0
-    [void][ExecutorTask].GetMethod('LogCompletion', [Reflection.BindingFlags]'Instance,NonPublic').Invoke($task,@())
-    if (-not [ExecutorTerminalLog]::Flush(3000)) { throw '场景失败：终端日志未完成写入' }
-    if (-not $capture.ToString().Contains('[console-test] 中文日志')) { throw '场景失败：命令输出未写入终端' }
-    if (-not $capture.ToString().Contains('执行结束 | 状态: completed | 退出码: 0')) { throw '场景失败：结束状态未写入终端' }
-    if ($task.Snapshot(0).output -cne '中文日志') { throw '场景失败：终端输出影响了 AI 工具结果' }
-} finally { [Console]::SetError($previousError); $capture.Dispose() }
-Write-Output '场景通过：终端实时日志与 AI 结果同时保留中文，结束状态和退出码正确'
+foreach ($language in @('zh-CN','en-US')) {
+    [ExecutorTerminalLog]::Language = $language
+    $task = New-Object ExecutorTask
+    $task.Id = 'console-test'
+    $capture = New-Object IO.StringWriter
+    $previousError = [Console]::Error
+    try {
+        [Console]::SetError($capture)
+        $characters = '中文 original'.ToCharArray()
+        $arguments = New-Object object[] 2
+        $arguments[0] = $characters
+        $arguments[1] = $characters.Length
+        $append = [ExecutorTask].GetMethod('AppendOutput', [Reflection.BindingFlags]'Instance,NonPublic')
+        [void]$append.Invoke($task,$arguments)
+        $task.Status = 'completed'
+        $task.ExitCode = 0
+        [void][ExecutorTask].GetMethod('LogCompletion', [Reflection.BindingFlags]'Instance,NonPublic').Invoke($task,@())
+        if (-not [ExecutorTerminalLog]::Flush(3000)) { throw '场景失败：终端日志未完成写入' }
+        if (-not $capture.ToString().Contains('[console-test] 中文 original')) { throw '场景失败：命令输出未原样写入终端' }
+        $expected = if ($language -eq 'zh-CN') { '执行结束 | 状态: 已完成 | 退出码: 0' } else { 'Finished | Status: completed | Exit code: 0' }
+        if (-not $capture.ToString().Contains($expected)) { throw '场景失败：结束日志语言错误' }
+        if ($task.Snapshot(0).output -cne '中文 original' -or $task.Status -cne 'completed') { throw '场景失败：日志语言改变了 AI 工具结果' }
+    } finally { [Console]::SetError($previousError); $capture.Dispose() }
+}
+Write-Output '场景通过：中英文日志保留原始命令输出，协议状态和退出码不变'
 
 # 使用真实读取器和 JSON 编码检查完整字符、分页与解码损失，不调用 Windows 进程 API。
 $savedError = [Console]::Error

@@ -76,7 +76,7 @@ test('场景：所有平台启动命令传入自定义 token，留空保持随�
         assert.throws(() => buildLocalStartupCommand({...args, platform, token: 'bad token'}));
         assert.doesNotMatch(buildLocalStartupCommand({...args, platform, token: ''}), /-Token/);
     }
-    assert.ok(buildLocalStartupCommand({...args, platform: 'android'}).endsWith(`'127.0.0.1' 0 '' '${args.token}'`));
+    assert.ok(buildLocalStartupCommand({...args, platform: 'android'}).endsWith(`'127.0.0.1' 0 '' '${args.token}' 'en-US'`));
     assert.ok(buildLocalStartupCommand({...args, platform: 'windows'}).endsWith(`-Token '${args.token}'`));
     const cmd = buildLocalStartupCommand({...args, platform: 'windows', terminal: 'cmd'});
     assert.equal(Buffer.from(cmd.split(' ').at(-1), 'base64').toString('utf16le'), buildLocalStartupCommand({...args, platform: 'windows'}));
@@ -116,12 +116,12 @@ test('场景：Android 使用独立 DEX 启动入口并兼容现有协议', asyn
     assert.deepEqual(await client.info(), info);
 });
 
-test('场景：Android 启动省略默认参数，自定义配置仍按正确位置传递', () => {
+test('场景：Android 启动参数位置固定，默认值与自定义配置均正确传递', () => {
     const args = {platform: 'android', assetBase: 'https://tools.example/local-executor/v1', origin: 'https://tools.example'};
-    assert.equal(buildLocalStartupCommand(args), "curl -fsSL 'https://tools.example/local-executor/v1/bootstrap-android.sh' | sh -s -- 'https://tools.example/local-executor/v1' 'https://tools.example'");
-    assert.ok(buildLocalStartupCommand({...args, listenAddress: '192.168.1.25'}).endsWith("'192.168.1.25'"));
-    assert.ok(buildLocalStartupCommand({...args, port: 8321}).endsWith("'127.0.0.1' 8321"));
-    assert.ok(buildLocalStartupCommand({...args, listenAddress: '0.0.0.0', publicUrl: 'http://192.168.1.25:8321'}).endsWith("'0.0.0.0' 0 'http://192.168.1.25:8321'"));
+    assert.equal(buildLocalStartupCommand(args), "curl -fsSL 'https://tools.example/local-executor/v1/bootstrap-android.sh' | sh -s -- 'https://tools.example/local-executor/v1' 'https://tools.example' '127.0.0.1' 0 '' '' 'en-US'");
+    assert.ok(buildLocalStartupCommand({...args, listenAddress: '192.168.1.25'}).endsWith("'192.168.1.25' 0 '' '' 'en-US'"));
+    assert.ok(buildLocalStartupCommand({...args, port: 8321}).endsWith("'127.0.0.1' 8321 '' '' 'en-US'"));
+    assert.ok(buildLocalStartupCommand({...args, listenAddress: '0.0.0.0', publicUrl: 'http://192.168.1.25:8321'}).endsWith("'0.0.0.0' 0 'http://192.168.1.25:8321' '' 'en-US'"));
 });
 
 test('场景：CMD 启动入口解码后与 PowerShell 相同，下载脚本使用原始 UTF-8 字节', () => {
@@ -177,9 +177,9 @@ test('场景：本机命令要求与 SSH 一致的主命令列表和风险标记
 test('场景：启动命令传递监听 IP、端口和 HTTPS 访问入口，不接受命令注入参数', () => {
     const common = {assetBase: 'https://tools.example/local-executor/v1', origin: 'https://tools.example', listenAddress: '192.168.1.10', port: 8321, publicUrl: 'https://executor.example'};
     const ps = buildLocalStartupCommand({...common, platform: 'windows'});
-    assert.match(ps, /-ListenAddress '192\.168\.1\.10' -Port 8321 -PublicUrl 'https:\/\/executor\.example'/);
+    assert.match(ps, /-ListenAddress '192\.168\.1\.10' -Port 8321 -Language 'en-US' -PublicUrl 'https:\/\/executor\.example'/);
     const sh = buildLocalStartupCommand({...common, platform: 'unix'});
-    assert.match(sh, /'192\.168\.1\.10' 8321 'https:\/\/executor\.example'$/);
+    assert.match(sh, /'192\.168\.1\.10' 8321 'https:\/\/executor\.example' '' 'en-US'$/);
     for (const patch of [{listenAddress: '127.0.0.1;id'}, {listenAddress: 'localhost'}, {listenAddress: '999.1.1.1'}, {port: -1}, {port: '80'}, {port: 1.2}, {port: 65536}, {publicUrl: 'https://host/path'}]) {
         assert.throws(() => buildLocalStartupCommand({...common, platform: 'unix', ...patch}));
     }
@@ -195,3 +195,16 @@ test('场景：任务生命周期默认 task，显式 session 原样保留且拒
         assert.throws(() => normalizeLocalCommand({...args, lifecycle}), /lifecycle/i);
     }
 });
+
+for (const language of ['zh-CN', 'en-US']) {
+    test(`场景：三端启动入口与 Windows CMD 传递 ${language}`, () => {
+        const args = {assetBase: 'https://tools.example/local-executor/v1', origin: 'https://tools.example', language};
+        for (const platform of ['unix', 'android']) {
+            assert.ok(buildLocalStartupCommand({...args, platform}).endsWith(`'' '' '${language}'`));
+        }
+        const ps = buildLocalStartupCommand({...args, platform: 'windows'});
+        assert.ok(ps.includes(`-Language '${language}'`));
+        const cmd = buildLocalStartupCommand({...args, platform: 'windows', terminal: 'cmd'});
+        assert.equal(Buffer.from(cmd.split(' ').at(-1), 'base64').toString('utf16le'), ps);
+    });
+}

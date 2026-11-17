@@ -203,7 +203,7 @@ public final class CommandTask implements Runnable {
     @Override public void run() {
         Thread reader = null;
         boolean readerStarted = false;
-        log.append(id, "开始执行 | Shell: sh | 目录: " + directory + "\n" + command);
+        log.append(id, log.messages.text("开始执行 | Shell: sh | 目录: %s\n%s", "Started | Shell: sh | Directory: %s\n%s", directory, command));
         try {
             synchronized (this) {
                 if (cancelled) return;
@@ -273,7 +273,7 @@ public final class CommandTask implements Runnable {
                 // 无法确认组已清空时保留未知状态，不能把查询失败当成执行结束。
                 status = group > 0 && !scopeEmpty ? "unknown" : cancelled ? "cancelled" : (Integer.valueOf(0).equals(exitCode) && error.isEmpty() ? "completed" : "failed");
                 settled = true;
-                log.append(id, "执行结束 | 状态: " + status + " | 退出码: " + exitCode + (error.isEmpty() ? "" : " | " + error));
+                log.append(id, log.messages.text("执行结束 | 状态: %s | 退出码: %s%s", "Finished | Status: %s | Exit code: %s%s", log.messages.status(status), exitCode, error.isEmpty() ? "" : " | " + error));
                 notifyAll();
             }
             if (interrupted) Thread.currentThread().interrupt();

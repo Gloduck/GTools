@@ -10,7 +10,7 @@ let terminalOutput = '';
 const script = fileURLToPath(new URL('../../public/local-executor/v1/executor.py', import.meta.url));
 
 test.beforeAll(async () => {
-    service = spawn('python3', ['-B', script, '--origin', 'http://127.0.0.1:4174'], {stdio: ['ignore', 'pipe', 'pipe']});
+    service = spawn('python3', ['-B', script, '--origin', 'http://127.0.0.1:4174', '--language', 'zh-CN'], {stdio: ['ignore', 'pipe', 'pipe']});
     service.stderr.on('data', (chunk) => { terminalOutput += chunk; });
     connection = await new Promise((resolve, reject) => {
         let output = '';
@@ -386,7 +386,7 @@ test('场景：任务列表展示运行状态，断开取消长任务并清空�
     const response = await cancellation;
     expect(response.ok()).toBeTruthy();
     const {id} = await response.json();
-    await expect.poll(() => terminalOutput).toContain(`[${id}] 执行结束 | 状态: cancelled`);
+    await expect.poll(() => terminalOutput).toContain(`[${id}] 执行结束 | 状态: 已取消`);
     await expect(panel.getByRole('button', {name: '连接执行器', exact: true})).toBeVisible();
     await expect(panel.getByLabel('终端显示的连接 JSON')).toHaveValue('');
     await expect(panel.locator('.local-task')).toHaveCount(0);
@@ -454,7 +454,7 @@ test('场景：任务列表分别展开和停止，停止失败可重试且不�
     await expect(second).toHaveCount(0);
     await expect(panel.locator('.local-tasks')).toHaveCount(0);
     expect(stopRequests).toBe(2);
-    await expect.poll(() => terminalOutput).toContain(`[${id}] 执行结束 | 状态: cancelled`);
+    await expect.poll(() => terminalOutput).toContain(`[${id}] 执行结束 | 状态: 已取消`);
 });
 
 test('场景：低风险白名单命令直接执行，重新连接自动回填白名单', async ({page}) => {
@@ -595,7 +595,7 @@ test('场景：同步等待期间可停止 AI 任务，并在终端确认取消�
     const cancellation = page.waitForResponse((response) => response.url() === `${connection.url}/v1/tasks/${id}/cancel`);
     await page.getByRole('button', {name: '停止 AI 任务', exact: true}).click();
     expect((await cancellation).ok()).toBeTruthy();
-    await expect.poll(() => terminalOutput).toContain(`[${id}] 执行结束 | 状态: cancelled`);
+    await expect.poll(() => terminalOutput).toContain(`[${id}] 执行结束 | 状态: 已取消`);
     await expect(page.getByRole('button', {name: '停止 AI 任务', exact: true})).toBeDisabled();
 });
 
@@ -893,7 +893,7 @@ test('本地命令在途时打断保留任务标识与取消快照，续轮不�
     await page.locator('.ai-chat-form button[type="submit"]').click();
     expect((await cancellation).ok()).toBe(true);
     await expect(page.locator('.ai-message-assistant').filter({hasText: '本机命令请求已处理。'})).toHaveCount(1);
-    await expect.poll(() => terminalOutput).toContain(`[${id}] 执行结束 | 状态: cancelled`);
+    await expect.poll(() => terminalOutput).toContain(`[${id}] 执行结束 | 状态: 已取消`);
     expect(submitted).toHaveLength(1);
     expect(requests).toHaveLength(2);
     const results = requests[1].input.filter((item) => item.type === 'function_call_output' && item.call_id === 'local-command');
@@ -960,4 +960,32 @@ test('session 任务摘要跨新一轮保留真实游标，列表仅返回元数
     await page.locator('.ai-chat-form button[type="submit"]').click();
     await expect(page.locator('.ai-message-assistant').last()).toContainText('后台任务续读并取消完成。');
     expect(turns).toHaveLength(6);
+});
+
+test('场景：界面语言变化同步更新三端启动参数，Windows CMD 也保留语言', async ({page}) => {
+    await setup(page, 'pwd');
+    await page.getByRole('button', {name: '执行器连接', exact: true}).click();
+    const dialog = page.locator('.local-executor-dialog');
+    for (const language of ['zh-CN', 'en-US']) {
+        await page.evaluate(async (language) => {
+            const {setLocale} = await import('/src/i18n/index.js');
+            setLocale(language);
+        }, language);
+        const chinese = language === 'zh-CN';
+        const command = dialog.getByLabel(chinese ? '启动命令' : 'Startup command', {exact: true});
+        const platform = dialog.getByRole('combobox', {name: chinese ? '系统' : 'Operating system', exact: true});
+        for (const target of ['unix', 'android', 'windows']) {
+            await platform.selectOption(target);
+            if (target === 'windows') {
+                const terminal = dialog.getByRole('combobox', {name: chinese ? '粘贴启动命令的终端' : 'Terminal for the startup command', exact: true});
+                await terminal.selectOption('powershell');
+                await expect(command).toHaveValue(new RegExp(`-Language '${language}'`));
+                await terminal.selectOption('cmd');
+                const encoded = (await command.inputValue()).split(' ').at(-1);
+                expect(Buffer.from(encoded, 'base64').toString('utf16le')).toContain(`-Language '${language}'`);
+            } else {
+                await expect(command).toHaveValue(new RegExp(`'${language}'$`));
+            }
+        }
+    }
 });

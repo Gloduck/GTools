@@ -120,12 +120,35 @@ class ExecutorTest(unittest.TestCase):
         self.assertIn('[%s]' % task_id, log)
         self.assertIn('中文', log)
         self.assertIn('error', log)
-        self.assertIn('执行结束 | 状态: failed | 退出码: 7', log)
+        self.assertIn('Finished | Status: failed | Exit code: 7', log)
         self.assertEqual(task['output'].replace('\r\n', '\n'), '中文\nerror\n')
         status, _, delta = self.request('GET', '/v1/tasks/' + task_id + '?cursor=' + str(task['cursor']))
         self.assertEqual(status, 200)
         self.assertEqual(delta['output'], '')
         self.assertEqual(self.request('GET', '/v1/tasks/' + task_id + '?cursor=-1')[0], 400)
+
+    def test_log_language_preserves_command_output(self):
+        for language, start, finish in [('zh-CN', '开始执行', '执行结束 | 状态: 失败 | 退出码: 7'),
+                                        ('en-US', 'Started', 'Finished | Status: failed | Exit code: 7')]:
+            with self.subTest(language=language):
+                console = io.StringIO()
+                executor = module.Executor(ORIGIN, self.directory.name, log_stream=console, language=language)
+                try:
+                    command = self.python("print('原文 original'); raise SystemExit(7)")
+                    if os.name == 'nt':
+                        command += '; exit $LASTEXITCODE'
+                    submitted = executor.submit({'id': uuid.uuid4().hex, 'command': command})
+                    task = executor.get_task(submitted['id'])
+                    self.assertTrue(task.done.wait(10))
+                    self.assertTrue(executor.terminal_log.flush(2))
+                    result = task.snapshot(0)
+                    self.assertEqual(result['status'], 'failed')
+                    self.assertEqual(result['output'].replace('\r\n', '\n'), '原文 original\n')
+                    self.assertIn(start, console.getvalue())
+                    self.assertIn(finish, console.getvalue())
+                    self.assertIn(command, console.getvalue())
+                finally:
+                    executor.close()
 
     def test_普通用户模式允许访问其他目录(self):
         outside = Path(self.directory.name).parent
@@ -208,7 +231,7 @@ class BootstrapTest(unittest.TestCase):
                 cache = Path(directory, 'cache')
                 cache.mkdir()
                 process = subprocess.Popen(['sh', str(SOURCE.with_name('bootstrap.sh')),
-                                            'http://127.0.0.1:%d' % server.server_port, ORIGIN],
+                                            'http://127.0.0.1:%d' % server.server_port, ORIGIN, '127.0.0.1', '0', '', '', 'zh-CN'],
                                            cwd=directory, env={**os.environ, 'TMPDIR': str(cache)},
                                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
                 lines = queue.Queue()
@@ -229,6 +252,8 @@ class BootstrapTest(unittest.TestCase):
                         connection = json.loads(line)
                         break
                 self.assertIsNotNone(connection, '未返回连接信息')
+                self.assertIn('请保持此终端打开', ''.join(diagnostic))
+                self.assertNotIn('Command executor', ''.join(diagnostic))
                 from urllib.parse import urlsplit
                 client = http.client.HTTPConnection('127.0.0.1', urlsplit(connection['url']).port)
                 client.request('GET', '/v1/info', headers={'Origin': ORIGIN, 'Authorization': 'Bearer ' + connection['token']})

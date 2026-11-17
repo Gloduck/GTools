@@ -4,12 +4,17 @@ param(
     [string]$ListenAddress = '127.0.0.1',
     [int]$Port = 0,
     [string]$PublicUrl = '',
-    [string]$Token = ''
+    [string]$Token = '',
+    [ValidateSet('zh-CN','en-US')][string]$Language = 'en-US'
 )
 $ErrorActionPreference='Stop'
-if ($Token -and $Token -cnotmatch '\A[A-Za-z0-9_-]+\z') { throw 'Token must contain only letters, digits, underscores or hyphens.' }
+function Get-LauncherText([string]$Chinese, [string]$English) {
+    if ($Language -eq 'zh-CN') { return $Chinese }
+    return $English
+}
+if ($Token -and $Token -cnotmatch '\A[A-Za-z0-9_-]+\z') { throw (Get-LauncherText 'Token 只能包含字母、数字、下划线或连字符。' 'Token must contain only letters, digits, underscores or hyphens.') }
 $uri=[Uri]$BaseUrl
-if ($uri.Scheme -ne 'https' -and -not ($uri.Scheme -eq 'http' -and $uri.Host -in @('127.0.0.1','localhost'))) { throw 'Use HTTPS for script downloads.' }
+if ($uri.Scheme -ne 'https' -and -not ($uri.Scheme -eq 'http' -and $uri.Host -in @('127.0.0.1','localhost'))) { throw (Get-LauncherText '请使用 HTTPS 下载脚本。' 'Use HTTPS for script downloads.') }
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 $python=$null
 $pythonArgs=@()
@@ -31,22 +36,22 @@ try {
     $response=Invoke-WebRequest -UseBasicParsing -Uri ($BaseUrl.TrimEnd('/')+'/'+$file) -TimeoutSec 30
     $downloadUri = $response.BaseResponse.ResponseUri
     if (-not $downloadUri) { $downloadUri = $response.BaseResponse.RequestMessage.RequestUri }
-    if (-not $downloadUri -or ($downloadUri.Scheme -ne 'https' -and -not ($downloadUri.Scheme -eq 'http' -and $downloadUri.Host -in @('127.0.0.1','localhost')))) { throw 'Refusing an insecure script redirect' }
+    if (-not $downloadUri -or ($downloadUri.Scheme -ne 'https' -and -not ($downloadUri.Scheme -eq 'http' -and $downloadUri.Host -in @('127.0.0.1','localhost')))) { throw (Get-LauncherText '拒绝不安全的脚本下载重定向' 'Refusing an insecure script redirect') }
     # PS 5.1 对二进制 MIME 返回 byte[]；保存原始字节，避免数字列表和中文乱码。
     $bytes = $response.RawContentStream.ToArray()
-    if ($bytes.Length -gt 524288) { throw 'Executor script is too large' }
+    if ($bytes.Length -gt 524288) { throw (Get-LauncherText '执行器脚本过大' 'Executor script is too large') }
     [IO.File]::WriteAllBytes($path, $bytes)
     if ($python) {
-        $networkArgs = @('--listen-address', $ListenAddress, '--port', [string]$Port)
+        $networkArgs = @('--listen-address', $ListenAddress, '--port', [string]$Port, '--language', $Language)
         if ($PublicUrl) { $networkArgs += @('--public-url', $PublicUrl) }
         if ($Token) { $networkArgs += @('--token='+$Token) }
         & $python @pythonArgs $path --origin $Origin @networkArgs
-        if ($LASTEXITCODE -ne 0) { throw "Python executor exited with code $LASTEXITCODE." }
+        if ($LASTEXITCODE -ne 0) { throw (Get-LauncherText "Python 执行器已退出，退出码 $LASTEXITCODE。" "Python executor exited with code $LASTEXITCODE.") }
     } else {
-        Write-Host 'Python 3 unavailable; using system Windows PowerShell.'
+        Write-Host (Get-LauncherText '未找到 Python 3，将使用系统 Windows PowerShell。' 'Python 3 unavailable; using system Windows PowerShell.')
         # 每次使用独立进程，停止后直接释放 Add-Type 类型，不在当前会话复用旧实现。
         $powershell = Join-Path $env:SystemRoot 'System32/WindowsPowerShell/v1.0/powershell.exe'
-        $parameters = @{Origin=$Origin; Cwd=(Get-Location).Path; ListenAddress=$ListenAddress; Port=$Port; PublicUrl=$PublicUrl; Token=$Token}
+        $parameters = @{Origin=$Origin; Cwd=(Get-Location).Path; ListenAddress=$ListenAddress; Port=$Port; PublicUrl=$PublicUrl; Token=$Token; Language=$Language}
         $launch = "`$ProgressPreference='SilentlyContinue'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new(`$false); & ([scriptblock]::Create([IO.File]::ReadAllText('"+$path.Replace("'","''")+"')))"
         # 按 PowerShell 字符串字面量传参，保留空值及以连字符开头的凭据。
         foreach ($entry in $parameters.GetEnumerator()) {
@@ -58,7 +63,7 @@ try {
         try {
             [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
             & $powershell -NoLogo -NoProfile -NonInteractive -OutputFormat Text -Command $launch
-            if ($LASTEXITCODE -ne 0) { throw "PowerShell executor exited with code $LASTEXITCODE." }
+            if ($LASTEXITCODE -ne 0) { throw (Get-LauncherText "PowerShell 执行器已退出，退出码 $LASTEXITCODE。" "PowerShell executor exited with code $LASTEXITCODE.") }
         } finally {
             [Console]::OutputEncoding = $previousEncoding
         }

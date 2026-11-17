@@ -5,7 +5,8 @@ param(
     [int]$Port = 0,
     [string]$ListenAddress = '127.0.0.1',
     [string]$PublicUrl = '',
-    [string]$Token = ''
+    [string]$Token = '',
+    [ValidateSet('zh-CN','en-US')][string]$Language = 'en-US'
 )
 $ErrorActionPreference = 'Stop'
 if ($Token -and $Token -cnotmatch '\A[A-Za-z0-9_-]+\z') { throw 'Token must contain only letters, digits, underscores or hyphens.' }
@@ -32,8 +33,8 @@ if ($wildcard -and -not $PublicUrl) { throw 'PublicUrl is required when listenin
 
 # 使用系统作业对象管理任务进程树。先创建挂起进程并加入作业，
 # 再执行用户命令，避免后台子进程抢先脱离任务管理。
-# 启动入口使用独立进程，辅助类型无需保留旧版本或重复加载。# 启动入口使用独立进程，辅助类型无需保留旧版本或重复加载。
-Add-Type -TypeDefinition Add-Type -TypeDefinition @'
+# 启动入口使用独立进程，辅助类型无需保留旧版本或重复加载。
+Add-Type -TypeDefinition @'
 using System;
 using System.IO;
 using System.Text;
@@ -43,6 +44,22 @@ using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
 // 终端日志只是结果副本，独立线程和有界队列避免慢终端阻塞请求及输出采集。
 public static class ExecutorTerminalLog {
+    // 语言只作用于执行器日志，命令输出和协议状态保持原样。
+    public static string Language = "en-US";
+    public static string Text(string chinese, string english, params object[] args) {
+        return String.Format(Language == "zh-CN" ? chinese : english, args);
+    }
+    public static string StatusText(string status) {
+        if(Language != "zh-CN") return status;
+        switch(status) {
+            case "running": return "运行中";
+            case "completed": return "已完成";
+            case "failed": return "失败";
+            case "cancelled": return "已取消";
+            case "unknown": return "未知";
+            default: return status;
+        }
+    }
     static readonly object gate=new object();
     static readonly Queue<string> pending=new Queue<string>();
     const int Limit=262144;
@@ -70,7 +87,7 @@ public static class ExecutorTerminalLog {
                 dropped=droppedChars; droppedChars=0; writing=true;
             }
             try {
-                if(dropped>0) Console.Error.WriteLine("[Executor] 终端日志积压，已省略 "+dropped+" 字符；任务输出请以接口缓存为准。");
+                if(dropped>0) Console.Error.WriteLine(Text("[Executor] 终端日志积压，已省略 {0} 字符；任务输出请以接口缓存为准。", "[Executor] Terminal log backlog: omitted {0} characters; use the API buffer for task output.", dropped));
                 Console.Error.Write(text); Console.Error.Flush();
             } catch(IOException) {} catch(ObjectDisposedException) {} catch(EncoderFallbackException) {}
             finally { lock(gate) { writing=false; Monitor.PulseAll(gate); } }
@@ -138,10 +155,10 @@ public sealed class ExecutorTask : IDisposable {
     void LogCompletion() {
         if(completionLogged) return;
         completionLogged=true;
-        Log("执行结束 | 状态: "+Status+" | 退出码: "+ExitCode+(String.IsNullOrEmpty(Error) ? "" : " | "+Error));
+        Log(ExecutorTerminalLog.Text("执行结束 | 状态: {0} | 退出码: {1}{2}", "Finished | Status: {0} | Exit code: {1}{2}", ExecutorTerminalLog.StatusText(Status), ExitCode, String.IsNullOrEmpty(Error) ? "" : " | "+Error));
     }
     public void Start(string application, string arguments) {
-        Log("开始执行 | Shell: "+Shell+" | 目录: "+Cwd+"\n"+Command);
+        Log(ExecutorTerminalLog.Text("开始执行 | Shell: {0} | 目录: {1}\n{2}", "Started | Shell: {0} | Directory: {1}\n{2}", Shell, Cwd, Command));
         IntPtr read=IntPtr.Zero,write=IntPtr.Zero,input=IntPtr.Zero;
         Stream outputStream=null;
         ProcessInfo pi = new ProcessInfo();
@@ -384,10 +401,11 @@ function Send-Json($Context, [int]$Status, $Body) {
     try { $response.OutputStream.Write($bytes,0,$bytes.Length) } finally { $response.Close() }
 }
 
-[Console]::Error.WriteLine('Command executor (PowerShell fallback). Keep this terminal open; Ctrl+C disconnects.')
-[Console]::Error.WriteLine("命令使用当前用户权限执行，默认目录：$Cwd。执行日志在此终端显示。")
-[Console]::Error.WriteLine('Paste this connection into the AI Agent Executor connection dialog:')
-[Console]::Error.WriteLine("监听地址：$listenUrl；浏览器访问地址：$baseUrl")
+[ExecutorTerminalLog]::Language = $Language
+[Console]::Error.WriteLine([ExecutorTerminalLog]::Text('命令执行器（PowerShell）：请保持此终端打开，按 Ctrl+C 断开连接。', 'Command executor (PowerShell): keep this terminal open. Ctrl+C disconnects.'))
+[Console]::Error.WriteLine([ExecutorTerminalLog]::Text('命令使用当前用户权限执行，默认目录：{0}。执行日志在此终端显示。', 'Commands run with current user permissions. Default directory: {0}. Logs appear in this terminal.', $Cwd))
+[Console]::Error.WriteLine([ExecutorTerminalLog]::Text('请将以下连接信息粘贴到 AI Agent 的执行器连接框：', 'Paste this connection into the AI Agent Executor connection dialog:'))
+[Console]::Error.WriteLine([ExecutorTerminalLog]::Text('监听地址：{0}；浏览器访问地址：{1}', 'Listening: {0}; browser access: {1}', $listenUrl, $baseUrl))
 [Console]::WriteLine((ConvertTo-Json -Compress @{ url=$baseUrl; token=$token }))
 try {
     $pending = $listener.GetContextAsync()
@@ -511,5 +529,5 @@ try {
     $listener.Close()
     foreach ($task in $tasks.Values) { $task.Dispose() }
     [void][ExecutorTerminalLog]::Flush(1000)
-    [Console]::Error.WriteLine('Local executor stopped.')
+    [Console]::Error.WriteLine([ExecutorTerminalLog]::Text('执行器已停止。', 'Executor stopped.'))
 }

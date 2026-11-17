@@ -1197,11 +1197,11 @@ const localConnectionStatus = computed(() => localExecutor.state.connecting ? 'c
 const localStartup = computed(() => {
   try {
     if (['0.0.0.0', '::'].includes(localDialog.listenAddress.trim())) throw new Error(tr('local.specificAddress'));
-    return { command: buildLocalStartupCommand({ platform: localDialog.platform, terminal: localDialog.terminal, token: localDialog.token, origin: location.origin, listenAddress: localDialog.listenAddress, port: localDialog.port,
+    return { command: buildLocalStartupCommand({ language: getCurrentLocale(), platform: localDialog.platform, terminal: localDialog.terminal, token: localDialog.token, origin: location.origin, listenAddress: localDialog.listenAddress, port: localDialog.port,
       assetBase: new URL(`${import.meta.env.BASE_URL}local-executor/v1/`, location.origin).href }), error: '' };
   } catch (error) { return { command: '', error: error.message }; }
 });
-watch(() => [localDialog.platform, localDialog.terminal, localDialog.listenAddress, localDialog.port, localDialog.token], () => { localDialog.copied = false; });
+watch(() => [localDialog.platform, localDialog.terminal, localDialog.listenAddress, localDialog.port, localDialog.token, getCurrentLocale()], () => { localDialog.copied = false; });
 watch(() => localExecutor.state.shell, (shell) => { if (Object.hasOwn(COMMAND_WHITELIST_TEMPLATES, shell)) localDialog.template = shell; });
 const sidePanelVisible = ref(true);
 const sidebarResizing = ref(false);

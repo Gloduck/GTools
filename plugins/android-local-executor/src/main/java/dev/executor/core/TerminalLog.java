@@ -8,12 +8,14 @@ public final class TerminalLog implements AutoCloseable {
     private static final int LIMIT = 262144;
     private final ArrayDeque<String> pending = new ArrayDeque<>();
     private final PrintStream sink;
+    public final LogMessages messages;
     private int pendingChars;
     private long dropped;
     private boolean closed;
     private final Thread worker;
 
-    public TerminalLog(PrintStream sink) {
+    public TerminalLog(PrintStream sink, LogMessages messages) {
+        this.messages = messages;
         this.sink = sink;
         worker = new Thread(this::writeLoop, "executor-terminal");
         worker.setDaemon(true);
@@ -50,7 +52,7 @@ public final class TerminalLog implements AutoCloseable {
                     skipped = dropped;
                     dropped = 0;
                 }
-                if (skipped > 0) sink.println("[Executor] 终端日志积压，已省略 " + skipped + " 字符；任务输出请以接口缓存为准。");
+                if (skipped > 0) sink.println(messages.text("[Executor] 终端日志积压，已省略 %d 字符；任务输出请以接口缓存为准。", "[Executor] Terminal log backlog: omitted %d characters; use the API buffer for task output.", skipped));
                 sink.print(text);
                 sink.flush();
             }

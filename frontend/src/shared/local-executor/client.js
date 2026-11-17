@@ -98,7 +98,8 @@ export function normalizeLocalCommand({command, cwd = '', reason, shell = '', li
     return Object.freeze({command, cwd, reason: reason.trim(), shell, lifecycle: normalizeLocalLifecycle(lifecycle), commands: Object.freeze(normalizeMainCommands(commands)), high_risk, wait_seconds: normalizeLocalWaitSeconds(wait_seconds), max_chars: normalizeLocalMaxChars(max_chars)});
 }
 
-export function buildLocalStartupCommand({platform, assetBase, origin, terminal = 'powershell', token = '', listenAddress = '127.0.0.1', port = 0, publicUrl = ''}) {
+export function buildLocalStartupCommand({platform, assetBase, origin, terminal = 'powershell', token = '', listenAddress = '127.0.0.1', port = 0, publicUrl = '', language = 'en-US'}) {
+    if (!['zh-CN', 'en-US'].includes(language)) throw new Error('Language must be zh-CN or en-US');
     const base = new URL(assetBase);
     if (base.protocol !== 'https:' && !(base.protocol === 'http:' && ['127.0.0.1', 'localhost'].includes(base.hostname))) throw new Error('Serve startup scripts over HTTPS (or localhost for development)');
     const listen = normalizeExecutorListenAddress(listenAddress);
@@ -112,7 +113,7 @@ export function buildLocalStartupCommand({platform, assetBase, origin, terminal 
     const ps = (text) => `'${text.replace(/'/g, "''")}'`;
     if (platform === 'windows') {
         // 从原始响应流按 UTF-8 解码，不能将可能为 byte[] 的 Content 转成字符串。
-        const script = `& ([scriptblock]::Create([Text.Encoding]::UTF8.GetString((Invoke-WebRequest -UseBasicParsing ${ps(`${url}/bootstrap.ps1`)}).RawContentStream.ToArray()))) -BaseUrl ${ps(url)} -Origin ${ps(webOrigin)} -ListenAddress ${ps(listen)} -Port ${port}${advertised ? ` -PublicUrl ${ps(advertised)}` : ''}${customToken ? ` -Token ${ps(customToken)}` : ''}`;
+        const script = `& ([scriptblock]::Create([Text.Encoding]::UTF8.GetString((Invoke-WebRequest -UseBasicParsing ${ps(`${url}/bootstrap.ps1`)}).RawContentStream.ToArray()))) -BaseUrl ${ps(url)} -Origin ${ps(webOrigin)} -ListenAddress ${ps(listen)} -Port ${port} -Language ${ps(language)}${advertised ? ` -PublicUrl ${ps(advertised)}` : ''}${customToken ? ` -Token ${ps(customToken)}` : ''}`;
         if (terminal === 'cmd') {
             // 编码的是固定启动脚本，避免 CMD 再次解释 URL 中的引号、百分号和连接符。
             const bytes = Uint8Array.from({length: script.length * 2}, (_, index) => script.charCodeAt(index >> 1) >> ((index & 1) * 8) & 255);
@@ -120,18 +121,9 @@ export function buildLocalStartupCommand({platform, assetBase, origin, terminal 
         }
         return script;
     }
-    if (platform === 'android') {
-        // 页面只负责下载入口，默认参数由启动脚本提供。
-        const args = [sh(url), sh(webOrigin)];
-        if (listen !== '127.0.0.1' || port !== 0 || advertised || customToken) args.push(sh(listen));
-        if (port !== 0 || advertised || customToken) args.push(String(port));
-        if (advertised || customToken) args.push(sh(advertised));
-        if (customToken) args.push(sh(customToken));
-        const launch = `sh -s -- ${args.join(' ')}`;
-        return `curl -fsSL ${sh(`${url}/bootstrap-android.sh`)} | ${launch}`;
-    }
-    // 启动参数只来自页面配置，不拼接模型提供的命令。
-    return `curl -fsSL ${sh(`${url}/bootstrap.sh`)} | sh -s -- ${sh(url)} ${sh(webOrigin)} ${sh(listen)} ${port} ${sh(advertised)}${customToken ? ` ${sh(customToken)}` : ''}`;
+    // 固定参数位置，空 token 仍由执行端随机生成；语言只控制日志。
+    const launcher = platform === 'android' ? 'bootstrap-android.sh' : 'bootstrap.sh';
+    return `curl -fsSL ${sh(`${url}/${launcher}`)} | sh -s -- ${sh(url)} ${sh(webOrigin)} ${sh(listen)} ${port} ${sh(advertised)} ${sh(customToken)} ${sh(language)}`;
 }
 
 export class LocalExecutorClient {

@@ -68,6 +68,7 @@ public final class ExecutorTests {
             tests.run("连接信息不泄露凭据", tests::testInfo);
             tests.run("认证来源与 Host 校验", tests::testAuthorization);
             tests.run("自定义 token 校验与真实请求鉴权", tests::testCustomToken);
+            tests.run("中英文日志不改变命令输出和协议状态", tests::testLogLanguage);
             tests.run("跨域预检及禁止额外请求头", tests::testPreflight);
             tests.run("任务参数路由和请求体校验", tests::testParameters);
             tests.run("重复提交不重复执行", tests::testIdempotency);
@@ -145,6 +146,29 @@ public final class ExecutorTests {
                 JSONObject info = request("GET", "/v1/info", null).expect(200);
                 // 单字符 token 可能出现在普通字段值中，按字段检查凭据不进入响应。
                 check(!info.has("token") && !info.has("authorization"), "信息接口泄露凭据字段");
+            } finally { endpoint = previousEndpoint; token = previousToken; }
+        }
+    }
+
+    private void testLogLanguage() throws Exception {
+        String previousEndpoint = endpoint, previousToken = token;
+        for (String language : new String[]{"zh-CN", "en-US"}) {
+            ByteArrayOutputStream log = new ByteArrayOutputStream();
+            ExecutorConfig config = ExecutorConfig.parse(new String[]{"--origin", ORIGIN, "--cwd", directory.getPath(), "--language", language});
+            try {
+                try (ExecutorServer localized = new ExecutorServer(config, shell, new PrintStream(log, true, "UTF-8"))) {
+                    localized.startExecutor();
+                    endpoint = localized.connection().getString("url");
+                    token = localized.connection().getString("token");
+                    String task = submit("printf '原文 original\\n'; exit 7");
+                    JSONObject result = waitTask(task);
+                    check(result.getString("status").equals("failed") && result.getInt("exit_code") == 7, "翻译改变了协议状态");
+                    check(output(task, result).equals("原文 original\n"), "翻译改变了命令输出");
+                }
+                // 关闭服务会排空日志线程，避免用睡眠猜测日志何时写完。
+                String text = new String(log.toByteArray(), StandardCharsets.UTF_8);
+                check(text.contains(language.equals("zh-CN") ? "开始执行" : "Started"), "开始日志语言错误");
+                check(text.contains(language.equals("zh-CN") ? "执行结束 | 状态: 失败 | 退出码: 7" : "Finished | Status: failed | Exit code: 7"), "结束日志语言错误");
             } finally { endpoint = previousEndpoint; token = previousToken; }
         }
     }

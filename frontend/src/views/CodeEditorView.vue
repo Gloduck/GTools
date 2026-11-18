@@ -6379,6 +6379,7 @@ function getAiAllToolDefinitions() {
         path: { type: "string", description: "Required directory path relative to the workspace root. Use '.', not an empty string, for the workspace root." },
         overwrite: { type: "boolean", description: "Allow replacing existing files within this directory. Defaults to false and never permits a file/directory type conflict." }
       }, required: ["path"] } },
+      request_timeout_ms: { type: "number", exclusiveMinimum: 0, maximum: AI_JAVASCRIPT_MAX_TIMEOUT_MS, description: `Default timeout for each network request made by the script, including reading the response body with fetch. Defaults to ${AI_JAVASCRIPT_DEFAULT_TIMEOUT_MS} milliseconds and is capped by timeout_ms. For long requests, set both timeouts and use standard fetch options in the script.` },
       timeout_ms: { type: "number", exclusiveMinimum: 0, maximum: AI_JAVASCRIPT_MAX_TIMEOUT_MS, description: `Script execution timeout in milliseconds. It must be a positive finite number, defaults to ${AI_JAVASCRIPT_DEFAULT_TIMEOUT_MS}, and is capped at ${AI_JAVASCRIPT_MAX_TIMEOUT_MS}. Dependency preparation and individual network requests are also constrained by this value and their own internal limits.` }
     }, required: ["reason"] } },
     { type: "function", name: "list_files", requirements: ["workspace"], description: aiToolDescription("List workspace files and directories.", "Use path relative to workspace root. Use an empty path or '.' for the workspace root. By default only the first level is listed; set recursive to true for descendants. Use max_items to keep output concise."), parameters: { type: "object", properties: { path: { type: "string", description: "Optional directory path relative to workspace root. '.' means workspace root." }, max_items: { type: "number", description: "Maximum items to return. Capped internally." }, recursive: { type: "boolean", description: "Whether to recursively list descendants. Defaults to false." } } } },
@@ -7831,7 +7832,7 @@ async function aiToolSearchText({ query, path = "", max_results: maxResults = 30
   return { summary: tr("ai.summary.search", { count: results.length, path: path || ".", query }), results };
 }
 
-async function aiToolRunJavaScript({ reason, code, entry_file: entryFile, format, resolve_from: resolveFrom, cwd, input = {}, env, args, dependencies, registry_url: registryUrl, credentials, proxy_options: proxyOptions = {}, input_files: inputFiles, output_files: outputFiles, output_directories: outputDirectories, timeout_ms: timeoutMs } = {}, signal, session = getActiveAiSession()) {
+async function aiToolRunJavaScript({ reason, code, entry_file: entryFile, format, resolve_from: resolveFrom, cwd, input = {}, env, args, dependencies, registry_url: registryUrl, credentials, proxy_options: proxyOptions = {}, input_files: inputFiles, output_files: outputFiles, output_directories: outputDirectories, timeout_ms: timeoutMs, request_timeout_ms: requestTimeoutMs } = {}, signal, session = getActiveAiSession()) {
   throwIfAiAborted(signal);
   const startedAt = performance.now();
   const logs = [];
@@ -7849,7 +7850,8 @@ async function aiToolRunJavaScript({ reason, code, entry_file: entryFile, format
     if (hasCode && script.length > AI_JAVASCRIPT_MAX_CODE_CHARS) throw createAiJavaScriptError("SCRIPT_TOO_LARGE", `JavaScript code is too large: ${script.length} chars`, { phase: "preflight", size: script.length, maxSize: AI_JAVASCRIPT_MAX_CODE_CHARS });
     if (!window.Worker || !window.MessageChannel) throw createAiJavaScriptError("WORKER_UNAVAILABLE", "Web Worker is not available in this browser");
 
-    const timeout = normalizeAiJavaScriptTimeout(timeoutMs);
+    const timeout = normalizeAiJavaScriptTimeout(timeoutMs, "timeout_ms");
+    const requestTimeout = Math.min(normalizeAiJavaScriptTimeout(requestTimeoutMs, "request_timeout_ms"), timeout);
     const normalizedFormat = normalizeAiJavaScriptFormat(format);
     const normalizedEntryFile = rawEntryFile ? normalizeAiJavaScriptPath(rawEntryFile) : "";
     const normalizedResolveFrom = normalizeAiJavaScriptDirectory(resolveFrom, "resolve_from");
@@ -7946,7 +7948,7 @@ async function aiToolRunJavaScript({ reason, code, entry_file: entryFile, format
           maxRequestCount: AI_JAVASCRIPT_MAX_REQUEST_COUNT,
           maxResponseBytes: maxReadBytes,
           maxResponseTotalBytes: maxReadBytes,
-          defaultTimeoutMs: Math.min(AI_JAVASCRIPT_DEFAULT_TIMEOUT_MS, timeout),
+          defaultTimeoutMs: requestTimeout,
           maxTimeoutMs: timeout,
         },
       },
@@ -8051,10 +8053,10 @@ function createAiJavaScriptError(code, message, details = {}) {
   return error;
 }
 
-function normalizeAiJavaScriptTimeout(value) {
+function normalizeAiJavaScriptTimeout(value, parameter) {
   if (value === undefined || value === null || value === "") return AI_JAVASCRIPT_DEFAULT_TIMEOUT_MS;
   const timeout = Number(value);
-  if (!Number.isFinite(timeout) || timeout <= 0) throw createAiJavaScriptError("INVALID_TIMEOUT", "timeout_ms must be a positive finite number", { phase: "preflight" });
+  if (!Number.isFinite(timeout) || timeout <= 0) throw createAiJavaScriptError("INVALID_TIMEOUT", `${parameter} must be a positive finite number`, { phase: "preflight" });
   return Math.min(Math.ceil(timeout), AI_JAVASCRIPT_MAX_TIMEOUT_MS);
 }
 

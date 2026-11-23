@@ -118,11 +118,12 @@ test('execute_ssh_command 授权框显示在对应 AI 会话内', async ({page})
     await page.getByRole('button', {name: '切换会话'}).click();
     await page.locator('.ai-history-item-main').filter({hasText: '会话 1'}).click();
     await expect(dialog).toContainText('AI 请求执行高风险 SSH 命令');
+    await dialog.getByLabel('给 AI 的意见（可选）').fill('先检查当前目录');
     await dialog.getByRole('button', {name: '取消'}).click();
 
     await expect(page.locator('.ai-message-assistant')).toContainText('SSH 授权结果已处理。');
     const output = requests[2].input.find((item) => item.type === 'function_call_output' && item.call_id === 'execute-call');
-    expect(JSON.parse(output.output)).toMatchObject({ok: false, summary: 'SSH 命令授权已拒绝。'});
+    expect(JSON.parse(output.output)).toMatchObject({ok: false, summary: 'SSH 命令授权已拒绝。', approval: {approved: false, user_feedback: '先检查当前目录'}});
 });
 
 test('场景：SSH 免审批按连接保存，取消修改不生效，刷新后恢复该连接的配置', async ({page}) => {

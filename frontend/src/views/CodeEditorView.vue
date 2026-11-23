@@ -230,6 +230,10 @@
                   <span>{{ tr('ai.askUser.customAnswerLabel') }}</span>
                   <textarea ref="aiInteractionInput" v-model="activeAiSession.interactionDialog.customValue" rows="3" :placeholder="tr('ai.askUser.customAnswerPlaceholder')" autocomplete="off" spellcheck="false" @input="activeAiSession.interactionDialog.selectedOption = null" @keydown="handleAiQuestionKeydown($event, activeAiSession)"></textarea>
                 </label>
+                <label v-else-if="activeAiSession.interactionDialog.commandAction" class="editor-dialog-input-row">
+                  <span>{{ tr('commandApproval.userFeedback') }}</span>
+                  <textarea v-model="activeAiSession.interactionDialog.customValue" rows="2" :placeholder="tr('commandApproval.userFeedbackHint')"></textarea>
+                </label>
                 <div class="editor-dialog-actions">
                   <button type="button" @click="cancelAiInteraction(activeAiSession)">{{ activeAiSession.interactionDialog.cancelLabel }}</button>
                   <button ref="aiInteractionPrimaryButton" type="submit" class="primary" :class="{ danger: activeAiSession.interactionDialog.tone === 'danger' }" :disabled="activeAiSession.interactionDialog.mode === 'question' && !activeAiSession.interactionDialog.selectedOption && !activeAiSession.interactionDialog.customValue.trim()">{{ activeAiSession.interactionDialog.confirmLabel }}</button>
@@ -5129,7 +5133,12 @@ function settleAiInteraction(session, result) {
   if (!request.signal?.aborted) {
     if (dialog.mode === 'question') session.commandAuthorizations.push({type: 'user_answer', question: dialog.message, answer: result?.value || '',
       ...(result?.selectedOption ? {selected_option: result.selectedOption} : {}), cancelled: result === null});
-    if (dialog.commandAction) session.commandAuthorizations.push({type: 'command_confirmation', action: dialog.commandAction, approved: result === true});
+    if (dialog.commandAction) {
+      const feedback = dialog.customValue.trim();
+      const decision = {approved: result === true, ...(feedback ? {user_feedback: feedback} : {})};
+      session.commandAuthorizations.push({type: 'command_confirmation', action: dialog.commandAction, ...decision});
+      result = decision;
+    }
   }
   aiInteractionRequests.delete(session.id);
   request.signal?.removeEventListener("abort", request.abortHandler);
@@ -8766,11 +8775,12 @@ async function authorizeAiCommand({getPolicy, action, confirmation, rejectedMess
   const dialog = confirmation(approvalReason);
   dialog.commandAction = action;
   if (review) dialog.message += `\n\n${tr('commandApproval.reviewResult', {reason: review.reason})}`;
-  const approved = await showAiInteraction(session, dialog, signal);
+  const decision = await showAiInteraction(session, dialog, signal);
   throwIfAiAborted(signal);
   assertCurrentPolicy();
-  if (!approved) throw Object.assign(new Error(rejectedMessage), {commandApproval: review ? {method: 'user', approved: false, review} : undefined});
-  return {method: 'user', ...(review ? {review} : {})};
+  const approval = {method: 'user', ...decision, ...(review ? {review} : {})};
+  if (!decision?.approved) throw Object.assign(new Error(rejectedMessage), {commandApproval: approval});
+  return approval;
 }
 
 async function aiToolExecuteLocalCommand(input, signal, session) {

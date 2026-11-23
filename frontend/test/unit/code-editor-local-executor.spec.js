@@ -169,12 +169,13 @@ test('场景：自动审查信息不足时等待人工确认，确认后只执�
     await expect(dialog).toContainText(reason);
     await expect(dialog).toContainText(command);
     expect(submitted).toHaveLength(0);
+    await dialog.getByLabel('给 AI 的意见（可选）').fill('执行后汇报结果');
     await dialog.getByRole('button', {name: '执行命令', exact: true}).click();
     await expect(page.locator('.ai-message-assistant')).toContainText('人工确认后执行完成');
     expect(submitted.map((task) => task.command)).toEqual([command]);
     expect(reviewCalls).toBe(1);
     const result = JSON.parse(mainRequests[1].input.find((item) => item.type === 'function_call_output').output);
-    expect(result).toMatchObject({ok: true, output: 'confirmed-review-ok', approval: {method: 'user', review: {decision: 'needs_confirmation', reason}}});
+    expect(result).toMatchObject({ok: true, output: 'confirmed-review-ok', approval: {method: 'user', user_feedback: '执行后汇报结果', review: {decision: 'needs_confirmation', reason}}});
 });
 
 for (const scenario of ['needs_confirmation', 'invalid_response', 'api_error']) {

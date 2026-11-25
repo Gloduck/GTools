@@ -4,7 +4,7 @@ import {mkdtemp, readFile, rm, writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import test from 'node:test';
-import {readIndexEntries} from '../../src/shared/git-index.js';
+import {readIndexEntries} from '../../src/shared/git.js';
 
 test('拆分索引按原位置合并跨多个位图字的新增、替换和删除条目', async t => {
     const dir = await mkdtemp(join(tmpdir(), 'gtools-index-'));

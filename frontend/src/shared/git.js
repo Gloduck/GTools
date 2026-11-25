@@ -1,9 +1,8 @@
 import {Buffer} from 'buffer';
 import {currentBranch, getConfig, hashBlob, isIgnored, listRefs, log, readBlob, resolveRef, TREE, walk} from 'isomorphic-git';
+import picomatch from 'picomatch/posix.js';
 import {FileNotDirectoryError} from './file-system/file-system-errors.js';
 import {normalizeFilePath} from './file-utils.js';
-import {worktreeAttributes} from './git-attributes.js';
-import {readIndexEntries} from './git-index.js';
 
 // Git metadata and working-tree ignore files are the only paths this adapter reads.
 function gitPath(path) {
@@ -101,6 +100,99 @@ async function listUntracked(options, disk, tracked, changes, unavailable, signa
     }
 }
 
+const quotedPathEscapes = {a: 7, b: 8, t: 9, n: 10, v: 11, f: 12, r: 13, '"': 34, '\\': 92};
+
+function unquotePattern(quoted) {
+    const chunks = [];
+    for (const [token] of quoted.slice(1, -1).matchAll(/[^\\]+|\\(?:[0-3][0-7]{2}|.)/gs)) {
+        if (!token.startsWith('\\')) chunks.push(Buffer.from(token));
+        else {
+            const byte = token.length === 4 ? parseInt(token.slice(1), 8) : quotedPathEscapes[token[1]];
+            if (byte === undefined) return '';
+            chunks.push(Buffer.from([byte]));
+        }
+    }
+    return Buffer.concat(chunks).toString('utf8');
+}
+
+function parseAttributeRules(source, ignoreCase) {
+    const rules = [];
+    for (const raw of source.split(/\r?\n/)) {
+        const line = raw.trim();
+        if (!line || line.startsWith('#') || line.startsWith('!')) continue;
+        const fields = /^("(?:[^"\\]|\\.)*"|[^ \t]+)[ \t]+(.+)$/.exec(line);
+        if (!fields) continue;
+        let pattern = fields[1];
+        if (pattern.startsWith('"')) pattern = unquotePattern(pattern);
+        if (!pattern || pattern.startsWith('!')) continue;
+        const attributes = fields[2].split(/[ \t]+/);
+        if (pattern.startsWith('[attr]')) {
+            rules.push({macro: pattern.slice(6), attributes});
+        } else {
+            const basename = !pattern.includes('/');
+            const matches = picomatch(pattern.replace(/^\//, ''), {windows: false, dot: true, nocase: ignoreCase,
+                nonegate: true, noext: true, nobrace: true, regex: false, literalBrackets: false});
+            rules.push({basename, matches, attributes});
+        }
+    }
+    return rules;
+}
+
+function applyAttributes(tokens, values, macros, expanding = new Set()) {
+    for (const token of tokens) {
+        const [, modifier, name, setting] = /^([-!]?)([^=]+)(?:=(.*))?$/.exec(token) || [];
+        if (!name) continue;
+        const value = modifier === '-' ? false : modifier === '!' ? undefined : setting ?? true;
+        values[name] = value;
+        if (value === true && macros.has(name) && !expanding.has(name)) {
+            expanding.add(name);
+            applyAttributes(macros.get(name), values, macros, expanding);
+            expanding.delete(name);
+        }
+    }
+}
+
+function worktreeAttributes(disk, index, readBlob, ignoreCase, signal) {
+    const cache = new Map();
+    async function readRules(path) {
+        let blob;
+        try {
+            blob = await disk.readBlob(path, {signal});
+        } catch (error) {
+            if (error.code !== 'FILE_NOT_FOUND') throw error;
+            const entry = index.get(path);
+            if (!entry || ![0o100644, 0o100755].includes(entry.mode)) return [];
+            blob = await readBlob(entry.oid, path);
+        }
+        return parseAttributeRules(await blob.text(), ignoreCase);
+    }
+    function rules(path) {
+        if (!cache.has(path)) cache.set(path, readRules(path));
+        return cache.get(path);
+    }
+    return async path => {
+        const parts = path.split('/');
+        const files = ['.gitattributes'];
+        for (let i = 1; i < parts.length; i++) files.push(parts.slice(0, i).join('/') + '/.gitattributes');
+        files.push('.git/info/attributes');
+        const sources = await Promise.all(files.map(rules));
+        const macros = new Map([['binary', ['-text']]]);
+        for (const set of [sources[0], sources.at(-1)]) {
+            for (const rule of set) if (rule.macro) macros.set(rule.macro, rule.attributes);
+        }
+        const values = Object.create(null);
+        for (const [i, set] of sources.entries()) {
+            const relative = i === sources.length - 1 ? path : parts.slice(i).join('/');
+            for (const rule of set) {
+                if (!rule.macro && rule.matches(rule.basename ? parts.at(-1) : relative)) {
+                    applyAttributes(rule.attributes, values, macros);
+                }
+            }
+        }
+        return values;
+    };
+}
+
 async function compareWorktreeBlob(bytes, before, attributes, autoCrlf) {
     if ((await hashBlob({object: bytes})).oid === before.oid) return null;
     const attrs = await attributes(before.path);
@@ -132,6 +224,131 @@ async function compareWorktreeBlob(bytes, before, attributes, autoCrlf) {
     if (length === bytes.length || (await hashBlob({object: bytes.subarray(0, length)})).oid !== before.oid) return 'modified';
     if (unknownPolicy && !(before.size > length && before.size <= length + lines)) return 'unknownEol';
     return null;
+}
+
+const INDEX_HASH_BYTES = 20;
+const indexPathDecoder = new TextDecoder('utf-8', {fatal: true, ignoreBOM: true});
+
+function invalidIndex(detail) {
+    throw new Error('Invalid Git index: ' + detail);
+}
+
+// The stage walker does not apply the mandatory 'link' extension of split indexes.
+// Read the on-disk entries, including their cached working-file sizes, in index order.
+async function readIndexFile(disk, path, signal, expectedHash) {
+    const file = await disk.readBlob(path, {signal});
+    const data = Buffer.from(await file.arrayBuffer());
+    const end = data.length - INDEX_HASH_BYTES;
+    if (end < 12 || data.toString('ascii', 0, 4) !== 'DIRC') invalidIndex(path);
+    const version = data.readUInt32BE(4);
+    if (![2, 3, 4].includes(version)) throw new Error('Unsupported Git index version: ' + version);
+    const checksum = data.subarray(end);
+    if (expectedHash || checksum.some(byte => byte !== 0)) {
+        const hash = Buffer.from(await crypto.subtle.digest('SHA-1', data.subarray(0, end)));
+        if (!hash.equals(checksum) || (expectedHash && hash.toString('hex') !== expectedHash)) invalidIndex(path + ' checksum');
+    }
+
+    const entries = [];
+    const count = data.readUInt32BE(8);
+    let offset = 12;
+    let previous = Buffer.alloc(0);
+    for (let i = 0; i < count; i++) {
+        const start = offset;
+        if (start + 62 > end) invalidIndex('truncated entry');
+        const mode = data.readUInt32BE(start + 24);
+        const size = data.readUInt32BE(start + 36);
+        const oid = data.toString('hex', start + 40, start + 60);
+        const flags = data.readUInt16BE(start + 60);
+        const extended = Boolean(flags & 0x4000);
+        offset = start + (extended ? 64 : 62);
+        if (offset >= end || (extended && version === 2)) invalidIndex('entry flags');
+        const extra = extended ? data.readUInt16BE(start + 62) : 0;
+        if (extra & ~0x6000) invalidIndex('unknown entry flags');
+        let prefix = 0;
+        if (version === 4) {
+            let byte = data[offset++];
+            let strip = byte & 127;
+            while (byte & 128) {
+                if (offset >= end || strip >= previous.length) invalidIndex('compressed pathname');
+                byte = data[offset++];
+                strip = (strip + 1) * 128 + (byte & 127);
+            }
+            if (strip > previous.length) invalidIndex('compressed pathname');
+            prefix = previous.length - strip;
+        }
+        const nul = data.indexOf(0, offset);
+        if (nul < 0 || nul >= end) invalidIndex('unterminated pathname');
+        const suffix = data.subarray(offset, nul);
+        previous = prefix ? Buffer.concat([previous.subarray(0, prefix), suffix]) : suffix;
+        const name = indexPathDecoder.decode(previous);
+        entries.push({path: name, oid, mode, size, stage: (flags >> 12) & 3,
+            skip: Boolean((flags & 0x8000) || (extra & 0x4000)), intentToAdd: Boolean(extra & 0x2000)});
+        offset = version === 4 ? nul + 1 : start + Math.ceil((nul + 1 - start) / 8) * 8;
+        if (offset > end) invalidIndex('entry padding');
+    }
+
+    let link;
+    while (offset < end) {
+        if (offset + 8 > end) invalidIndex('extension header');
+        const signature = data.toString('ascii', offset, offset + 4);
+        const length = data.readUInt32BE(offset + 4);
+        offset += 8;
+        if (length > end - offset) invalidIndex('extension size');
+        if (signature === 'link') link = data.subarray(offset, offset + length);
+        else if (signature !== 'sdir' && !/^[A-Z]/.test(signature)) throw new Error('Unsupported Git index extension: ' + signature);
+        offset += length;
+    }
+    return {entries, link};
+}
+
+// Each EWAH marker counts a run of all-zero/all-one 64-bit words, then literal words.
+function readBitmap(link, offset, entryCount) {
+    if (offset + 8 > link.length) invalidIndex('split index bitmap header');
+    const bits = link.readUInt32BE(offset);
+    const words = link.readUInt32BE(offset + 4);
+    offset += 8;
+    const end = offset + words * 8;
+    if (bits > entryCount || end + 4 > link.length) invalidIndex('split index bitmap size');
+    const positions = [];
+    let position = 0;
+    while (offset < end) {
+        const marker = link.readBigUInt64BE(offset);
+        offset += 8;
+        const run = Number((marker >> 1n) & 0xffffffffn) * 64;
+        const literals = Number(marker >> 33n);
+        if (position + run > Math.ceil(bits / 64) * 64 || offset + literals * 8 > end) invalidIndex('split index bitmap run');
+        if (marker & 1n) {
+            for (let i = position; i < Math.min(position + run, bits); i++) positions.push(i);
+        }
+        position += run;
+        for (let i = 0; i < literals; i++) {
+            let word = link.readBigUInt64BE(offset);
+            offset += 8;
+            for (let bit = position; word; bit++, word >>= 1n) {
+                if (bit >= bits) invalidIndex('split index bitmap position');
+                if (word & 1n) positions.push(bit);
+            }
+            position += 64;
+        }
+    }
+    return {positions, next: end + 4}; // trailing current-running-length-word pointer
+}
+
+export async function readIndexEntries(disk, signal) {
+    const {entries, link} = await readIndexFile(disk, '.git/index', signal);
+    if (!link) return entries;
+    if (link.length < INDEX_HASH_BYTES) invalidIndex('split index link');
+    const hash = link.toString('hex', 0, INDEX_HASH_BYTES);
+    const shared = /^0+$/.test(hash) ? [] : (await readIndexFile(disk, '.git/sharedindex.' + hash, signal, hash)).entries;
+    if (link.length === INDEX_HASH_BYTES) return shared.concat(entries);
+    const deleted = readBitmap(link, INDEX_HASH_BYTES, shared.length);
+    const replaced = readBitmap(link, deleted.next, shared.length);
+    if (replaced.next !== link.length || replaced.positions.length > entries.length) invalidIndex('split index entries');
+    for (const [i, position] of replaced.positions.entries()) {
+        shared[position] = {...entries[i], path: shared[position].path};
+    }
+    for (const position of deleted.positions) shared[position] = null;
+    return shared.filter(Boolean).concat(entries.slice(replaced.positions.length));
 }
 
 async function worktreeIndex(options, disk, signal) {

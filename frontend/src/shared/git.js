@@ -39,7 +39,13 @@ function gitFileSystem(disk) {
     }
     async function readdir(path) {
         try {
-            return (await disk.list(gitPath(path), {withMetadata: false})).map(entry => entry.name);
+            const directory = gitPath(path);
+            const entries = await disk.list(directory, {withMetadata: false});
+            const names = entries.map(entry => entry.name);
+            if (directory !== '.git/objects/pack') return names;
+            // 孤立索引可能先命中对象，使 isomorphic-git 无法继续查找其他有效包。
+            const packs = new Set(entries.filter(entry => entry.kind === 'file' && entry.name.endsWith('.pack')).map(entry => entry.name));
+            return names.filter(name => !name.endsWith('.idx') || packs.has(name.slice(0, -4) + '.pack'));
         } catch (error) {
             throw nodeError(error);
         }

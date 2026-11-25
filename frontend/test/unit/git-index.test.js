@@ -47,6 +47,33 @@ async function emptyRepository() {
     return {disk, repo};
 }
 
+test('孤立的包索引不会挡住有效包，缺失对象和损坏的包仍会报错', async t => {
+    const dir = await mkdtemp(join(tmpdir(), 'gtools-pack-'));
+    t.after(() => rm(dir, {recursive: true, force: true}));
+    const git = (args, input) => execFileSync('git', ['-C', dir, ...args], {input, encoding: 'utf8'}).trim();
+    git(['init', '-q', '--object-format=sha1']);
+    const oid = git(['hash-object', '-w', '--stdin'], 'packed content');
+    const prefix = '.git/objects/pack/pack-';
+    const hash = git(['pack-objects', '.git/objects/pack/pack'], oid + '\n');
+    const index = await readFile(join(dir, prefix + hash + '.idx'));
+    const pack = await readFile(join(dir, prefix + hash + '.pack'));
+    const {disk, repo} = await emptyRepository();
+    // 让孤立索引排在有效索引前，且两个索引都命中同一个对象。
+    const orphan = prefix + '0'.repeat(40) + '.idx';
+    await disk.writeBlob(orphan, new Blob([index]), {createParents: true});
+    await assert.rejects(repo.readBlob(oid), {code: 'NotFoundError'});
+
+    await disk.writeBlob(prefix + hash + '.idx', new Blob([index]));
+    await disk.writeBlob(prefix + hash + '.pack', new Blob([pack]));
+    assert.equal(await (await repo.readBlob(oid)).text(), 'packed content');
+    assert.deepEqual(Buffer.from(await (await disk.readBlob(orphan)).arrayBuffer()), index);
+
+    pack[pack.length - 1] ^= 1;
+    await disk.writeBlob(prefix + hash + '.pack', new Blob([pack]));
+    const reopened = await openGitRepository(disk);
+    await assert.rejects(reopened.readBlob(oid), /Packfile trailer mismatch/);
+});
+
 const author = {name: 'Test', email: 'test@example.invalid'};
 
 test('初始提交、撤销暂存与换行转换使用磁盘内容和原始文件大小', async () => {

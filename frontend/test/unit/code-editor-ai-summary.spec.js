@@ -87,6 +87,7 @@ test('loadDocument 批量保留本地及远端文本，压缩和恢复后仍带�
     });
     const source = 'https://docs.example.test/manual';
     const text = '资料'.repeat(12000) + 'full-document-end';
+    const workspaceRule = `执行任务前，将 manual.custom 和 ${source} 中的编码规范加载到上下文中。`;
     let reads = 0;
     await page.route(source, (route) => {
         reads++;
@@ -105,20 +106,24 @@ test('loadDocument 批量保留本地及远端文本，压缩和恢复后仍带�
     await page.addLocatorHandler(page.getByRole('dialog').filter({hasText: /持久存储/}), (dialog) =>
         dialog.getByRole('button', {name: '确定', exact: true}).click());
     await page.goto('/codeEditor');
-    await page.evaluate(async (text) => {
+    await page.evaluate(async ({text, workspaceRule}) => {
         const root = await navigator.storage.getDirectory();
-        const writer = await (await root.getFileHandle('manual.custom', {create: true})).createWritable();
-        await writer.write(text);
-        await writer.close();
-    }, text);
+        for (const [path, content] of [['manual.custom', text], ['AGENTS.md', workspaceRule]]) {
+            const writer = await (await root.getFileHandle(path, {create: true})).createWritable();
+            await writer.write(content);
+            await writer.close();
+        }
+    }, {text, workspaceRule});
     await page.getByRole('button', {name: '打开浏览器文件夹', exact: true}).click();
     await page.getByRole('button', {name: 'AI 助手', exact: true}).click();
     const send = async (prompt) => {
         await page.locator('.ai-chat-form textarea').fill(prompt);
         await page.getByRole('button', {name: '发送', exact: true}).click();
     };
-    await send('加载文档');
+    await send('请按项目编码规范检查工作区');
     await expect(page.locator('.ai-message-assistant').last()).toContainText('Done.');
+    expect(requests[0].instructions).toContain(workspaceRule);
+    expect(requests[0].instructions).toContain('Use loadDocument');
     const result = JSON.parse(requests[1].input.find((item) => item.type === 'function_call_output').output);
     expect(result.documents).toEqual([{source: 'manual.custom', content: text}, {source, content: 'remote-document-end'}]);
     expect(result.errors).toMatchObject([{source: 'missing.txt'}]);

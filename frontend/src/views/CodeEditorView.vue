@@ -233,11 +233,7 @@
                     </button>
                   </div>
                   <div v-if="gitPanel.revision === item.oid" class="git-commit-files">
-                    <div class="git-file-views" role="group" :aria-label="tr('git.view')">
-                      <button type="button" :aria-pressed="!gitPanel.showAll" @click="gitPanel.showAll = false">{{ tr('git.changes') }}</button>
-                      <button type="button" :aria-pressed="gitPanel.showAll" @click="gitPanel.showAll = true">{{ tr('git.allFiles') }}</button>
-                    </div>
-                    <div v-if="gitPanel.baseRef && !gitPanel.showAll" class="git-base">
+                    <div v-if="gitPanel.baseRef" class="git-base">
                       <span>{{ tr('git.base', { ref: gitPanel.baseRef.slice(0, 8) }) }}</span>
                       <button type="button" class="git-inline-action" :title="tr('git.resetBase')" :aria-label="tr('git.resetBase')" @click="gitPanel.baseRef = ''">
                         <span class="codicon codicon-close" aria-hidden="true"></span>
@@ -252,7 +248,7 @@
                           <span class="codicon icon" :class="getTreeIconClass(file)" aria-hidden="true"></span>
                           <span class="name">{{ file.name }}</span>
                           <small v-if="file.directory">{{ file.directory }}</small>
-                          <span v-if="!gitPanel.showAll" class="git-file-change" :class="file.change" :aria-label="tr('git.' + file.change)" :title="tr('git.' + file.change)">{{ gitChangeLetters[file.change] }}</span>
+                          <span class="git-file-change" :class="file.change" :aria-label="tr('git.' + file.change)" :title="tr('git.' + file.change)">{{ gitChangeLetters[file.change] }}</span>
                         </button>
                         <button v-if="file.after" type="button" class="git-row-action" aria-haspopup="menu" :aria-expanded="gitFileMenu?.file === file" :title="tr('git.fileActions')" :aria-label="tr('git.fileActions')" :disabled="!editor" @click.stop="showGitFileMenu($event, file)">
                           <span class="codicon codicon-more" aria-hidden="true"></span>
@@ -3101,7 +3097,7 @@ watch([activeView, fileSession, gitPanel], ([view, session, panel], [previousVie
       worktree: null, worktreeOpen: true, stagedOpen: true, loadingWorktree: false, worktreeError: "",
       writing: null, scanProgress: null, writeError: "", message: "", repositoryAuthor: null,
       branches: [], currentBranch: "", branchRef: "", branchesError: "",
-      commits: [], revision: "", baseRef: "", showAll: false, files: [], hasMore: false,
+      commits: [], revision: "", baseRef: "", files: [], hasMore: false,
       loadingHistory: false, loadingFiles: false, historyError: "", filesError: "",
     });
     void refreshGitPanel();
@@ -3527,7 +3523,6 @@ function selectGitBranch(ref) {
   panel.commits = [];
   panel.revision = "";
   panel.baseRef = "";
-  panel.showAll = false;
   panel.hasMore = false;
   void loadGitCommits();
 }
@@ -3562,13 +3557,12 @@ function selectGitCommit(oid, baseRef = "") {
   const panel = gitPanel.value;
   panel.revision = panel.revision === oid ? "" : oid;
   panel.baseRef = baseRef;
-  panel.showAll = false;
 }
 
 const gitBaseRevision = computed(() => gitPanel.value?.baseRef || selectedGitCommit.value?.commit.parent[0] || "");
 
-watch([() => gitPanel.value?.repository, () => gitPanel.value?.revision, gitBaseRevision, () => gitPanel.value?.showAll],
-  async ([repository, revision, baseRef, showAll], _, onCleanup) => {
+watch([() => gitPanel.value?.repository, () => selectedGitCommit.value?.oid, gitBaseRevision],
+  async ([repository, revision, baseRef], _, onCleanup) => {
     const panel = gitPanel.value;
     if (!panel) return;
     if (!gitFileMenu.value?.group) gitFileMenu.value = null;
@@ -3579,7 +3573,7 @@ watch([() => gitPanel.value?.repository, () => gitPanel.value?.revision, gitBase
     let current = true;
     onCleanup(() => { current = false; });
     try {
-      const rows = await repository.listFiles({ ref: revision, baseRef: showAll ? undefined : baseRef });
+      const rows = await repository.listFiles({ ref: revision, baseRef });
       if (current) panel.files = rows.map(file => gitFileRow({
         ...file, change: !file.before ? "added" : !file.after ? "deleted" : "modified",
       }));
@@ -3744,7 +3738,7 @@ async function openGitWorkingFile(path) {
   }
 }
 
-function openGitFile(file, mode = gitPanel.value.showAll ? "snapshot" : "changes", focusTab = true) {
+function openGitFile(file, mode = "changes", focusTab = true) {
   gitFileMenu.value = null;
   const panel = gitPanel.value;
   const revision = mode === "worktree" || mode === "staged" ? "" : panel.revision;
@@ -10809,7 +10803,7 @@ function getTreeIconClass(node, collapsed = false) {
 .code-editor-view .git-list-row:hover { background: var(--button-hover); }
 .code-editor-view .git-list-row.selected { background: var(--context-hover); }
 .code-editor-view .git-list-row .tree-row { min-width: 0; background: transparent; }
-.code-editor-view .git-list-row button:focus-visible, .code-editor-view .git-file-views button:focus-visible { outline: 1px solid var(--accent-strong); outline-offset: -1px; }
+.code-editor-view .git-list-row button:focus-visible { outline: 1px solid var(--accent-strong); outline-offset: -1px; }
 .code-editor-view .git-commit-row { min-height: 39px; gap: 5px; }
 .code-editor-view .git-commit-icon { color: var(--accent-strong); }
 .code-editor-view .git-commit-copy { flex: 1; display: grid; min-width: 0; gap: 1px; }
@@ -10824,9 +10818,7 @@ function getTreeIconClass(node, collapsed = false) {
 .code-editor-view .git-list-row:hover .git-row-action, .code-editor-view .git-list-row:focus-within .git-row-action,
 .code-editor-view .git-row-action[aria-busy="true"] { opacity: 1; }
 .code-editor-view .git-commit-files { margin: 0 0 4px 13px; border-left: 1px solid var(--border); }
-.code-editor-view .git-file-views, .code-editor-view .git-base { display: flex; align-items: center; gap: 8px; padding: 2px 8px; }
-.code-editor-view .git-file-views button { padding: 3px 2px; border: 0; border-bottom: 1px solid transparent; border-radius: 0; background: transparent; color: var(--muted); font-size: 12px; }
-.code-editor-view .git-file-views button[aria-pressed="true"] { border-bottom-color: var(--accent-strong); color: var(--text); }
+.code-editor-view .git-base { display: flex; align-items: center; gap: 8px; padding: 2px 8px; }
 .code-editor-view .git-base, .code-editor-view .git-more { color: var(--muted); font-size: 12px; }
 .code-editor-view .git-more { padding-left: 16px; }
 .code-editor-view .git-file-row { min-height: 26px; }

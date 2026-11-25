@@ -145,6 +145,8 @@ test('从 Git 活动栏浏览提交和文件，在独立只读标签对比，保
     await expect(file).toContainText('M');
     await expect(panel.getByTitle('old.txt', {exact: true})).toContainText('D');
     await expect(panel.getByTitle('new.txt', {exact: true})).toContainText('A');
+    await expect(panel.getByRole('list', {name: '变更文件'}).getByRole('listitem')).toHaveCount(3);
+    await expect(panel.getByRole('button', {name: '全部文件', exact: true})).toHaveCount(0);
     await file.click();
 
     const viewer = page.getByRole('tabpanel');
@@ -166,9 +168,8 @@ test('从 Git 活动栏浏览提交和文件，在独立只读标签对比，保
     await expect(page.locator('#save-file')).toBeEnabled();
     await gitTabs.first().click();
 
-    await panel.getByRole('button', {name: '全部文件', exact: true}).click();
-    await panel.getByTitle('docs/guide.md', {exact: true}).click();
-    await expect(text.first()).toContainText('Guide');
+    await fileAction(panel, 'settings.ini', '打开此版本');
+    await expect(text.first()).toContainText('secondVersion');
     await expect(viewer.locator('.monaco-diff-editor')).toHaveCount(0);
     await expect(gitTabs).toHaveCount(2);
     await gitTabs.last().getByTitle('关闭').click();
@@ -179,7 +180,8 @@ test('从 Git 活动栏浏览提交和文件，在独立只读标签对比，保
     await fileAction(panel, 'settings.ini', '与磁盘文件比较');
     await expect(text.filter({hasText: 'diskVersion'}).first()).toBeVisible();
     await file.click();
-    await expect(viewer.locator('.monaco-diff-editor')).toHaveCount(0);
+    await expect(viewer.locator('.original .view-lines')).toContainText('firstVersion');
+    await expect(viewer.locator('.modified .view-lines')).toContainText('secondVersion');
     await page.evaluate(() => { window.denyIni = true; });
     await fileAction(panel, 'settings.ini', '与磁盘文件比较');
     await expect(viewer.getByRole('status')).toContainText('无法比较');
@@ -195,6 +197,7 @@ test('从 Git 活动栏浏览提交和文件，在独立只读标签对比，保
     await expect(viewer.locator('.modified .view-lines')).toContainText('firstVersion');
     await panel.getByRole('button', {name: '恢复与父提交比较'}).click();
     await expect(file).toContainText('A');
+    await expect(panel.getByTitle('docs/guide.md', {exact: true})).toContainText('A');
     await older.click();
     await expect(older).toHaveAttribute('aria-expanded', 'false');
     await nav.getByRole('button', {name: '变更', exact: true}).click();

@@ -10,6 +10,9 @@
       <button class="activity-button" :class="{ active: activeView === 'changes' }" :title="tr('activity.changes')" :aria-label="tr('activity.changes')" @click="showPanel('changes')">
         <span class="codicon codicon-source-control" aria-hidden="true"></span>
       </button>
+      <button class="activity-button" :class="{ active: activeView === 'git' }" :title="tr('git.title')" :aria-label="tr('git.title')" :aria-expanded="activeView === 'git' && sidePanelVisible" aria-controls="git-panel" @click="showPanel('git')">
+        <span class="codicon codicon-repo" aria-hidden="true"></span>
+      </button>
       <button class="activity-button" :class="{ active: activeView === 'ai' }" :title="tr('activity.ai')" :aria-label="tr('activity.ai')" @click="showPanel('ai')">
         <span class="codicon codicon-sparkle" aria-hidden="true"></span>
       </button>
@@ -116,6 +119,118 @@
               <small>{{ file.deleted ? `${tr('changes.deleted')} · ${file.path}` : file.path }}</small>
             </span>
           </div>
+        </div>
+      </section>
+
+      <section v-show="activeView === 'git'" id="git-panel" class="panel-view active" :aria-label="tr('git.title')">
+        <header class="panel-header">
+          <div class="panel-title">
+            <h1>{{ tr('git.title') }}</h1>
+            <small v-if="gitPanel" class="panel-workspace-name" :title="gitPanel.name">{{ gitPanel.name }}</small>
+          </div>
+          <button type="button" class="icon-button" :title="tr('git.refresh')" :aria-label="tr('git.refresh')" :disabled="!gitPanel || gitPanel.loadingRepository" @click="refreshGitPanel()">
+            <span class="codicon codicon-refresh" aria-hidden="true"></span>
+          </button>
+        </header>
+        <p v-if="!gitPanel" class="git-message" role="status">{{ tr('git.noWorkspace') }}</p>
+        <p v-else-if="gitPanel.repositoryError" class="git-message" role="alert">{{ gitPanel.repositoryError }}</p>
+        <div v-else class="git-sections">
+          <section class="git-worktree" :aria-label="tr('git.unstaged')">
+            <h2 class="git-section-heading">
+              <button type="button" :aria-expanded="gitPanel.worktreeOpen" @click="gitPanel.worktreeOpen = !gitPanel.worktreeOpen">
+                <span class="codicon" :class="gitPanel.worktreeOpen ? 'codicon-chevron-down' : 'codicon-chevron-right'" aria-hidden="true"></span>
+                {{ tr('git.unstaged') }} <small v-if="gitPanel.worktree">{{ gitPanel.worktree.changes.length }}</small>
+              </button>
+            </h2>
+            <div v-show="gitPanel.worktreeOpen" class="git-worktree-files">
+              <p v-if="gitPanel.worktreeError" class="git-message" role="alert">{{ gitPanel.worktreeError }}</p>
+              <p v-else-if="gitPanel.loadingWorktree || !gitPanel.worktree" class="git-message" role="status">{{ tr('git.loading') }}</p>
+              <template v-else>
+                <p v-if="!gitPanel.worktree.changes.length && !gitPanel.worktree.unavailable.length" class="git-message">{{ tr('git.clean') }}</p>
+                <ul class="tree-list">
+                  <li v-for="file in gitPanel.worktree.changes" :key="file.path">
+                    <button type="button" class="tree-row git-file-row" :class="{ active: activeGitTab?.mode === 'worktree' && activeGitTab.file.path === file.path }" :disabled="!editor" :title="file.path" @click="openGitFile(file, 'worktree')">
+                      <span class="codicon icon" :class="getTreeIconClass(file)" aria-hidden="true"></span>
+                      <span class="name">{{ file.name }}</span><small v-if="file.directory">{{ file.directory }}</small>
+                      <span class="git-file-change" :class="file.change" :aria-label="tr('git.' + file.change)" :title="tr('git.' + file.change)">{{ gitChangeLetters[file.change] }}</span>
+                    </button>
+                  </li>
+                </ul>
+                <details v-if="gitPanel.worktree.unavailable.length" class="git-unavailable">
+                  <summary>{{ tr('git.unknownPaths', { count: gitPanel.worktree.unavailable.length }) }}</summary>
+                  <div v-for="file in gitPanel.worktree.unavailable" :key="file.path" class="git-unavailable-row" :title="file.path + ' · ' + (file.reason || tr('git.' + file.change))">
+                    <span>{{ file.path }}</span><small>{{ tr('git.' + file.change) }}</small>
+                  </div>
+                </details>
+              </template>
+            </div>
+          </section>
+          <section class="git-branch-panel" :aria-label="tr('git.branches')">
+            <h2 class="git-section-heading">{{ tr('git.branches') }}</h2>
+            <p v-if="gitPanel.branchesError" class="git-message" role="alert">{{ gitPanel.branchesError }}</p>
+            <ul class="tree-list git-branch-list">
+              <li v-for="branch in gitPanel.branches" :key="branch.ref">
+                <button class="tree-row git-branch-row" type="button" :aria-pressed="gitPanel.branchRef === branch.ref" :title="branch.ref" @click="selectGitBranch(branch.ref)">
+                  <span class="codicon icon" :class="branch.remote ? 'codicon-cloud' : 'codicon-git-branch'" aria-hidden="true"></span>
+                  <span class="name">{{ branch.name }}</span>
+                  <small v-if="gitPanel.currentBranch === branch.ref">{{ tr('git.currentBranch') }}</small>
+                </button>
+              </li>
+            </ul>
+            <h3 v-if="gitPanel.branchRef" class="git-history-heading">{{ tr('git.commits') }} <span>{{ gitPanel.branches.find(branch => branch.ref === gitPanel.branchRef)?.name }}</span></h3>
+            <div class="git-list" @scroll="gitFileMenu = null">
+              <p v-if="gitPanel.historyError" class="git-message" role="alert">{{ gitPanel.historyError }}</p>
+              <ol class="tree-list" :aria-label="tr('git.commits')">
+                <li v-for="item in gitPanel.commits" :key="item.oid">
+                  <div class="git-list-row" :class="{ selected: gitPanel.revision === item.oid }">
+                    <button type="button" class="tree-row git-commit-row" :aria-expanded="gitPanel.revision === item.oid" :title="item.commit.message.trim() + '\n' + item.oid" @click="selectGitCommit(item.oid)">
+                      <span class="codicon chevron" :class="gitPanel.revision === item.oid ? 'codicon-chevron-down' : 'codicon-chevron-right'" aria-hidden="true"></span>
+                      <span class="codicon codicon-git-commit git-commit-icon" aria-hidden="true"></span>
+                      <span class="git-commit-copy">
+                        <strong>{{ item.commit.message.split('\n')[0] || item.oid.slice(0, 8) }}</strong>
+                        <small><span>{{ item.commit.author.name }} · {{ formatHistoryTime(item.commit.author.timestamp * 1000) }}</span><code>{{ item.oid.slice(0, 8) }}</code></small>
+                      </span>
+                    </button>
+                    <button v-if="selectedGitCommit && gitPanel.revision !== item.oid" type="button" class="git-row-action" :title="tr('git.compareWith', { ref: gitPanel.revision.slice(0, 8) })" :aria-label="tr('git.compareWith', { ref: gitPanel.revision.slice(0, 8) })" @click="selectGitCommit(item.oid, gitPanel.revision)">
+                      <span class="codicon codicon-git-compare" aria-hidden="true"></span>
+                    </button>
+                  </div>
+                  <div v-if="gitPanel.revision === item.oid" class="git-commit-files">
+                    <div class="git-file-views" role="group" :aria-label="tr('git.view')">
+                      <button type="button" :aria-pressed="!gitPanel.showAll" @click="gitPanel.showAll = false">{{ tr('git.changes') }}</button>
+                      <button type="button" :aria-pressed="gitPanel.showAll" @click="gitPanel.showAll = true">{{ tr('git.allFiles') }}</button>
+                    </div>
+                    <div v-if="gitPanel.baseRef && !gitPanel.showAll" class="git-base">
+                      <span>{{ tr('git.base', { ref: gitPanel.baseRef.slice(0, 8) }) }}</span>
+                      <button type="button" class="git-inline-action" :title="tr('git.resetBase')" :aria-label="tr('git.resetBase')" @click="gitPanel.baseRef = ''">
+                        <span class="codicon codicon-close" aria-hidden="true"></span>
+                      </button>
+                    </div>
+                    <p v-if="gitPanel.filesError" class="git-message" role="alert">{{ gitPanel.filesError }}</p>
+                    <p v-else-if="gitPanel.loadingFiles" class="git-message">{{ tr('git.loading') }}</p>
+                    <p v-else-if="!gitPanel.files.length" class="git-message">{{ tr('git.noFiles') }}</p>
+                    <ul v-else class="tree-list" :aria-label="tr('git.files')">
+                      <li v-for="file in gitPanel.files" :key="file.path" class="git-list-row" :class="{ selected: activeGitTab?.revision === item.oid && activeGitTab.file.path === file.path }" @contextmenu.prevent="showGitFileMenu($event, file)">
+                        <button type="button" class="tree-row git-file-row" :disabled="!editor" :title="file.path" @click="openGitFile(file)">
+                          <span class="codicon icon" :class="getTreeIconClass(file)" aria-hidden="true"></span>
+                          <span class="name">{{ file.name }}</span>
+                          <small v-if="file.directory">{{ file.directory }}</small>
+                          <span v-if="!gitPanel.showAll" class="git-file-change" :class="file.change" :aria-label="tr('git.' + file.change)" :title="tr('git.' + file.change)">{{ gitChangeLetters[file.change] }}</span>
+                        </button>
+                        <button v-if="file.after" type="button" class="git-row-action" aria-haspopup="menu" :aria-expanded="gitFileMenu?.file === file" :title="tr('git.fileActions')" :aria-label="tr('git.fileActions')" :disabled="!editor" @click.stop="showGitFileMenu($event, file)">
+                          <span class="codicon codicon-more" aria-hidden="true"></span>
+                        </button>
+                      </li>
+                    </ul>
+                  </div>
+                </li>
+              </ol>
+              <p v-if="gitPanel.loadingHistory" class="git-message" role="status">{{ tr('git.loading') }}</p>
+              <button v-else-if="gitPanel.hasMore" type="button" class="tree-row git-more" @click="loadGitCommits(true)">
+                <span class="codicon codicon-ellipsis" aria-hidden="true"></span>{{ tr('git.more') }}
+              </button>
+            </div>
+          </section>
         </div>
       </section>
 
@@ -298,7 +413,7 @@
                   <strong>{{ session.title }}</strong>
                   <small>
                     <span v-if="session.busy || session.titleBusy" class="codicon codicon-loading codicon-modifier-spin" aria-hidden="true"></span>
-                    {{ formatAiSessionState(session) }} · {{ tr('ai.messageCount', { count: session.messages.length }) }} · {{ formatAiHistoryTime(session.updatedAt) }}
+                    {{ formatAiSessionState(session) }} · {{ tr('ai.messageCount', { count: session.messages.length }) }} · {{ formatHistoryTime(session.updatedAt) }}
                   </small>
                 </button>
                 <button type="button" class="ai-history-delete" :title="tr('ai.deleteSession')" :aria-label="tr('ai.deleteSession')" :disabled="session.busy || session.titleBusy || session.agent.submission" @click="deleteAiSessionById(session.id)">
@@ -539,11 +654,17 @@
           <span class="codicon codicon-open-preview" aria-hidden="true"></span>
         </button>
       </div>
-      <div class="tabs" role="tablist">
+      <div ref="editorTabsHost" class="tabs" role="tablist">
         <button v-for="file in openFileList" :key="file.path" class="tab" :class="{ active: file.path === activePath && !activeDiffPath && !activeSshTerminal }" :title="file.path" role="tab" :aria-selected="file.path === activePath && !activeDiffPath && !activeSshTerminal" @click="activateFile(file.path)" @auxclick.middle="closeFile(file.path)">
           <span class="tab-name">{{ file.name }}</span>
           <span class="dirty-dot">{{ file.dirty ? '•' : '' }}</span>
           <span class="tab-close" :title="tr('action.close')" @click.stop="closeFile(file.path)">×</span>
+        </button>
+        <button v-for="tab in gitTabs" :key="tab.id" class="tab git-tab" :class="{ active: activeGitTab === tab }" :title="tab.file.path + ' · ' + gitTabVersions(tab)" role="tab" :aria-selected="activeGitTab === tab" @click="activateGitTab(tab)" @auxclick.middle="closeGitTab(tab)" @keydown.delete.prevent="closeGitTab(tab)">
+          <span class="codicon" :class="tab.mode === 'snapshot' ? 'codicon-git-commit' : 'codicon-git-compare'" aria-hidden="true"></span>
+          <span class="tab-name">{{ tab.file.name }}</span>
+          <small>{{ gitTabTargetLabels[tab.mode] ? tr(gitTabTargetLabels[tab.mode]) : tab.revision.slice(0, 7) }}</small>
+          <span class="tab-close" :title="tr('action.close')" @click.stop="closeGitTab(tab)">×</span>
         </button>
         <button v-for="terminal in sshTerminalTabs" :key="`ssh:${terminal.configId}`" class="tab ssh-tab" :class="{ active: terminal.configId === activeSshTerminalId }" :title="terminal.title" role="tab" :aria-selected="terminal.configId === activeSshTerminalId" @click="activateSshTerminal(terminal.configId)" @auxclick.middle="closeSshTerminalTab(terminal.configId)">
           <span class="codicon codicon-terminal" aria-hidden="true"></span>
@@ -554,7 +675,7 @@
       </div>
 
       <section class="editor-stage" :class="{ 'preview-open': previewPaneVisible }">
-        <div v-show="!activePath && !activeDiffPath && !activeSshTerminal" class="empty-state">
+        <div v-show="!activePath && !activeDiffPath && !activeSshTerminal && !activeGitTab" class="empty-state">
           <h2>{{ tr('empty.title') }}</h2>
           <p>{{ tr('empty.description') }}</p>
           <button @click="openFolder">{{ tr('action.openFolder') }}</button>
@@ -580,6 +701,17 @@
           <small>{{ activeDiffUnsupportedFile.path }} · {{ activeDiffUnsupportedFile.deleted ? tr('changes.deleted') : tr('status.unsaved') }}</small>
         </div>
         <div ref="diffHost" class="monaco-host diff-host" :class="{ visible: activeDiffPath && !activeDiffUnsupportedFile && !activeDiffImageFile && !activeSshTerminal }" :aria-label="tr('diff.aria')"></div>
+        <section v-if="activeGitTab" class="git-editor-tab" role="tabpanel" :aria-label="activeGitTab.file.path + ' · ' + gitTabVersions(activeGitTab)">
+          <header class="git-editor-header">
+            <span class="git-editor-path" :title="activeGitTab.file.path">
+              <span class="codicon" :class="getTreeIconClass(activeGitTab.file)" aria-hidden="true"></span>{{ activeGitTab.file.path }}
+            </span>
+            <span class="git-editor-revisions">{{ gitPreview.versionLabel || gitTabVersions(activeGitTab) }}</span>
+          </header>
+          <p v-if="gitPreview.loading || gitPreview.error" class="git-message" role="status">{{ gitPreview.error || tr('git.loading') }}</p>
+          <p v-else-if="gitPreview.formatNote" class="git-message" role="status">{{ gitPreview.formatNote }}</p>
+          <div ref="gitPreviewHost" class="git-editor-host"></div>
+        </section>
         <section v-if="activeSshTerminal" class="ssh-terminal" :aria-label="tr('ssh.terminal')">
           <header class="ssh-terminal-header">
             <span>{{ activeSshTerminal.title }}</span>
@@ -661,6 +793,11 @@
       <button type="button" role="menuitem" class="danger" @click="runChangesContextAction('revert')">{{ tr('action.revert') }}</button>
     </div>
 
+    <div v-if="gitFileMenu" ref="gitMenuElement" class="context-menu" role="menu" :aria-label="tr('git.fileActions')" :style="{ left: gitFileMenu.x + 'px', top: gitFileMenu.y + 'px' }" @keydown.esc.prevent.stop="dismissGitFileMenu">
+      <button type="button" role="menuitem" @click="openGitFile(gitFileMenu.file, 'snapshot')">{{ tr('git.openVersion') }}</button>
+      <button type="button" role="menuitem" @click="openGitFile(gitFileMenu.file, 'disk')">{{ tr('git.disk') }}</button>
+      <button v-if="gitPanel?.disk === fileSession?.fileSystem" type="button" role="menuitem" @click="openGitFile(gitFileMenu.file, 'draft')">{{ tr('git.draft') }}</button>
+    </div>
     <div v-if="dialogState.visible" class="editor-dialog-backdrop" role="presentation" @click.self="dialogState.closeOnBackdrop && cancelDialog()">
       <form class="editor-dialog" role="dialog" aria-modal="true" aria-labelledby="editor-dialog-title" @submit.prevent="confirmDialog" @keydown.esc.prevent.stop="cancelDialog" @click.stop>
         <div class="editor-dialog-header">
@@ -921,6 +1058,19 @@ import {
   FileTooLargeError,
 } from "@/shared/file-system/index.js";
 
+const gitPanel = shallowRef(null);
+const gitTabs = shallowReactive([]);
+const activeGitTab = shallowRef(null);
+const gitFileMenu = shallowRef(null);
+const gitMenuElement = ref(null);
+const gitPreviewHost = ref(null);
+const editorTabsHost = ref(null);
+const gitPreview = reactive({ loading: false, error: "", versionLabel: "", formatNote: "" });
+const gitTabTargetLabels = { worktree: "git.workingTree", disk: "git.diskLabel", draft: "git.draftLabel" };
+const gitChangeLetters = { added: "A", modified: "M", deleted: "D", untracked: "U" };
+let gitScanController;
+let gitLogSerial = 0;
+let gitPreviewEditor;
 const STORAGE_KEY = "browser-code-editor-settings";
 const CODE_EDITOR_WEB_PATH = "/codeEditor";
 const CODE_EDITOR_PWA_PATH = "/codeEditor/pwa/";
@@ -1417,7 +1567,7 @@ const activeDiffUnsupportedFile = computed(() => {
   return file && !isTextFileState(file) && (file.fileType === "unsupported" || file.deleted) ? file : null;
 });
 const displayedImageFile = computed(() => activeDiffImageFile.value || (!activeDiffPath.value ? activeImageFile.value : null));
-const activeLanguage = computed({ get: () => activeFile.value?.language || "plaintext", set: (value) => { if (activeFile.value) activeFile.value.language = value; } });
+const activeLanguage = computed({ get: () => activeGitTab.value ? getLanguageId(activeGitTab.value.file.name) : activeFile.value?.language || "plaintext", set: (value) => { if (activeFile.value) activeFile.value.language = value; } });
 const activePreviewType = computed(() => getPreviewType(activeTextFile.value));
 const canPreviewActiveFile = computed(() => Boolean(activePreviewType.value));
 const previewLabelKey = computed(() => getPreviewTypeDefinition(previewType.value)?.labelKey || "action.preview");
@@ -1544,6 +1694,7 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  resetGitPanel();
   localExecutor.dispose();
   disableEditorPwa?.();
   formatterDisposables.splice(0).forEach((disposable) => disposable.dispose());
@@ -1637,6 +1788,7 @@ function resetPreviewState(path = "") {
 }
 
 function layoutVisibleEditors() {
+  gitPreviewEditor?.layout();
   editor.value?.layout();
   diffEditor.value?.layout();
   scheduleActiveSshTerminalFit();
@@ -2099,6 +2251,7 @@ async function connectSshConfig(config) {
   closeSshSession(existing, { silent: true });
   const session = createSshSession(normalized, xtermBundle);
   sshSessions.set(normalized.id, session);
+  activeGitTab.value = null;
   activeSshTerminalId.value = normalized.id;
   activeDiffPath.value = "";
   touchSshState();
@@ -2788,6 +2941,7 @@ function activateSshTerminal(configId) {
   const session = sshSessions.get(configId);
   if (!session) return;
   session.tabOpen = true;
+  activeGitTab.value = null;
   activeSshTerminalId.value = configId;
   activeDiffPath.value = "";
   diffEditor.value?.setModel(null);
@@ -2818,6 +2972,347 @@ function sendSshCommand(session, command) {
 
 function touchSshState() {
   sshRevision.value += 1;
+}
+
+const selectedGitCommit = computed(() => gitPanel.value?.commits.find(item => item.oid === gitPanel.value.revision));
+
+watch([activeView, fileSession, gitPanel], ([view, session, panel], [previousView]) => {
+  if (view !== "git" || !session) return;
+  if (!panel) {
+    gitPanel.value = shallowReactive({
+      disk: session.fileSystem, name: rootName.value, repository: null, loadingRepository: false, repositoryError: "",
+      worktree: null, worktreeOpen: true, loadingWorktree: false, worktreeError: "",
+      branches: [], currentBranch: "", branchRef: "", branchesError: "",
+      commits: [], revision: "", baseRef: "", showAll: false, files: [], hasMore: false,
+      loadingHistory: false, loadingFiles: false, historyError: "", filesError: "",
+    });
+    void refreshGitPanel();
+  } else if (previousView !== "git" && panel.repository) {
+    void refreshGitWorktree();
+  }
+});
+
+function resetGitPanel() {
+  gitScanController?.abort();
+  activeGitTab.value = null;
+  gitFileMenu.value = null;
+  gitTabs.splice(0);
+  gitPanel.value = null;
+}
+
+function gitFileRow(file) {
+  const slash = file.path.lastIndexOf("/");
+  return { ...file, name: file.path.slice(slash + 1), directory: slash < 0 ? "" : file.path.slice(0, slash) };
+}
+
+async function refreshGitWorktree() {
+  const panel = gitPanel.value;
+  if (!panel?.repository) return;
+  gitScanController?.abort();
+  const controller = new AbortController();
+  gitScanController = controller;
+  panel.loadingWorktree = true;
+  panel.worktreeError = "";
+  try {
+    const result = await panel.repository.listUnstaged({ signal: controller.signal });
+    if (!controller.signal.aborted) panel.worktree = {
+      index: result.index, changes: result.changes.map(gitFileRow), unavailable: result.unavailable,
+    };
+  } catch (error) {
+    if (!controller.signal.aborted) {
+      panel.worktree = null;
+      panel.worktreeError = tr("git.statusUnavailable", { reason: error.message });
+    }
+  } finally {
+    if (!controller.signal.aborted) panel.loadingWorktree = false;
+  }
+}
+
+async function refreshGitPanel() {
+  const panel = gitPanel.value;
+  if (!panel || panel.loadingRepository) return;
+  panel.loadingRepository = true;
+  panel.repositoryError = "";
+  try {
+    const { openGitRepository } = await import("@/shared/git.js");
+    const repository = await openGitRepository(panel.disk);
+    if (panel !== gitPanel.value) return;
+    panel.repository = repository;
+    void refreshGitWorktree();
+    panel.branchesError = "";
+    try {
+      const { current, branches } = await repository.listBranches();
+      if (panel !== gitPanel.value) return;
+      panel.branches = branches;
+      panel.currentBranch = current;
+      if (!branches.some(branch => branch.ref === panel.branchRef)) selectGitBranch(current);
+      else void loadGitCommits();
+    } catch (error) {
+      panel.branchesError = error.message;
+    }
+  } catch (error) {
+    panel.repositoryError = error.path === ".git" && ["FILE_NOT_FOUND", "FILE_NOT_DIRECTORY"].includes(error.code)
+      ? tr("git.gitDir") : error.message;
+  } finally {
+    panel.loadingRepository = false;
+  }
+}
+
+function selectGitBranch(ref) {
+  const panel = gitPanel.value;
+  if (ref === panel.branchRef) return;
+  panel.branchRef = ref;
+  panel.commits = [];
+  panel.revision = "";
+  panel.baseRef = "";
+  panel.showAll = false;
+  panel.hasMore = false;
+  void loadGitCommits();
+}
+
+async function loadGitCommits(more = false) {
+  const panel = gitPanel.value;
+  if (!panel?.branchRef || (more && panel.loadingHistory)) return;
+  const request = ++gitLogSerial;
+  panel.loadingHistory = true;
+  panel.historyError = "";
+  try {
+    const limit = more ? panel.commits.length + 50 : Math.max(panel.commits.length, 50);
+    const result = await panel.repository.listCommits({ ref: panel.branchRef, depth: limit + 1 });
+    if (request !== gitLogSerial || gitPanel.value !== panel) return;
+    const initialLoad = !panel.commits.length;
+    panel.hasMore = result.length > limit;
+    panel.commits = result.slice(0, limit);
+    if (initialLoad || (panel.revision && !panel.commits.some(item => item.oid === panel.revision))) {
+      panel.revision = panel.commits[0]?.oid || "";
+      panel.baseRef = "";
+    }
+  } catch (error) {
+    if (request === gitLogSerial) panel.historyError = error.code === "NotFoundError" && error.data?.what === panel.branchRef
+      ? tr("git.noHead") : error.message;
+  } finally {
+    if (request === gitLogSerial) panel.loadingHistory = false;
+  }
+}
+
+function selectGitCommit(oid, baseRef = "") {
+  gitFileMenu.value = null;
+  const panel = gitPanel.value;
+  panel.revision = panel.revision === oid ? "" : oid;
+  panel.baseRef = baseRef;
+  panel.showAll = false;
+}
+
+const gitBaseRevision = computed(() => gitPanel.value?.baseRef || selectedGitCommit.value?.commit.parent[0] || "");
+
+watch([() => gitPanel.value?.repository, () => gitPanel.value?.revision, gitBaseRevision, () => gitPanel.value?.showAll],
+  async ([repository, revision, baseRef, showAll], _, onCleanup) => {
+    const panel = gitPanel.value;
+    if (!panel) return;
+    gitFileMenu.value = null;
+    panel.files = [];
+    panel.filesError = "";
+    panel.loadingFiles = Boolean(repository && revision);
+    if (!panel.loadingFiles) return;
+    let current = true;
+    onCleanup(() => { current = false; });
+    try {
+      const rows = await repository.listFiles({ ref: revision, baseRef: showAll ? undefined : baseRef });
+      if (current) panel.files = rows.map(file => gitFileRow({
+        ...file, change: !file.before ? "added" : !file.after ? "deleted" : "modified",
+      }));
+    } catch (error) {
+      if (current) panel.filesError = error.message;
+    } finally {
+      if (current) panel.loadingFiles = false;
+    }
+  });
+
+async function showGitFileMenu(event, file) {
+  hideAllContextMenus();
+  if (!file.after || !editor.value) return;
+  const trigger = event.currentTarget;
+  const rect = trigger.getBoundingClientRect();
+  const pointer = event.type === "contextmenu" && (event.clientX || event.clientY);
+  const menu = { file, trigger, x: pointer ? event.clientX : rect.left, y: pointer ? event.clientY : rect.bottom };
+  gitFileMenu.value = menu;
+  await nextTick();
+  if (gitFileMenu.value !== menu) return;
+  const element = gitMenuElement.value;
+  gitFileMenu.value = { ...menu,
+    x: Math.max(4, Math.min(menu.x, window.innerWidth - element.offsetWidth - 4)),
+    y: Math.max(4, Math.min(menu.y, window.innerHeight - element.offsetHeight - 4)),
+  };
+  element.querySelector("button")?.focus({ preventScroll: true });
+}
+
+function dismissGitFileMenu() {
+  gitFileMenu.value?.trigger.focus();
+  gitFileMenu.value = null;
+}
+
+function openGitFile(file, mode = gitPanel.value.showAll ? "snapshot" : "changes") {
+  gitFileMenu.value = null;
+  const panel = gitPanel.value;
+  const revision = mode === "worktree" ? "" : panel.revision;
+  const baseRef = mode === "changes" ? gitBaseRevision.value : "";
+  const id = JSON.stringify([revision, baseRef, file.path, mode]);
+  let tab = gitTabs.find(item => item.id === id);
+  if (!tab) {
+    tab = { id, source: panel, file, revision, baseRef, mode, viewState: null };
+    gitTabs.push(tab);
+  }
+  activateGitTab(tab);
+}
+
+function gitTabVersions(tab) {
+  if (tab.mode === "worktree") return tab.source.worktree?.index.has(tab.file.path)
+    ? tr("git.indexLabel") + " → " + tr("git.diskLabel") : tr("git.diskLabel");
+  const revision = tab.revision.slice(0, 8);
+  if (tab.mode === "changes") return (tab.baseRef.slice(0, 8) || tr("git.emptyTree")) + " → " + revision;
+  if (tab.mode === "snapshot") return revision;
+  return revision + " → " + tr(tab.mode === "disk" ? "git.diskLabel" : "git.draftLabel");
+}
+
+function activateGitTab(tab) {
+  activePath.value = "";
+  activeDiffPath.value = "";
+  activeSshTerminalId.value = "";
+  activeGitTab.value = tab;
+  editor.value?.setModel(null);
+  diffEditor.value?.setModel(null);
+  setStatus(tab.file.path, tr("git.readOnly"));
+  if (window.matchMedia("(max-width: 760px)").matches) sidePanelVisible.value = false;
+  nextTick(() => {
+    if (activeGitTab.value !== tab) return;
+    const button = editorTabsHost.value?.querySelector(".git-tab.active");
+    button?.focus({ preventScroll: true });
+    button?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  });
+}
+
+function closeGitTab(tab) {
+  const index = gitTabs.indexOf(tab);
+  if (index < 0) return;
+  gitTabs.splice(index, 1);
+  if (activeGitTab.value !== tab) return;
+  const next = gitTabs[index] || gitTabs[index - 1];
+  if (next) activateGitTab(next);
+  else if (!openFileList.value.length && sshTerminalTabs.value.length) activateSshTerminal(sshTerminalTabs.value.at(-1).configId);
+  else activateLastOpenFile();
+}
+
+async function decodeGitText(blob) {
+  try {
+    return await decodeTextDocument(blob, "utf-8");
+  } catch {
+    throw new Error(tr("git.notText"));
+  }
+}
+
+async function readGitEntryText(repository, entry, path) {
+  if (!entry) return { content: "" };
+  if (entry.type === "commit") return { content: entry.oid };
+  return decodeGitText(await repository.readBlob(entry.oid, path));
+}
+
+function gitLineEndings(text) {
+  const counts = { LF: 0, CRLF: 0, CR: 0 };
+  for (const match of text.matchAll(/\r\n|\r|\n/g)) {
+    counts[match[0] === "\r\n" ? "CRLF" : match[0] === "\r" ? "CR" : "LF"]++;
+  }
+  const used = Object.entries(counts).filter(([, count]) => count);
+  return used.length === 1 ? used[0][0] : used.map(([name, count]) => name + " × " + count).join(", ");
+}
+
+function gitFormatNote(left, right) {
+  if (!right) return "";
+  const notes = [];
+  if (left.content !== right.content) {
+    if (!(left.content.includes("\r") || right.content.includes("\r")) ||
+        left.content.replace(/\r\n?/g, "\n") !== right.content.replace(/\r\n?/g, "\n")) return "";
+    const from = gitLineEndings(left.content);
+    const to = gitLineEndings(right.content);
+    notes.push(from === to ? tr("git.mixedEol") : tr("git.eolChanged", { from, to }));
+  }
+  if (left.format && right.format && left.format !== right.format) {
+    notes.push(tr("git.encodingChanged", { from: left.format, to: right.format }));
+  }
+  return notes.join(" · ") || (left.format && right.format ? tr("git.sameText") : "");
+}
+
+const activeGitWorktree = computed(() => activeGitTab.value?.mode === "worktree" ? activeGitTab.value.source.worktree : null);
+watch([activeGitTab, activeGitWorktree], async ([tab, worktree], _, onCleanup) => {
+  if (!tab) return;
+  let current = true;
+  let viewer;
+  const models = [];
+  onCleanup(() => {
+    current = false;
+    if (viewer) tab.viewState = viewer.saveViewState();
+    viewer?.dispose();
+    models.forEach(model => model.dispose());
+    gitPreviewEditor = null;
+  });
+  const { file, source, mode } = tab;
+  Object.assign(gitPreview, { loading: true, error: "", versionLabel: "", formatNote: "" });
+  try {
+    if (mode === "worktree" && !worktree) throw new Error(source.worktreeError || tr("git.loading"));
+    const entry = mode === "worktree" ? worktree?.index.get(file.path) : file.after;
+    const committed = await readGitEntryText(source.repository, entry, file.path);
+    let left = committed;
+    let right;
+    if (mode === "changes") {
+      left = await readGitEntryText(source.repository, file.before, file.path);
+      right = committed;
+    } else if (mode !== "snapshot") {
+      try {
+        if (normalizeFilePath(file.path) !== file.path || (entry && ![0o100644, 0o100755].includes(entry.mode))) {
+          throw new Error(tr("git.notRegular"));
+        }
+        const workingText = mode === "draft" ? { content: getGitDraftText(file.path) } : await decodeGitText(await source.disk.readBlob(file.path));
+        if (workingText.content == null) throw new Error(tr("git.noDraft"));
+        if (entry) right = workingText;
+        else left = workingText;
+      } catch (error) {
+        if (!entry) throw error;
+        if (current) {
+          gitPreview.error = tr(mode === "worktree" ? "git.indexUnavailable" : "git.unavailable", { reason: error.message });
+          gitPreview.versionLabel = mode === "worktree" ? tr("git.indexLabel") : tab.revision.slice(0, 8);
+        }
+      }
+    }
+    if (!current) return;
+    gitPreview.loading = false;
+    gitPreview.formatNote = gitFormatNote(left, right);
+    await nextTick();
+    if (!current || activeGitTab.value !== tab) return;
+    const options = { automaticLayout: true, readOnly: true, domReadOnly: true, originalEditable: false, lineNumbersMinChars: 4,
+      fontSize: settings.fontSize, wordWrap: settings.wordWrap ? "on" : "off", minimap: { enabled: settings.minimap },
+      scrollBeyondLastLine: false, theme: settings.theme };
+    const language = getLanguageId(file.name);
+    models.push(monaco.editor.createModel(left.content, language));
+    if (right === undefined) {
+      viewer = monaco.editor.create(gitPreviewHost.value, { ...options, model: models[0] });
+    } else {
+      models.push(monaco.editor.createModel(right.content, language));
+      viewer = monaco.editor.createDiffEditor(gitPreviewHost.value, { ...options, ignoreTrimWhitespace: false, renderWhitespace: "boundary" });
+      viewer.setModel({ original: models[0], modified: models[1] });
+    }
+    gitPreviewEditor = viewer;
+    if (tab.viewState && ("modified" in tab.viewState) === (right !== undefined)) {
+      viewer.restoreViewState(tab.viewState);
+    } else if (right !== undefined) {
+      viewer.revealFirstDiff();
+    }
+  } catch (error) {
+    if (current) { gitPreview.loading = false; gitPreview.error = error.message; }
+  }
+});
+
+function getGitDraftText(path) {
+  const file = openFiles.get(path);
+  return file?.dirty && !file.deleted && file.model ? file.model.getValue() : null;
 }
 
 async function openFolder() {
@@ -2914,6 +3409,7 @@ async function activateWorkspace(handle, name, kind) {
 }
 
 function resetWorkspaceEditorState() {
+  resetGitPanel();
   resetPreviewState();
   aiCredentialStore.clear();
   diffEditor.value?.setModel(null);
@@ -2945,6 +3441,7 @@ async function refreshTree(options = {}) {
     const nextAgentsMdContent = await readRootAgentsMdFromDisk(workspace);
     if (!isCurrentWorkspace(workspace) || refreshSerial !== refreshTreeSerial) return false;
     diskTree.value = nextDiskTree;
+    if (activeView.value === "git" && gitPanel.value?.repository) void refreshGitWorktree();
     agentsMdContent.value = nextAgentsMdContent;
     pruneWorkspaceModels(nextDiskTree);
     registerWorkspaceFileActions();
@@ -3028,8 +3525,9 @@ function normalizeShortcutKey(key) {
 
 function openCommandPalette() {
   registerWorkspaceFileActions();
-  const targetEditor = activeDiffPath.value ? diffEditor.value?.getModifiedEditor?.() : editor.value;
-  const action = targetEditor?.getAction("editor.action.quickCommand") || editor.value?.getAction("editor.action.quickCommand");
+  let targetEditor = activeDiffPath.value ? diffEditor.value?.getModifiedEditor() : editor.value;
+  if (activeGitTab.value) targetEditor = gitPreviewEditor?.getModifiedEditor?.() || gitPreviewEditor;
+  const action = targetEditor?.getAction("editor.action.quickCommand");
   targetEditor?.focus?.();
   action?.run();
 }
@@ -3505,6 +4003,7 @@ function refreshReadonlyPreviewModel(file) {
 function activateFile(path) {
   const file = openFiles.get(path);
   if (!file) return;
+  activeGitTab.value = null;
   activeSshTerminalId.value = "";
   file.closed = false;
   openFiles.set(path, file);
@@ -3546,6 +4045,7 @@ function focusActivePreviewEditor() {
 function activateDiff(path) {
   const file = openFiles.get(path);
   if (!file) return;
+  activeGitTab.value = null;
   file.closed = false;
   openFiles.set(path, file);
   touchDirtyState();
@@ -3581,6 +4081,8 @@ function closeFile(path) {
 }
 
 function activateLastOpenFile(excludedPath = "") {
+  const wasViewingGit = Boolean(activeGitTab.value);
+  activeGitTab.value = null;
   const nextPath = Array.from(openFiles.values()).filter((file) => !file.closed && file.path !== excludedPath).map((file) => file.path).at(-1) || "";
   activeSshTerminalId.value = "";
   activePath.value = "";
@@ -3588,7 +4090,10 @@ function activateLastOpenFile(excludedPath = "") {
   diffEditor.value?.setModel(null);
   if (nextPath) {
     activateFile(nextPath);
+  } else if (gitTabs.length) {
+    activateGitTab(gitTabs.at(-1));
   } else {
+    if (wasViewingGit) setStatus(tr("status.ready"), "");
     editor.value.updateOptions({ readOnly: false });
     editor.value.setModel(null);
   }
@@ -3995,6 +4500,7 @@ function hideContextMenu() {
 }
 
 function hideAllContextMenus() {
+  gitFileMenu.value = null;
   hideContextMenu();
   hideChangesContextMenu();
   aiSessionMenuVisible.value = false;
@@ -4667,8 +5173,10 @@ function applyLocale(locale) {
 }
 
 function applyEditorOptions() {
-  editor.value?.updateOptions({ fontSize: settings.fontSize, wordWrap: settings.wordWrap ? "on" : "off", minimap: { enabled: settings.minimap } });
-  diffEditor.value?.updateOptions({ fontSize: settings.fontSize, wordWrap: settings.wordWrap ? "on" : "off", minimap: { enabled: settings.minimap } });
+  const options = { fontSize: settings.fontSize, wordWrap: settings.wordWrap ? "on" : "off", minimap: { enabled: settings.minimap } };
+  editor.value?.updateOptions(options);
+  diffEditor.value?.updateOptions(options);
+  gitPreviewEditor?.updateOptions(options);
 }
 
 function resetKeybindings() {
@@ -5235,8 +5743,9 @@ function getAiHistoryDateLabel(timestamp) {
   return tr("ai.historyEarlier");
 }
 
-function formatAiHistoryTime(timestamp) {
-  return new Intl.DateTimeFormat(getCurrentLocale(), { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }).format(new Date(timestamp));
+const historyDateFormat = computed(() => new Intl.DateTimeFormat(getCurrentLocale(), { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" }));
+function formatHistoryTime(timestamp) {
+  return historyDateFormat.value.format(timestamp);
 }
 
 function formatAiSessionState(session) {
@@ -7528,7 +8037,7 @@ async function aiToolLoadDocuments({sources, encoding = "utf-8"}, session, signa
         if (!workspace.session) throw new Error("No workspace loaded");
         blob = await readWorkspaceInputBlob(source, "effective", workspace);
       }
-      const content = await decodeDocumentText(blob, encoding);
+      const { content } = await decodeTextDocument(blob, encoding);
       documents.push({source, content});
     } catch (error) {
       throwIfAiAborted(signal);
@@ -7544,15 +8053,17 @@ async function aiToolLoadDocuments({sources, encoding = "utf-8"}, session, signa
   return {ok: documents.length > 0, summary: tr("ai.summary.loadedDocuments", {count: documents.length, failed: errors.length}), documents, errors};
 }
 
-async function decodeDocumentText(blob, fallbackEncoding) {
+async function decodeTextDocument(blob, fallbackEncoding) {
   const bytes = new Uint8Array(await blob.arrayBuffer());
-  let encoding = blob.type.match(/charset\s*=\s*["']?([^;"'\s]+)/i)?.[1] || fallbackEncoding;
-  if (bytes[0] === 0xff && bytes[1] === 0xfe) encoding = "utf-16le";
-  else if (bytes[0] === 0xfe && bytes[1] === 0xff) encoding = "utf-16be";
-  else if (bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) encoding = "utf-8";
-  const content = new TextDecoder(encoding, {fatal: true}).decode(bytes);
+  const encoding = blob.type.match(/charset\s*=\s*["']?([^;"'\s]+)/i)?.[1] || fallbackEncoding;
+  let bom;
+  if (bytes[0] === 0xff && bytes[1] === 0xfe) bom = "utf-16le";
+  else if (bytes[0] === 0xfe && bytes[1] === 0xff) bom = "utf-16be";
+  else if (bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) bom = "utf-8";
+  const decoder = new TextDecoder(bom || encoding, {fatal: true});
+  const content = decoder.decode(bytes);
   if (content.includes("\0")) throw new Error("Source contains binary data");
-  return content;
+  return { content, format: decoder.encoding.toUpperCase() + (bom ? " BOM" : "") };
 }
 
 async function aiToolReadFile({ path, offset, limit, max_chars: maxChars } = {}) {
@@ -9592,6 +10103,7 @@ function getTreeIconClass(node, collapsed = false) {
 .code-editor-view .editor-stage.preview-open .monaco-host.visible,
 .code-editor-view .editor-stage.preview-open .image-preview,
 .code-editor-view .editor-stage.preview-open .ssh-terminal,
+.code-editor-view .editor-stage.preview-open .git-editor-tab,
 .code-editor-view .editor-stage.preview-open .empty-state,
 .code-editor-view .editor-stage.preview-open .unsupported-preview { right: var(--preview-pane-size); }
 .code-editor-view .preview-pane { position: absolute; inset: 0 0 0 auto; z-index: 4; display: grid; grid-template-rows: 34px auto minmax(0, 1fr); width: var(--preview-pane-size); border-left: 1px solid var(--border); background: var(--editor); color: var(--text); box-shadow: -12px 0 24px rgb(0 0 0 / 14%); }
@@ -9643,6 +10155,73 @@ function getTreeIconClass(node, collapsed = false) {
 .code-editor-view .status-right-group select:hover:not(:disabled),
 .code-editor-view .status-right-group select:focus { border-color: var(--accent-strong); background: var(--input); color: var(--text); outline: none; }
 .code-editor-view .status-right-group select:disabled { opacity: 0.5; }
+/* Git uses the explorer's rows, icons and tabs. The indent guide connects a commit to its files. */
+.code-editor-view .git-sections, .code-editor-view .git-branch-panel, .code-editor-view .git-worktree { display: flex; min-height: 0; flex-direction: column; }
+.code-editor-view .git-sections, .code-editor-view .git-branch-panel { flex: 1; overflow: hidden; }
+.code-editor-view .git-worktree { flex: 0 1 auto; max-height: 42%; }
+.code-editor-view .git-section-heading { flex: none; margin: 0; padding: 5px 12px; border-top: 1px solid var(--border); background: var(--panel-soft); color: var(--text); font-size: 12px; font-weight: 600; }
+.code-editor-view .git-worktree .git-section-heading { padding: 0; }
+.code-editor-view .git-section-heading button { display: flex; width: 100%; gap: 5px; align-items: center; padding: 5px 8px; border: 0; border-radius: 0; background: transparent; text-align: left; }
+.code-editor-view .git-section-heading small { margin-left: auto; padding: 0 5px; color: var(--muted); }
+.code-editor-view .git-worktree-files, .code-editor-view .git-branch-list { min-height: 0; overflow: auto; padding: 3px 0; }
+.code-editor-view .git-worktree-files .git-file-row { padding-inline: 14px; font-size: 13px; }
+.code-editor-view .git-unavailable { margin: 3px 12px; color: var(--muted); font-size: 12px; }
+.code-editor-view .git-unavailable summary { padding-block: 3px; cursor: pointer; }
+.code-editor-view .git-unavailable-row { display: flex; justify-content: space-between; gap: 6px; padding: 3px 0 3px 8px; }
+.code-editor-view .git-unavailable-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.code-editor-view .git-unavailable-row small { flex-shrink: 0; }
+.code-editor-view .git-branch-list { max-height: 35%; }
+.code-editor-view .git-branch-row { padding-inline: 14px; font-size: 13px; }
+.code-editor-view .git-branch-row[aria-pressed="true"] { background: var(--button-hover); }
+.code-editor-view .git-branch-row small { margin-left: auto; color: var(--muted); font-size: 11px; }
+.code-editor-view .git-history-heading { display: flex; flex: none; align-items: baseline; gap: 8px; margin: 0; padding: 6px 12px; border-top: 1px solid var(--border); font-size: 12px; font-weight: 600; }
+.code-editor-view .git-history-heading span { overflow: hidden; color: var(--muted); font-weight: 400; text-overflow: ellipsis; white-space: nowrap; }
+.code-editor-view .git-list { flex: 1; min-height: 0; overflow: auto; padding-bottom: 12px; font-size: 13px; }
+.code-editor-view .git-list-row { display: grid; grid-template-columns: minmax(0, 1fr) 24px; align-items: center; padding-right: 4px; }
+.code-editor-view .git-list-row:hover { background: var(--button-hover); }
+.code-editor-view .git-list-row.selected { background: var(--context-hover); }
+.code-editor-view .git-list-row .tree-row { min-width: 0; background: transparent; }
+.code-editor-view .git-list-row button:focus-visible, .code-editor-view .git-file-views button:focus-visible { outline: 1px solid var(--accent-strong); outline-offset: -1px; }
+.code-editor-view .git-commit-row { min-height: 39px; gap: 5px; }
+.code-editor-view .git-commit-icon { color: var(--accent-strong); }
+.code-editor-view .git-commit-copy { flex: 1; display: grid; min-width: 0; gap: 1px; }
+.code-editor-view .git-commit-copy strong, .code-editor-view .git-commit-copy small, .code-editor-view .git-file-row small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.code-editor-view .git-commit-copy small { display: flex; gap: 8px; }
+.code-editor-view .git-commit-copy small > span { overflow: hidden; text-overflow: ellipsis; }
+.code-editor-view .git-commit-copy small > code { flex-shrink: 0; }
+.code-editor-view .git-commit-copy strong { font-size: 12px; font-weight: 600; }
+.code-editor-view .git-commit-copy small, .code-editor-view .git-file-row small, .code-editor-view .git-commit-row code { color: var(--muted); font-size: 11px; }
+.code-editor-view .git-row-action, .code-editor-view .git-inline-action { display: inline-grid; width: 22px; height: 22px; place-items: center; padding: 0; border: 0; background: transparent; color: var(--muted); }
+.code-editor-view .git-row-action { opacity: 0; }
+.code-editor-view .git-list-row:hover .git-row-action, .code-editor-view .git-list-row:focus-within .git-row-action { opacity: 1; }
+.code-editor-view .git-commit-files { margin: 0 0 4px 13px; border-left: 1px solid var(--border); }
+.code-editor-view .git-file-views, .code-editor-view .git-base { display: flex; align-items: center; gap: 8px; padding: 2px 8px; }
+.code-editor-view .git-file-views button { padding: 3px 2px; border: 0; border-bottom: 1px solid transparent; border-radius: 0; background: transparent; color: var(--muted); font-size: 12px; }
+.code-editor-view .git-file-views button[aria-pressed="true"] { border-bottom-color: var(--accent-strong); color: var(--text); }
+.code-editor-view .git-base, .code-editor-view .git-more { color: var(--muted); font-size: 12px; }
+.code-editor-view .git-more { padding-left: 16px; }
+.code-editor-view .git-file-row { min-height: 26px; }
+.code-editor-view .git-file-row .icon, .code-editor-view .git-file-change { flex-shrink: 0; }
+.code-editor-view .git-file-row .name { flex: 0 0 auto; max-width: calc(100% - 50px); }
+.code-editor-view .git-file-row small { flex: 0 2 auto; }
+.code-editor-view .git-file-change { margin-left: auto; font-size: 11px; font-weight: 600; }
+.code-editor-view .git-file-change.untracked, .code-editor-view .git-file-change.added { color: #89d185; }
+.code-editor-view .git-file-change.modified { color: #e2c08d; }
+.code-editor-view .git-file-change.deleted { color: #f48771; }
+.code-editor-view.theme-vs .git-file-change.untracked, .code-editor-view.theme-vs .git-file-change.added { color: #28632d; }
+.code-editor-view.theme-vs .git-file-change.modified { color: #835a14; }
+.code-editor-view.theme-vs .git-file-change.deleted { color: #a1260d; }
+.code-editor-view .git-message { margin: 0; padding: 8px 12px; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.code-editor-view .git-tab small { flex: none; color: var(--muted); font-size: 11px; }
+.code-editor-view .git-editor-tab { position: absolute; inset: 0; display: flex; min-width: 0; min-height: 0; flex-direction: column; background: var(--editor); }
+.code-editor-view .git-editor-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 28px; padding: 2px 12px; border-bottom: 1px solid var(--border); color: var(--muted); font-size: 12px; }
+.code-editor-view .git-editor-path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.code-editor-view .git-editor-path .codicon { margin-right: 6px; vertical-align: middle; }
+.code-editor-view .git-editor-revisions { flex-shrink: 0; }
+.code-editor-view .git-editor-host { flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
+@media (hover: none) {
+  .code-editor-view .git-row-action { opacity: 1; }
+}
 .code-editor-view .editor-dialog-backdrop { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; padding: 18px; background: rgb(0 0 0 / 46%); backdrop-filter: blur(2px); }
 .code-editor-view .editor-dialog { display: grid; gap: 14px; width: min(560px, 100%); max-height: min(760px, calc(100vh - 36px)); overflow: auto; padding: 18px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); color: var(--text); box-shadow: 0 20px 60px var(--shadow); }
 .code-editor-view .editor-dialog-header { display: flex; align-items: center; gap: 10px; min-width: 0; }
@@ -9706,6 +10285,7 @@ function getTreeIconClass(node, collapsed = false) {
   .code-editor-view .editor-stage.preview-open .monaco-host.visible,
   .code-editor-view .editor-stage.preview-open .image-preview,
   .code-editor-view .editor-stage.preview-open .ssh-terminal,
+  .code-editor-view .editor-stage.preview-open .git-editor-tab,
   .code-editor-view .editor-stage.preview-open .empty-state,
   .code-editor-view .editor-stage.preview-open .unsupported-preview { right: 0; bottom: 45%; }
   .code-editor-view .preview-pane { inset: auto 0 0 0; width: auto; height: 45%; border-top: 1px solid var(--border); border-left: 0; box-shadow: 0 -12px 24px rgb(0 0 0 / 14%); }

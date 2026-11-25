@@ -8,6 +8,7 @@ export default defineConfig(() => {
 
   return {
     base: process.env.VITE_BASE_PATH || '/',
+    optimizeDeps: { include: ['isomorphic-git', 'picomatch/posix.js'] },
     plugins: [
       vue(),
       viteStaticCopy({
@@ -26,6 +27,8 @@ export default defineConfig(() => {
     resolve: {
       alias: {
         '@': fileURLToPath(new URL('./src', import.meta.url)),
+        // Use the upstream browser build with its bundled Git dependencies.
+        'isomorphic-git': fileURLToPath(new URL('./node_modules/isomorphic-git/index.umd.min.js', import.meta.url)),
         vue: 'vue/dist/vue.esm-bundler.js'
       }
     },

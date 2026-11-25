@@ -140,8 +140,9 @@ class BrowserHandleProvider extends FileSystemProvider {
             const entries = [];
             for await (const [name, handle] of directory.entries()) {
                 const entryPath = joinFilePath(normalizedPath, name);
-                if (handle.kind === 'directory') {
-                    entries.push({path: entryPath, name, kind: 'directory', size: 0, mimeType: null, version: null});
+                // Callers listing only names need not open every file to obtain its size.
+                if (handle.kind === 'directory' || options.withMetadata === false) {
+                    entries.push({path: entryPath, name, kind: handle.kind, size: 0, mimeType: null, version: null});
                 } else {
                     entries.push(fileEntry(entryPath, await handle.getFile()));
                 }

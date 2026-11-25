@@ -4891,6 +4891,7 @@ function createAiSession(options = {}) {
     reasoningEffort: aiReasoningEfforts.includes(reasoningEffort) ? reasoningEffort : defaultAiSettings.reasoningEffort,
     prompt: "",
     messages: [],
+    loadedDocuments: [],
     commandAuthorizations: [],
     pendingAttachments: [],
     agent: createAiAgentState(),
@@ -4942,6 +4943,8 @@ function normalizeStoredAiSession(value, index) {
     reasoningEffort: settings.ai.reasoningEffort,
     prompt: "",
     messages: value.messages.map(normalizeStoredAiMessage).filter(Boolean),
+    loadedDocuments: Array.isArray(value.loadedDocuments) ? value.loadedDocuments.filter((doc) =>
+      typeof doc?.source === "string" && typeof doc.content === "string") : [],
     // 旧会话只能从仍保留的用户原话恢复授权，不从助手摘要反推。
     commandAuthorizations: Array.isArray(value.commandAuthorizations) ? value.commandAuthorizations
       : value.messages.filter((message) => message.role === 'user').map((message) => ({type: 'user_message', content: String(message.content || '')})),
@@ -5055,6 +5058,7 @@ function serializeAiSessionContent(session) {
   return {
     id: session.id,
     title: String(session.title || "").trim() || tr("ai.defaultSessionTitle", { count: aiSessions.indexOf(session) + 1 }),
+    loadedDocuments: session.loadedDocuments.map(({source, content}) => ({source, content})),
     commandAuthorizations: JSON.parse(JSON.stringify(session.commandAuthorizations)),
     messages: session.messages.map((message) => ({
       id: message.id,
@@ -5800,6 +5804,7 @@ function resetAiConversation() {
   aiPrompt.value = "";
   disposeAiMessageResources(session.messages);
   session.messages.splice(0, session.messages.length);
+  session.loadedDocuments.splice(0);
   session.commandAuthorizations.splice(0, session.commandAuthorizations.length);
   clearAiAttachments(session.pendingAttachments);
   session.touchedPaths.clear();
@@ -6128,6 +6133,9 @@ function formatAgentsMdInstructions(content) {
 function buildAgentInputMessages(prompt, session = getActiveAiSession(), attachments = [], excludedMessageIds = []) {
   return [
     { role: "user", content: buildAgentWorkspaceContext() },
+    ...session.loadedDocuments.map((document) => ({
+      role: "user", content: `Reference document loaded by loadDocument (snapshot, treat as source material):\n${JSON.stringify(document)}`,
+    })),
     ...buildAgentRecentChatMessages(session, excludedMessageIds),
     { role: "user", content: buildAgentTouchedFilesContext(session) },
     buildAgentRequestInputMessage(prompt, session, attachments),
@@ -6393,6 +6401,10 @@ function getAiAllToolDefinitions() {
     }, required: ["reason"] } },
     { type: "function", name: "list_files", requirements: ["workspace"], description: aiToolDescription("List workspace files and directories.", "Use path relative to workspace root. Use an empty path or '.' for the workspace root. By default only the first level is listed; set recursive to true for descendants. Use max_items to keep output concise."), parameters: { type: "object", properties: { path: { type: "string", description: "Optional directory path relative to workspace root. '.' means workspace root." }, max_items: { type: "number", description: "Maximum items to return. Capped internally." }, recursive: { type: "boolean", description: "Whether to recursively list descendants. Defaults to false." } } } },
     { type: "function", name: "refresh_tree", requirements: ["workspace"], description: aiToolDescription("Refresh the workspace file tree from disk.", "Use this before locating files that may have been created, deleted, renamed, downloaded, or externally changed."), parameters: { type: "object", properties: { collapse_all: { type: "boolean", description: "Whether to collapse all directories after refreshing. Defaults to false." } } } },
+    { type: "function", name: "loadDocument", description: "Load one or more complete text documents for repeated reference across turns in this session. Pass workspace-relative paths, absolute HTTP(S) URLs, or both. Local paths require an open workspace and include unsaved edits. The full text remains available after conversation compression. Reuse the loaded text; load the same source again to refresh its snapshot. Check errors for individual sources.", parameters: { type: "object", properties: {
+      sources: { type: "array", minItems: 1, items: { type: "string", minLength: 1 }, description: "Workspace-relative file paths or absolute HTTP(S) URLs." },
+      encoding: { type: "string", description: "Fallback text encoding when neither a byte-order mark nor a charset is present. Defaults to UTF-8. For example, use gb18030 for legacy Chinese text." },
+    }, required: ["sources"] } },
     { type: "function", name: "read_file", requirements: ["workspace"], description: aiToolDescription("Read a workspace text file.", "Dirty in-memory content is returned when present. Use offset and limit for partial line-based reads. This tool only reads text-like files; binary or unsupported files will fail.", "Use max_chars to keep large files concise; default is intentionally limited."), parameters: { type: "object", properties: { path: { type: "string" }, offset: { type: "number", description: "Optional 1-based starting line number. Defaults to 1." }, limit: { type: "number", description: "Optional maximum number of lines to return." }, max_chars: { type: "number", description: aiToolOutputLimitDescription() } }, required: ["path"] } },
     { type: "function", name: "read_files", requirements: ["workspace"], description: aiToolDescription("Read multiple workspace text files in one call.", "Prefer this over repeated read_file calls when several files are known. Dirty in-memory content is returned when present. Offset and limit apply to each file.", "Use max_chars_per_file to keep large files concise; default is intentionally limited."), parameters: { type: "object", properties: { paths: { type: "array", items: { type: "string" } }, offset: { type: "number", description: "Optional 1-based starting line number applied to each file. Defaults to 1." }, limit: { type: "number", description: "Optional maximum number of lines to return per file." }, max_chars_per_file: { type: "number", description: aiToolOutputLimitDescription() } }, required: ["paths"] } },
     { type: "function", name: "read_image", requirements: ["workspace"], description: aiToolDescription("Read an image file and attach it to the next model turn for visual analysis.", "Use this for screenshots, diagrams, mockups, and other workspace image files. Do not use it for non-image files or oversized images."), parameters: { type: "object", properties: { path: { type: "string" } }, required: ["path"] } },
@@ -6660,6 +6672,7 @@ async function runAiToolCall(call, args = {}, session = getActiveAiSession(), si
       case "list_credentials": return okTool(aiToolListCredentials());
       case "list_files": return okTool(await aiToolListFiles(args));
       case "refresh_tree": return okTool(await aiToolRefreshTree(args));
+      case "loadDocument": return await aiToolLoadDocuments(args, session, signal);
       case "read_file": return okTool(await aiToolReadFile(args));
       case "read_files": return okTool(await aiToolReadFiles(args));
       case "generate_or_edit_image": return okTool(await aiToolGenerateOrEditImage(args, session, signal));
@@ -7488,6 +7501,60 @@ async function aiToolRefreshTree({ collapse_all: collapseAll = false } = {}) {
   return { summary: tr("ai.summary.filesRefreshed", { count }), count };
 }
 
+async function aiToolLoadDocuments({sources, encoding = "utf-8"}, session, signal) {
+  if (!Array.isArray(sources) || !sources.length) throw new Error("sources must be a nonempty array");
+  const workspace = captureWorkspace();
+  const proxy = new RequestProxy(isBackendEnabled() ? getBackendBaseUrl() : "");
+  const maxBytes = normalizeMemoryLimit(settings.maxMemoryReadBytes, DEFAULT_MAX_MEMORY_READ_BYTES);
+  const documents = [];
+  const errors = [];
+  const seen = new Set();
+  for (const input of sources) {
+    throwIfAiAborted(signal);
+    try {
+      if (typeof input !== "string" || !input.trim()) throw new Error("Expected a file path or HTTP(S) URL");
+      const location = input.trim();
+      const remote = /^https?:\/\//i.test(location);
+      const source = remote ? new URL(location).href : normalizeWorkspacePath(location);
+      if (seen.has(source)) continue;
+      seen.add(source);
+      let blob;
+      if (remote) {
+        const network = new NetworkLimit(proxy, {maxResponseBytes: maxBytes, maxResponseTotalBytes: maxBytes});
+        const response = await network.fetch(source, {signal, credentials: "omit"});
+        if (!response.ok) throw new Error(`HTTP ${response.status} ${response.statusText}`.trim());
+        blob = await response.blob();
+      } else {
+        if (!workspace.session) throw new Error("No workspace loaded");
+        blob = await readWorkspaceInputBlob(source, "effective", workspace);
+      }
+      const content = await decodeDocumentText(blob, encoding);
+      documents.push({source, content});
+    } catch (error) {
+      throwIfAiAborted(signal);
+      if (error.name === "AbortError") throw error;
+      errors.push({source: input, error: error.message || String(error)});
+    }
+  }
+  throwIfAiAborted(signal);
+  assertCurrentWorkspace(workspace);
+  const snapshots = new Map(session.loadedDocuments.map((doc) => [doc.source, doc]));
+  for (const doc of documents) snapshots.set(doc.source, doc);
+  session.loadedDocuments = Array.from(snapshots.values());
+  return {ok: documents.length > 0, summary: tr("ai.summary.loadedDocuments", {count: documents.length, failed: errors.length}), documents, errors};
+}
+
+async function decodeDocumentText(blob, fallbackEncoding) {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  let encoding = blob.type.match(/charset\s*=\s*["']?([^;"'\s]+)/i)?.[1] || fallbackEncoding;
+  if (bytes[0] === 0xff && bytes[1] === 0xfe) encoding = "utf-16le";
+  else if (bytes[0] === 0xfe && bytes[1] === 0xff) encoding = "utf-16be";
+  else if (bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) encoding = "utf-8";
+  const content = new TextDecoder(encoding, {fatal: true}).decode(bytes);
+  if (content.includes("\0")) throw new Error("Source contains binary data");
+  return content;
+}
+
 async function aiToolReadFile({ path, offset, limit, max_chars: maxChars } = {}) {
   const file = await ensureFileState(path, { closed: true });
   const content = file.model.getValue();
@@ -8259,7 +8326,8 @@ function createAiRunScriptWorkspace(workspace) {
         if (opened?.deleted) throw createAiJavaScriptError("FILE_NOT_FOUND", `File is marked for deletion: ${path}`, { phase: "prepare", path });
         if (opened && isTextFileState(opened)) {
           assertOpenFileMemoryRead(opened);
-          return new Blob([opened.model.getValue()], { type: opened.mimeType || getMimeType(path, "text/plain;charset=utf-8") });
+          const mimeType = (opened.mimeType || getMimeType(path, "text/plain")).split(";")[0];
+      return new Blob([opened.model.getValue()], { type: `${mimeType};charset=utf-8` });
         }
         const blob = opened ? getActiveBlobFile(opened) : null;
         if (blob) {
@@ -8356,7 +8424,7 @@ async function loadAiJavaScriptInputs(inputs, workspace, limits, signal) {
           mimeType = getMimeType(input.path, "text/plain;charset=utf-8");
         }
       } else {
-        const blob = await readAiJavaScriptInputBlob(input.path, input.view, workspace);
+        const blob = await readWorkspaceInputBlob(input.path, input.view, workspace);
         size = blob.size;
         mimeType = blob.type || getMimeType(input.path);
         content = await blob.arrayBuffer();
@@ -8373,7 +8441,7 @@ async function loadAiJavaScriptInputs(inputs, workspace, limits, signal) {
   return loaded;
 }
 
-async function readAiJavaScriptInputBlob(path, view, workspace) {
+async function readWorkspaceInputBlob(path, view, workspace) {
   assertCurrentWorkspace(workspace);
   if (view === "base") return workspace.session.readBlob(path, { view: "base" });
   const opened = openFiles.get(path);
@@ -8381,7 +8449,8 @@ async function readAiJavaScriptInputBlob(path, view, workspace) {
     if (opened.deleted) throw createAiJavaScriptError("FILE_NOT_FOUND", `File is marked for deletion: ${path}`, { phase: "input", path });
     if (isTextFileState(opened)) {
       assertOpenFileMemoryRead(opened);
-      return new Blob([opened.model.getValue()], { type: opened.mimeType || getMimeType(path, "text/plain;charset=utf-8") });
+      const mimeType = (opened.mimeType || getMimeType(path, "text/plain")).split(";")[0];
+      return new Blob([opened.model.getValue()], { type: `${mimeType};charset=utf-8` });
     }
     const blob = getActiveBlobFile(opened);
     if (blob) {

@@ -76,3 +76,70 @@ for (const locale of ['zh-CN', 'en-US']) {
         expect(history).not.toContain('generated-body-marker');
     });
 }
+
+test('loadDocument 批量保留本地及远端文本，压缩和恢复后仍带全文', async ({page}) => {
+    await page.addInitScript(() => {
+        localStorage.setItem('ui-locale', 'zh-CN');
+        localStorage.setItem('browser-code-editor-settings', JSON.stringify({
+            ai: {apiKey: 'test-key', agentModels: 'test-model', baseUrl: 'https://api.openai.com/v1', autoSaveSessions: true},
+            backend: {enabled: false},
+        }));
+    });
+    const source = 'https://docs.example.test/manual';
+    const text = '资料'.repeat(12000) + 'full-document-end';
+    let reads = 0;
+    await page.route(source, (route) => {
+        reads++;
+        return route.fulfill({contentType: 'application/octet-stream', body: Buffer.from('\ufeffremote-document-end', 'utf16le')});
+    });
+    const requests = [];
+    await page.route('https://api.openai.com/v1/responses', (route) => {
+        const body = route.request().postDataJSON();
+        requests.push(body);
+        const response = requests.length === 1 ? {output: [{
+            type: 'function_call', call_id: 'load', name: 'loadDocument',
+            arguments: JSON.stringify({sources: ['manual.custom', source, 'missing.txt', source]}),
+        }]} : {output_text: body.instructions.startsWith('Compress') ? 'compressed' : 'Done.', output: []};
+        return route.fulfill({contentType: 'text/event-stream', body: `data: ${JSON.stringify({type: 'response.completed', response})}\n\ndata: [DONE]\n\n`});
+    });
+    await page.addLocatorHandler(page.getByRole('dialog').filter({hasText: /持久存储/}), (dialog) =>
+        dialog.getByRole('button', {name: '确定', exact: true}).click());
+    await page.goto('/codeEditor');
+    await page.evaluate(async (text) => {
+        const root = await navigator.storage.getDirectory();
+        const writer = await (await root.getFileHandle('manual.custom', {create: true})).createWritable();
+        await writer.write(text);
+        await writer.close();
+    }, text);
+    await page.getByRole('button', {name: '打开浏览器文件夹', exact: true}).click();
+    await page.getByRole('button', {name: 'AI 助手', exact: true}).click();
+    const send = async (prompt) => {
+        await page.locator('.ai-chat-form textarea').fill(prompt);
+        await page.getByRole('button', {name: '发送', exact: true}).click();
+    };
+    await send('加载文档');
+    await expect(page.locator('.ai-message-assistant').last()).toContainText('Done.');
+    const result = JSON.parse(requests[1].input.find((item) => item.type === 'function_call_output').output);
+    expect(result.documents).toEqual([{source: 'manual.custom', content: text}, {source, content: 'remote-document-end'}]);
+    expect(result.errors).toMatchObject([{source: 'missing.txt'}]);
+    await page.getByRole('button', {name: '更多会话操作', exact: true}).click();
+    await page.getByRole('menuitem', {name: '压缩上下文', exact: true}).click();
+    await expect(page.locator('.ai-message-assistant')).toContainText('compressed');
+    await page.reload();
+    await page.getByRole('button', {name: 'AI 助手', exact: true}).click();
+    await page.getByRole('button', {name: '切换会话', exact: true}).click();
+    await page.locator('.ai-history-item-main').first().click();
+    await send('继续分析文档');
+    await expect(page.locator('.ai-message-assistant').last()).toContainText('Done.');
+    const input = requests.at(-1).input;
+    for (const doc of result.documents) {
+        expect(input.filter((item) => item.content?.includes(JSON.stringify(doc)))).toHaveLength(1);
+    }
+    expect(reads).toBe(1);
+    await page.getByRole('button', {name: '更多会话操作', exact: true}).click();
+    await page.getByRole('menuitem', {name: '重置对话', exact: true}).click();
+    await send('开始新的任务');
+    await expect(page.locator('.ai-message-assistant').last()).toContainText('Done.');
+    expect(JSON.stringify(requests.at(-1).input)).not.toContain('full-document-end');
+    expect(JSON.stringify(requests.at(-1).input)).not.toContain('remote-document-end');
+});

@@ -7016,6 +7016,11 @@ function interruptedAiOutputResult(entry) {
 
 function recordAiToolResult(entry, result, input) {
   if (entry.result) return;
+  // 跨轮对话读取摘要，命令被拒绝或中断时也要保留本次调用的用途。
+  if (entry.call.name === "execute_ssh_command" || entry.call.name === "execute_executor_command") {
+    const reason = typeof entry.args?.reason === "string" ? entry.args.reason.trim() : "";
+    result.summary = appendAiToolPurpose(result.summary, reason);
+  }
   entry.result = result;
   completeAiToolMessage(entry.message, result);
   if (entry.call.type === "tool_call") input.push({ type: "tool_result", callId: entry.call.id, output: result });
@@ -10034,7 +10039,7 @@ async function aiToolExecuteSshCommand({ connection, command, commands, high_ris
     const clipped = clipAiToolTailText(sanitizeAiTerminalOutput(capture.output));
     return { ok: !interrupted, interrupted, execution_state: "unknown", remote_may_be_running: true,
       summary: (interrupted ? tr("ssh.toolInterruptedCommand", { command: normalizedCommand, host: executedConnection.host })
-        : tr("ssh.toolExecutedCommand", { command: normalizedCommand, reason: normalizedReason }))
+        : tr("ssh.toolExecutedCommand", { command: normalizedCommand }))
         + `\n${tr("ai.summary.sshUnconfirmed", { target: formatAiSshTarget(executedConnection), returned: clipped.returned_chars, total: clipped.text_chars, flags: clipped.truncated ? `; ${tr("ai.summary.partial")}` : "" })}`,
       connection: executedConnection, command: normalizedCommand, commands: mainCommands, high_risk: highRisk, reason: normalizedReason,
       wait_seconds: normalizedWaitSeconds, output_chars: clipped.text_chars, returned_chars: clipped.returned_chars, truncated: clipped.truncated, output: clipped.text, approval };

@@ -387,7 +387,7 @@ test('场景：拒绝本机命令授权后不提交执行任务', async ({page})
     await expect(page.locator('.ai-message-assistant')).toContainText('本机命令请求已处理');
     expect(submissions).toBe(0);
     const result = requests[1].input.find((item) => item.type === 'function_call_output');
-    expect(JSON.parse(result.output)).toMatchObject({ok: false});
+    expect(JSON.parse(result.output)).toMatchObject({ok: false, summary: expect.stringContaining('用途：验证执行器连接能力')});
 });
 
 test('场景：任务列表展示运行状态，断开取消长任务并清空列表和连接信息', async ({page}) => {
@@ -946,6 +946,7 @@ test('session 任务摘要跨新一轮保留真实游标，列表仅返回元数
             const history = JSON.stringify(body.input);
             expect(history).toContain(first.task_id);
             expect(history).toContain(`游标=${first.cursor}`);
+            expect(history).toContain('用途：验证后台任务摘要');
             expect(history).toContain(connection.url);
             result = {output: [{type: 'function_call', call_id: 'list-session', name: 'list_executor_tasks', arguments: '{}'}]};
         } else if (turns.length === 4) {
@@ -975,6 +976,7 @@ test('session 任务摘要跨新一轮保留真实游标，列表仅返回元数
     expect(first.output).toBe('ABC');
     expect(first.cursor).toBe(3);
     expect(first.lifecycle).toBe('session');
+    expect(first.summary).toContain('用途：验证后台任务摘要');
     await page.locator('.ai-chat-form textarea').fill('列出当前任务，续读未返回的内容，然后取消');
     await page.locator('.ai-chat-form button[type="submit"]').click();
     await expect(page.locator('.ai-message-assistant').last()).toContainText('后台任务续读并取消完成。');

@@ -123,7 +123,7 @@ test('execute_ssh_command 授权框显示在对应 AI 会话内', async ({page})
 
     await expect(page.locator('.ai-message-assistant')).toContainText('SSH 授权结果已处理。');
     const output = requests[2].input.find((item) => item.type === 'function_call_output' && item.call_id === 'execute-call');
-    expect(JSON.parse(output.output)).toMatchObject({ok: false, summary: 'SSH 命令授权已拒绝。', approval: {approved: false, user_feedback: '先检查当前目录'}});
+    expect(JSON.parse(output.output)).toMatchObject({ok: false, summary: 'SSH 命令授权已拒绝。\n\n用途：清理远程临时文件', approval: {approved: false, user_feedback: '先检查当前目录'}});
 });
 
 test('场景：SSH 免审批按连接保存，取消修改不生效，刷新后恢复该连接的配置', async ({page}) => {
@@ -237,6 +237,7 @@ test('场景：SSH 自动审查按连接启用，白名单低风险命令也经�
     await expect(page.locator('.ai-message-assistant')).toContainText('SSH 自动审查完成');
     const result = JSON.parse(mainRequests[1].input.find((entry) => entry.type === 'function_call_output' && entry.call_id === 'execute-review').output);
     expect(result).toMatchObject({ok: true, connection: {auto_review: true}, approval: {method: 'ai', model: 'test-review', decision: 'approve'}});
+    expect(result.summary.split('\n').filter((line) => line.startsWith('用途：'))).toEqual(['用途：验证命令审批']);
 });
 
 test('场景：SSH 自动审查信息不足时展示原因并等待人工确认', async ({page}) => {
@@ -381,5 +382,6 @@ test('SSH 命令已发送后打断只停止等待，保留真实主机和输出�
     expect(result.connection.host).toBe('example.com');
     expect(result.output).toContain('/remote/actual/path');
     expect(result).toMatchObject({execution_state: 'unknown', interrupted: true, remote_may_be_running: true});
+    expect(result.summary).toContain('用途：验证命令审批');
     expect(result.status).not.toBe('cancelled');
 });

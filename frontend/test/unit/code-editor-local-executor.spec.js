@@ -309,7 +309,8 @@ test('场景：任务列表不展示已完成任务，执行结果仍返回 AI �
     expect(JSON.stringify(requests)).not.toContain(connection.token);
     const settings = await page.evaluate(() => JSON.stringify({...localStorage}));
     expect(settings).not.toContain(connection.token);
-    expect(requests[0].tools.find((tool) => tool.name === 'execute_executor_command')).toBeTruthy();
+    const executeTool = requests[0].tools.find((tool) => tool.name === 'execute_executor_command');
+    expect(executeTool?.description).toContain('In your final answer, list every command line you actually ran through this executor.');
     const result = JSON.parse(requests[1].input.find((item) => item.type === 'function_call_output').output);
     expect(result).toMatchObject({ok: true, status: 'completed', exit_code: 0, has_more: false});
     expect(result.output).toContain('执行器连接成功');

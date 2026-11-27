@@ -60,7 +60,7 @@ async function setup(page, command, options = {}, settingsOverrides = {}) {
     await page.route('https://api.openai.com/v1/responses', async (route) => {
         const body = route.request().postDataJSON();
         requests.push(body);
-        const response = requests.length === 1
+        const response = requests.length === 1 && command !== undefined
             ? {output: [{type: 'function_call', call_id: 'local-command', name: 'execute_executor_command', arguments: JSON.stringify({command, reason: '验证执行器连接能力', commands: [command.split(' ')[0]], high_risk: false, ...options})}]}
             : {output_text: '本机命令请求已处理。', output: []};
         await route.fulfill({status: 200, headers: {'content-type': 'text/event-stream'}, body: `data: ${JSON.stringify({type: 'response.completed', response})}\n\ndata: [DONE]\n\n`});
@@ -309,11 +309,28 @@ test('场景：任务列表不展示已完成任务，执行结果仍返回 AI �
     expect(JSON.stringify(requests)).not.toContain(connection.token);
     const settings = await page.evaluate(() => JSON.stringify({...localStorage}));
     expect(settings).not.toContain(connection.token);
-    const executeTool = requests[0].tools.find((tool) => tool.name === 'execute_executor_command');
-    expect(executeTool?.description).toContain('In your final answer, list every command line you actually ran through this executor.');
     const result = JSON.parse(requests[1].input.find((item) => item.type === 'function_call_output').output);
     expect(result).toMatchObject({ok: true, status: 'completed', exit_code: 0, has_more: false});
     expect(result.output).toContain('执行器连接成功');
+});
+
+test('三个执行工具按界面语言说明用途和改动，命令工具不要求在最终答复列命令', async ({page}) => {
+    await setup(page);
+    for (const [locale, language, send] of [['zh-CN', 'Chinese', '发送'], ['en-US', 'English', 'Send']]) {
+        await page.evaluate(async (locale) => (await import('/src/i18n/index.js')).setLocale(locale), locale);
+        const turn = requests.length;
+        await page.locator('.ai-chat-form textarea').fill('检查执行工具的用途说明');
+        await page.getByRole('button', {name: send, exact: true}).click();
+        await expect(page.locator('.ai-message-assistant').nth(turn)).toContainText('本机命令请求已处理');
+
+        const expectedReason = `In ${language}, briefly describe what this call does. If it will modify files or configuration, or change remote resources through network requests, you must specify the affected targets and what will change, including changes made by scripts, subcommands, and network requests.`;
+        for (const name of ['run_javascript', 'execute_executor_command', 'execute_ssh_command']) {
+            const tool = requests[turn].tools.find((entry) => entry.name === name);
+            expect(tool.parameters.required).toContain('reason');
+            expect(tool.parameters.properties.reason.description).toBe(expectedReason);
+            expect(tool.description).not.toMatch(/final answer, list every|list every SSH command/i);
+        }
+    }
 });
 
 test('执行器可选默认参数接受 null，保留 high_risk false', async ({page}) => {
